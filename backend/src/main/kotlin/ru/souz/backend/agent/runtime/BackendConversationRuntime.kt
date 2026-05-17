@@ -22,6 +22,7 @@ import ru.souz.backend.llm.BackendLlmExecutionContext
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.LLMChatAPI
 import ru.souz.llms.LLMResponse
+import ru.souz.llms.LLMToolSetup
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.llms.runtime.ApiClassifier
 import ru.souz.tool.LocalRegexClassifier
@@ -124,8 +125,8 @@ class BackendConversationRuntimeFactory(
     private val systemPrompt: String,
     private val toolCatalog: AgentToolCatalog = BackendNoopAgentToolCatalog,
     private val toolsFilter: AgentToolsFilter = BackendNoopAgentToolsFilter,
-    @Suppress("unused")
     private val skillRegistryRepository: SkillRegistryRepository? = null,
+    private val skillCommandTool: LLMToolSetup? = null,
 ) {
     internal suspend fun create(
         key: AgentConversationKey,
@@ -167,6 +168,7 @@ class BackendConversationRuntimeFactory(
                 timeZone = request.timeZone,
             ),
             mcpToolProvider = BackendNoopMcpToolProvider,
+            skillCommandTool = skillCommandTool,
             telemetry = AgentTelemetry.NONE,
             errorMessages = BackendAgentErrorMessages,
             llmApi = usageTrackingApi,
