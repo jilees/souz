@@ -122,12 +122,6 @@ private enum class MacTrafficKind {
     Maximize,
 }
 
-enum class LiquidGlassPreset {
-    Default,
-    Hero
-}
-
-
 @Composable
 fun MainScreen(
     onOpenSettings: () -> Unit,
@@ -139,7 +133,7 @@ fun MainScreen(
     isOnline: Boolean = true,
 ) {
     val di = localDI()
-    val viewModel = viewModel { MainViewModel(di) }
+    val viewModel = viewModel { createMainViewModel(di) }
     val state by viewModel.uiState.collectAsState()
 
     LaunchedEffect(viewModel) {
@@ -177,7 +171,7 @@ fun MainScreen(
         onCancelLocalModelDownload = { viewModel.send(MainEvent.CancelLocalModelDownload) },
         onChatContextSizeChange = { viewModel.send(MainEvent.UpdateChatContextSize(it)) },
         onPickChatAttachments = { viewModel.send(MainEvent.PickChatAttachments) },
-        onAttachDroppedTransferable = { viewModel.onAttachDroppedTransferable(it) },
+        onAttachDroppedTransferable = { viewModel.onAttachDroppedPayload(it) },
         onRemoveChatAttachment = { viewModel.send(MainEvent.RemoveChatAttachment(it)) },
         onSendChatMessage = { viewModel.send(MainEvent.SendChatMessage(it)) },
         onClearContext = { viewModel.send(MainEvent.UserPressStop) },
@@ -788,6 +782,11 @@ private fun chatMarkdownTypography(
 
 private enum class HeadingScale { LARGE, SMALL }
 
+private val timestampFormatter = java.text.SimpleDateFormat("HH:mm", java.util.Locale("ru", "RU"))
+
+private fun formatTimestamp(timestamp: Long): String =
+    timestampFormatter.format(java.util.Date(timestamp))
+
 @Composable
 fun ChatModeContent(
     messages: List<ChatMessage>,
@@ -873,7 +872,6 @@ fun ChatModeContent(
             focusRequester.requestFocus()
         }
     }
-
 
     ChatFileDropTarget(
         enabled = true,
@@ -1270,78 +1268,78 @@ private fun ChatBubble(
 
                     CompositionLocalProvider(LocalTextSelectionColors provides customSelectionColors) {
                         SelectionContainer {
-                            Column {
-                                messageSearchProjection.parts.forEach { part ->
-                                    val partMatchRanges = if (searchEnabled) {
-                                        searchState.matchRangesForPart(message.id, part.partIndex)
-                                    } else {
-                                        emptyList()
-                                    }
-                                    val activeRange = if (searchEnabled) {
-                                        searchState.activeRangeForPart(message.id, part.partIndex)
-                                    } else {
-                                        null
-                                    }
-                                    when (part) {
-                                        is MarkdownTextSearchPartProjection -> {
-                                            val annotator = if (partMatchRanges.isEmpty()) {
-                                                null
-                                            } else {
-                                                rememberSearchMarkdownAnnotator(
-                                                    matchRanges = partMatchRanges,
-                                                    highlightColor = highlightColor,
-                                                    activeHighlightColor = activeHighlightColor,
-                                                    activeRange = activeRange,
-                                                    linkSpanStyle = linkSpanStyle,
+                            if (!searchEnabled) {
+                                MessageMarkdown(
+                                    content = message.text,
+                                    textStyle = baseStyle,
+                                    codeStyle = codeStyle,
+                                )
+                            } else {
+                                Column {
+                                    messageSearchProjection.parts.forEach { part ->
+                                        val partMatchRanges = searchState.matchRangesForPart(message.id, part.partIndex)
+                                        val activeRange = searchState.activeRangeForPart(message.id, part.partIndex)
+                                        when (part) {
+                                            is MarkdownTextSearchPartProjection -> {
+                                                val annotator = if (partMatchRanges.isEmpty()) {
+                                                    null
+                                                } else {
+                                                    rememberSearchMarkdownAnnotator(
+                                                        matchRanges = partMatchRanges,
+                                                        highlightColor = highlightColor,
+                                                        activeHighlightColor = activeHighlightColor,
+                                                        activeRange = activeRange,
+                                                        linkSpanStyle = linkSpanStyle,
+                                                    )
+                                                }
+                                                Markdown(
+                                                    content = part.markdown,
+                                                    colors = colors,
+                                                    typography = typography,
+                                                    annotator = annotator ?: com.mikepenz.markdown.model.markdownAnnotator(),
+                                                    modifier = Modifier.fillMaxWidth()
                                                 )
                                             }
-                                            Markdown(
-                                                content = part.markdown,
-                                                colors = colors,
-                                                typography = typography,
-                                                annotator = annotator ?: com.mikepenz.markdown.model.markdownAnnotator(),
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
 
-                                        is CodeBlockSearchPartProjection -> {
-                                            val highlightedCode = remember(
-                                                part.code,
-                                                partMatchRanges,
-                                                activeRange,
-                                            ) {
-                                                part.code.buildSearchHighlightedAnnotatedString(
-                                                    matchRanges = partMatchRanges,
-                                                    highlightColor = highlightColor,
-                                                    activeHighlightColor = activeHighlightColor,
-                                                    activeRange = activeRange,
+                                            is CodeBlockSearchPartProjection -> {
+                                                val highlightedCode = remember(
+                                                    part.code,
+                                                    partMatchRanges,
+                                                    activeRange,
+                                                ) {
+                                                    part.code.buildSearchHighlightedAnnotatedString(
+                                                        matchRanges = partMatchRanges,
+                                                        highlightColor = highlightColor,
+                                                        activeHighlightColor = activeHighlightColor,
+                                                        activeRange = activeRange,
+                                                    )
+                                                }
+                                                CodeBlockWithCopy(
+                                                    code = part.code,
+                                                    language = part.language,
+                                                    style = codeStyle,
+                                                    renderedCode = highlightedCode,
                                                 )
                                             }
-                                            CodeBlockWithCopy(
-                                                code = part.code,
-                                                language = part.language,
-                                                style = codeStyle,
-                                                renderedCode = highlightedCode,
-                                            )
-                                        }
 
-                                        is PlainTextSearchPartProjection -> {
-                                            val highlightedAssistantText = remember(
-                                                part.text,
-                                                partMatchRanges,
-                                                activeRange,
-                                            ) {
-                                                part.text.buildSearchHighlightedAnnotatedString(
-                                                    matchRanges = partMatchRanges,
-                                                    highlightColor = highlightColor,
-                                                    activeHighlightColor = activeHighlightColor,
-                                                    activeRange = activeRange,
+                                            is PlainTextSearchPartProjection -> {
+                                                val highlightedAssistantText = remember(
+                                                    part.text,
+                                                    partMatchRanges,
+                                                    activeRange,
+                                                ) {
+                                                    part.text.buildSearchHighlightedAnnotatedString(
+                                                        matchRanges = partMatchRanges,
+                                                        highlightColor = highlightColor,
+                                                        activeHighlightColor = activeHighlightColor,
+                                                        activeRange = activeRange,
+                                                    )
+                                                }
+                                                Text(
+                                                    text = highlightedAssistantText,
+                                                    style = baseStyle,
                                                 )
                                             }
-                                            Text(
-                                                text = highlightedAssistantText,
-                                                style = baseStyle,
-                                            )
                                         }
                                     }
                                 }
@@ -1624,11 +1622,6 @@ private fun FinderPathChip(
     }
 }
 
-private val timestampFormatter = java.text.SimpleDateFormat("HH:mm", java.util.Locale("ru", "RU"))
-
-private fun formatTimestamp(timestamp: Long): String = 
-    timestampFormatter.format(java.util.Date(timestamp))
-
 @Composable
 private fun MacTrafficLightButton(
     color: Color,
@@ -1744,130 +1737,6 @@ private fun TopToolbarIconButton(
 }
 
 
-
-@Composable
-fun RealLiquidGlassCard(
-    modifier: Modifier = Modifier,
-    isWindowFocused: Boolean,
-    cornerRadius: Dp = 24.dp,
-    preset: LiquidGlassPreset = LiquidGlassPreset.Hero,
-    content: @Composable BoxScope.() -> Unit
-) {
-    val cardShape = RoundedCornerShape(cornerRadius)
-    val borderThickness = if (preset == LiquidGlassPreset.Hero) 1.dp else 1.5.dp
-
-    val backdropAlpha by animateFloatAsState(
-        targetValue = when (preset) {
-            LiquidGlassPreset.Default -> if (isWindowFocused) 0.95f else 0.0f
-            LiquidGlassPreset.Hero -> 1.0f
-        },
-        animationSpec = tween(400)
-    )
-
-    Box(
-        modifier = modifier.graphicsLayer {
-            shape = cardShape
-            clip = true
-            compositingStrategy = CompositingStrategy.Offscreen
-        }
-    ) {
-        when (preset) {
-            LiquidGlassPreset.Default -> {
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(Color.Black.copy(alpha = backdropAlpha))
-                )
-            }
-
-            LiquidGlassPreset.Hero -> {
-                Canvas(modifier = Modifier.matchParentSize()) {
-                    drawRect(
-                        color = Color(0xF21B1C20),
-                        alpha = backdropAlpha
-                    )
-
-                    drawRect(color = Color(0xB0000000))
-                }
-            }
-        }
-
-        Canvas(modifier = Modifier.matchParentSize()) {
-            val strokeWidth = borderThickness.toPx()
-            when (preset) {
-                LiquidGlassPreset.Default -> {
-                    drawRoundRect(
-                        brush = Brush.linearGradient(
-                            0.0f to Color(0xCCFFFFFF),
-                            0.5f to Color(0x00FFFFFF),
-                            1.0f to Color(0x4DFFFFFF),
-                            start = Offset(0f, 0f),
-                            end = Offset(size.width, size.height)
-                        ),
-                        cornerRadius = CornerRadius(cornerRadius.toPx()),
-                        style = Stroke(width = strokeWidth)
-                    )
-
-                    drawPath(
-                        path = Path().apply {
-                            moveTo(0f, size.height * 0.2f)
-                            lineTo(size.width * 0.4f, 0f)
-                            lineTo(size.width * 0.65f, 0f)
-                            lineTo(0f, size.height * 0.6f)
-                            close()
-                        },
-                        brush = Brush.linearGradient(
-                            colors = listOf(Color(0x0DFFFFFF), Color.Transparent),
-                            start = Offset(0f, 0f),
-                            end = Offset(size.width / 2, size.height / 2)
-                        )
-                    )
-                }
-
-                LiquidGlassPreset.Hero -> {
-                    drawRoundRect(
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                Color(0x3AFFFFFF),
-                                Color(0x18FFFFFF),
-                                Color(0x14FFFFFF),
-                                Color(0x2AFFFFFF)
-                            ),
-                            start = Offset(0f, 0f),
-                            end = Offset(size.width, size.height)
-                        ),
-                        cornerRadius = CornerRadius(cornerRadius.toPx()),
-                        style = Stroke(width = strokeWidth)
-                    )
-
-                    val inset = strokeWidth * 1.4f
-                    val innerWidth = (size.width - inset * 2f).coerceAtLeast(0f)
-                    val innerHeight = (size.height - inset * 2f).coerceAtLeast(0f)
-                    drawRoundRect(
-                        color = Color(0x08FFFFFF),
-                        topLeft = Offset(inset, inset),
-                        size = Size(innerWidth, innerHeight),
-                        cornerRadius = CornerRadius((cornerRadius.toPx() - inset).coerceAtLeast(0f)),
-                        style = Stroke(width = strokeWidth * 0.7f)
-                    )
-                }
-            }
-        }
-
-        if (preset == LiquidGlassPreset.Default) {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(Color(0x03FFFFFF))
-            )
-        }
-
-        val innerShape = RoundedCornerShape(cornerRadius - borderThickness)
-        Box(modifier = Modifier.padding(borderThickness).clip(innerShape)) {
-            content()
-        }
-    }
-}
 
 @Preview
 @Composable

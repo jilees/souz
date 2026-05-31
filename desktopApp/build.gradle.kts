@@ -298,9 +298,9 @@ val resignReleaseAppForNotarization by tasks.registering {
         }
 
         fun runCodesign(vararg args: String) {
-            exec {
+            providers.exec {
                 commandLine("codesign", *args)
-            }
+            }.result.get().assertNormalExitValue()
         }
 
         val nativeResourceDir = appBundle.resolve("Contents/app/resources")
@@ -356,21 +356,19 @@ val resignReleaseAppForNotarization by tasks.registering {
             )
         }
 
-            runCodesign(
-                "--force",
-                "--timestamp",
-                "--options",
-                "runtime",
-                "--entitlements",
-                appEntitlementsFile.absolutePath,
-                "--sign",
-                identity,
-                appBundle.absolutePath
-            )
+        runCodesign(
+            "--force",
+            "--timestamp",
+            "--options",
+            "runtime",
+            "--entitlements",
+            appEntitlementsFile.absolutePath,
+            "--sign",
+            identity,
+            appBundle.absolutePath
+        )
 
-        exec {
-            commandLine("codesign", "--verify", "--deep", "--strict", appBundle.absolutePath)
-        }
+        runCodesign("--verify", "--deep", "--strict", appBundle.absolutePath)
     }
 }
 
