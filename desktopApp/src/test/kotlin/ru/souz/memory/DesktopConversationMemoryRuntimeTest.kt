@@ -12,12 +12,16 @@ import kotlin.test.assertEquals
 
 class DesktopConversationMemoryRuntimeTest {
     @Test
-    fun `captureCompletedTurn uses chat scope as primary scope when conversation id is present`() = runTest {
+    fun `captureCompletedTurn does not use desktop conversation id as chat scope`() = runTest {
         val memoryService = mockk<MemoryService>(relaxed = true)
         val captureService = mockk<MemoryCaptureService>()
         val inputSlot = slot<MemoryCaptureInput>()
         coEvery { captureService.captureAfterTurn(capture(inputSlot)) } returns emptyList()
-        val runtime = DesktopConversationMemoryRuntime(memoryService, captureService)
+        val runtime = DesktopConversationMemoryRuntime(
+            memoryService,
+            captureService,
+            DesktopMemoryContextProvider(NoopDesktopMemoryProjectContextProvider),
+        )
 
         runtime.captureCompletedTurn(
             CompletedTurnMemoryInput(
@@ -29,10 +33,11 @@ class DesktopConversationMemoryRuntimeTest {
             )
         )
 
-        assertEquals(MemoryScope("chat", "chat-42"), inputSlot.captured.primaryScope)
+        assertEquals("chat-42", inputSlot.captured.context.conversationId?.value)
+        assertEquals(MemorySurface.DESKTOP, inputSlot.captured.context.surface)
         assertEquals(
-            listOf(MemoryScope("global", "global"), MemoryScope("chat", "chat-42")),
-            inputSlot.captured.scopes,
+            listOf("global", "session"),
+            inputSlot.captured.scopes.map { it.type },
         )
         coVerify(exactly = 1) { captureService.captureAfterTurn(any()) }
     }

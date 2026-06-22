@@ -20,6 +20,13 @@ import ru.souz.llms.LLMResponse
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.llms.toSystemPromptMessage
 import ru.souz.memory.ConversationMemoryRuntime
+import ru.souz.memory.ConversationId
+import ru.souz.memory.MemoryContext
+import ru.souz.memory.MemoryOwnerId
+import ru.souz.memory.MemoryPromptFact
+import ru.souz.memory.MemoryRetrievalRequest
+import ru.souz.memory.MemorySessionId
+import ru.souz.memory.MemorySurface
 import ru.souz.memory.NoopConversationMemoryRuntime
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -107,7 +114,7 @@ internal class NodesCommon(
     fun nodeAppendAdditionalData(name: String = "appendActualInformation"): Node<String, String> = Node(name) { ctx ->
         val additionalMessage = appendActualInformation(
             userText = ctx.input,
-            conversationId = ctx.toolInvocationMeta.conversationId,
+            meta = ctx.toolInvocationMeta,
             eventSink = ctx.runtimeEventSink,
         )
 
@@ -123,12 +130,12 @@ internal class NodesCommon(
 
     private suspend fun appendActualInformation(
         userText: String,
-        conversationId: String?,
+        meta: ToolInvocationMeta,
         eventSink: AgentRuntimeEventSink,
     ): LLMRequest.Message? {
         if (userText.isBlank()) return null
 
-        val memoryBlock = retrieveMemoryBlock(userText, conversationId, eventSink)
+        val memoryBlock = retrieveMemoryBlock(userText, meta, eventSink)
         val additionalData = loadAdditionalData(userText)
         if (memoryBlock == null && additionalData.isEmpty()) return null
         return LLMRequest.Message(LLMMessageRole.user, buildContextMessage(memoryBlock, additionalData))
@@ -205,18 +212,29 @@ internal class NodesCommon(
 
     private suspend fun retrieveMemoryBlock(
         userText: String,
-        conversationId: String?,
+        meta: ToolInvocationMeta,
         eventSink: AgentRuntimeEventSink,
     ): String? {
         val memoryResult = try {
-            memoryRuntime.retrieveMemory(userText, conversationId)
+            memoryRuntime.retrieveMemory(
+                MemoryRetrievalRequest(
+                    context = MemoryContext(
+                        ownerId = MemoryOwnerId(meta.userId),
+                        surface = MemorySurface.DESKTOP,
+                        conversationId = meta.conversationId?.let(::ConversationId),
+                        sessionId = meta.conversationId?.let { MemorySessionId("session-$it") },
+                        projectId = null,
+                    ),
+                    query = userText,
+                )
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             l.warn("Memory retrieval failed: {}", e.message)
             return null
         }
-        val renderedBlock = memoryResult.renderedBlock.trim()
+        val renderedBlock = memoryResult.renderedPromptBlock.orEmpty().trim()
         if (renderedBlock.isBlank()) return null
         try {
             eventSink.emit(AgentRuntimeEvent.MemoryPromptAugmented(renderedBlock, memoryResult.facts))

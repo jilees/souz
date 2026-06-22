@@ -2,13 +2,32 @@ package ru.souz.memory
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.text.Normalizer
 import java.time.Instant
+import java.util.Locale
 import kotlin.math.sqrt
 
 data class MemoryScope(
     val type: String,
     val id: String,
-)
+) {
+    companion object
+}
+
+fun globalMemoryScope(): MemoryScope = MemoryScope(type = "global", id = "global")
+
+fun MemoryScope.Companion.project(projectId: ProjectId): MemoryScope =
+    MemoryScope(type = "project", id = projectId.value)
+
+fun MemoryScope.Companion.chat(conversationId: ConversationId): MemoryScope =
+    MemoryScope(type = "chat", id = conversationId.value)
+
+fun MemoryScope.Companion.session(sessionId: MemorySessionId): MemoryScope =
+    MemoryScope(type = "session", id = sessionId.value)
+
+@Suppress("unused")
+val MemoryScope.Companion.Global: MemoryScope
+    get() = globalMemoryScope()
 
 fun MemoryScope.normalized(): MemoryScope {
     val cleanType = type.trim()
@@ -28,6 +47,14 @@ fun MemoryScope.compatibilityScopes(): List<MemoryScope> {
     }
 }
 
+fun MemoryScope.toRequestedMemoryScope(): RequestedMemoryScope? = when (normalized().type.lowercase(Locale.ROOT)) {
+    "global" -> RequestedMemoryScope.GLOBAL
+    "project" -> RequestedMemoryScope.PROJECT
+    "chat", "thread" -> RequestedMemoryScope.CHAT
+    "session" -> RequestedMemoryScope.SESSION
+    else -> null
+}
+
 enum class MemoryFactKind {
     SEMANTIC,
     PREFERENCE,
@@ -42,8 +69,70 @@ enum class MemoryFactStatus {
     RETIRED,
 }
 
+enum class MemoryFactValidity {
+    VALID,
+    UNCERTAIN,
+    CONTRADICTED,
+}
+
+enum class MemoryRetention {
+    DURABLE,
+    CHAT_LIFETIME,
+    SESSION_LIFETIME,
+    TTL,
+}
+
+enum class MemorySensitivity {
+    NORMAL,
+    PERSONAL,
+    SENSITIVE,
+    SECRET_REFERENCE_ONLY,
+}
+
+enum class MemoryMaintenanceMode {
+    OFF,
+    LOCAL_ONLY,
+    LOCAL_THEN_CLOUD,
+}
+
+data class MemoryMaintenancePreferences(
+    val mode: MemoryMaintenanceMode = MemoryMaintenanceMode.OFF,
+    val lastEnabledMode: MemoryMaintenanceMode = MemoryMaintenanceMode.LOCAL_ONLY,
+    val dailyCloudTokenLimit: Int = 0,
+    val maxCloudCallsPerDay: Int = 0,
+    val maxTokensPerRun: Int = 2_000,
+    val maxClustersPerRun: Int = 10,
+    val maxLlmCallsPerRun: Int = 3,
+    val maxFactsPerCluster: Int = 12,
+    val maxEvidenceExcerptsPerCluster: Int = 16,
+    val runWhenIdle: Boolean = true,
+)
+
+enum class MemoryOperationType {
+    CAPTURE,
+    CREATE,
+    UPDATE,
+    MERGE,
+    RETIRE,
+    DELETE,
+    PROMOTE,
+    DEMOTE,
+    FORGET,
+    MAINTENANCE,
+}
+
+enum class MemoryTokenUsageCategory {
+    MEMORY_CAPTURE,
+    MEMORY_QUERY_EMBEDDING,
+    MEMORY_DOCUMENT_EMBEDDING,
+    MEMORY_RETRIEVAL_RERANK,
+    MEMORY_MAINTENANCE_LOCAL,
+    MEMORY_MAINTENANCE_CLOUD,
+}
+
 data class MemorySourceEvent(
     val id: String,
+    val ownerId: MemoryOwnerId = MemoryOwnerId(LEGACY_OWNER_ID),
     val scope: MemoryScope,
     val sourceType: String,
     val sourceRef: String?,
@@ -54,17 +143,27 @@ data class MemorySourceEvent(
 
 data class MemoryFact(
     val id: String,
+    val ownerId: MemoryOwnerId = MemoryOwnerId(LEGACY_OWNER_ID),
     val scope: MemoryScope,
     val kind: MemoryFactKind,
     val title: String,
     val body: String,
-    val slotKey: String?,
+    @Deprecated("Use canonicalKey", ReplaceWith("canonicalKey"))
+    val slotKey: String? = null,
+    val canonicalKey: String? = slotKey,
     val status: MemoryFactStatus,
+    val validity: MemoryFactValidity = MemoryFactValidity.VALID,
+    val retention: MemoryRetention = MemoryRetention.DURABLE,
+    val sensitivity: MemorySensitivity = MemorySensitivity.NORMAL,
     val confidence: Float,
+    val importance: Float = confidence.coerceIn(0f, 1f),
     val pinned: Boolean,
     val createdBy: String,
+    val version: Long = 1L,
+    val contentHash: String = stableMemoryContentHash(title, body, kind, canonicalKey),
     val createdAt: Instant,
     val updatedAt: Instant,
+    val lastObservedAt: Instant = updatedAt,
     val supersedesFactId: String?,
 )
 
@@ -101,6 +200,7 @@ data class MemoryFactDetails(
 )
 
 data class NewMemorySourceEvent(
+    val ownerId: MemoryOwnerId = MemoryOwnerId(LEGACY_OWNER_ID),
     val scope: MemoryScope,
     val sourceType: String,
     val sourceRef: String?,
@@ -110,37 +210,55 @@ data class NewMemorySourceEvent(
 )
 
 data class NewMemoryFact(
+    val ownerId: MemoryOwnerId = MemoryOwnerId(LEGACY_OWNER_ID),
     val scope: MemoryScope,
     val kind: MemoryFactKind,
     val title: String,
     val body: String,
-    val slotKey: String?,
+    @Deprecated("Use canonicalKey", ReplaceWith("canonicalKey"))
+    val slotKey: String? = null,
+    val canonicalKey: String? = slotKey,
     val status: MemoryFactStatus,
+    val validity: MemoryFactValidity = MemoryFactValidity.VALID,
+    val retention: MemoryRetention = MemoryRetention.DURABLE,
+    val sensitivity: MemorySensitivity = MemorySensitivity.NORMAL,
     val confidence: Float,
+    val importance: Float = confidence.coerceIn(0f, 1f),
     val pinned: Boolean,
     val createdBy: String,
+    val version: Long = 1L,
+    val contentHash: String = stableMemoryContentHash(title, body, kind, canonicalKey),
     val createdAt: Instant = Instant.now(),
     val updatedAt: Instant = createdAt,
+    val lastObservedAt: Instant = updatedAt,
     val supersedesFactId: String?,
 )
 
 data class CreateMemoryFactInput(
+    val ownerId: MemoryOwnerId = MemoryOwnerId(LEGACY_OWNER_ID),
     val scope: MemoryScope,
     val kind: MemoryFactKind,
     val title: String,
     val body: String,
+    @Deprecated("Use canonicalKey", ReplaceWith("canonicalKey"))
     val slotKey: String? = null,
+    val canonicalKey: String? = slotKey,
     val confidence: Float = 1f,
+    val importance: Float = confidence.coerceIn(0f, 1f),
     val pinned: Boolean = false,
 )
 
 data class CreateCapturedFactInput(
+    val ownerId: MemoryOwnerId = MemoryOwnerId(LEGACY_OWNER_ID),
     val scope: MemoryScope,
     val kind: MemoryFactKind,
     val title: String,
     val body: String,
-    val slotKey: String?,
+    @Deprecated("Use canonicalKey", ReplaceWith("canonicalKey"))
+    val slotKey: String? = null,
+    val canonicalKey: String? = slotKey,
     val confidence: Float,
+    val importance: Float = confidence.coerceIn(0f, 1f),
     val evidenceText: String,
     val sourceEventId: String,
     val pinned: Boolean = false,
@@ -151,13 +269,19 @@ data class MemoryFactPatch(
     val kind: MemoryFactKind? = null,
     val title: String? = null,
     val body: String? = null,
+    @Deprecated("Use canonicalKey", ReplaceWith("canonicalKey"))
     val slotKey: String? = null,
+    @Deprecated("Use clearCanonicalKey", ReplaceWith("clearCanonicalKey"))
     val clearSlotKey: Boolean = false,
+    val canonicalKey: String? = null,
+    val clearCanonicalKey: Boolean = false,
     val confidence: Float? = null,
+    val importance: Float? = null,
     val pinned: Boolean? = null,
 )
 
 data class MemoryFactFilter(
+    val ownerId: MemoryOwnerId? = null,
     val statuses: Set<MemoryFactStatus> = setOf(MemoryFactStatus.ACTIVE),
     val kinds: Set<MemoryFactKind> = emptySet(),
     val scope: MemoryScope? = null,
@@ -168,8 +292,10 @@ data class MemoryFactFilter(
 )
 
 data class MemoryCaptureInput(
+    val context: MemoryContext = legacyMemoryContext(),
     val scopes: List<MemoryScope>,
-    val primaryScope: MemoryScope,
+    @Deprecated("Use context + requested scopes")
+    val primaryScope: MemoryScope = scopes.firstOrNull() ?: globalMemoryScope(),
     val userMessage: String,
     val assistantMessage: String,
     val conversationId: String?,
@@ -182,11 +308,97 @@ data class MemoryFactCandidate(
     val kind: MemoryFactKind,
     val title: String,
     val body: String,
-    val scope: MemoryScope?,
-    val slotKey: String?,
+    @Deprecated("Use requestedScope")
+    val scope: MemoryScope? = null,
+    @Deprecated("Use canonicalKey")
+    val slotKey: String? = null,
+    val requestedScope: RequestedMemoryScope? = scope?.toRequestedMemoryScope(),
+    val canonicalKey: String? = slotKey,
     val confidence: Float,
+    val importance: Float = confidence.coerceIn(0f, 1f),
     val evidenceText: String,
 )
+
+data class RetrievedMemoryFact(
+    val fact: MemoryFact,
+    val score: Float,
+    val sources: Set<String>,
+)
+
+fun normalizeCanonicalKey(raw: String?): String? {
+    val normalized = raw
+        ?.let { Normalizer.normalize(it.trim(), Normalizer.Form.NFKC) }
+        ?.lowercase(Locale.ROOT)
+        ?.replace(Regex("""[\s:/\\]+"""), ".")
+        ?.replace(Regex("""[._-]+"""), ".")
+        ?.trim('.')
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+    if (normalized.length > 96) return null
+    val allowedPrefixes = listOf(
+        "user.preference.",
+        "user.workflow.",
+        "project.rule.",
+        "project.decision.",
+        "project.procedure.",
+        "session.task.",
+        "chat.note.",
+    )
+    return normalized.takeIf { key ->
+        allowedPrefixes.any(key::startsWith) && !MemorySanitizer.looksSecret(key)
+    }
+}
+
+fun MemoryContext.allowedRetrievalScopes(includeChat: Boolean = surface == MemorySurface.BACKEND): List<MemoryScope> = buildList {
+    add(globalMemoryScope())
+    projectId?.let { add(MemoryScope.project(it)) }
+    sessionId?.let { add(MemoryScope.session(it)) }
+    if (includeChat) {
+        conversationId?.let { add(MemoryScope.chat(it)) }
+    }
+}
+
+fun MemoryContext.resolveRequestedScope(
+    requestedScope: RequestedMemoryScope?,
+    kind: MemoryFactKind,
+): MemoryScope? = when (requestedScope ?: defaultRequestedScope(kind)) {
+    RequestedMemoryScope.GLOBAL -> globalMemoryScope()
+    RequestedMemoryScope.PROJECT -> projectId?.let { MemoryScope.project(it) }
+    RequestedMemoryScope.CHAT -> if (surface == MemorySurface.BACKEND) {
+        conversationId?.let { MemoryScope.chat(it) }
+    } else {
+        null
+    }
+    RequestedMemoryScope.SESSION -> sessionId?.let { MemoryScope.session(it) }
+}
+
+fun defaultRequestedScope(kind: MemoryFactKind): RequestedMemoryScope = when (kind) {
+    MemoryFactKind.PREFERENCE,
+    MemoryFactKind.PROCEDURE -> RequestedMemoryScope.GLOBAL
+    MemoryFactKind.PROJECT_RULE,
+    MemoryFactKind.PROJECT_DECISION -> RequestedMemoryScope.PROJECT
+    MemoryFactKind.EPISODE_NOTE,
+    MemoryFactKind.SEMANTIC -> RequestedMemoryScope.SESSION
+}
+
+fun retentionForScope(scope: MemoryScope): MemoryRetention = when (scope.normalized().type.lowercase(Locale.ROOT)) {
+    "global", "project" -> MemoryRetention.DURABLE
+    "chat", "thread" -> MemoryRetention.CHAT_LIFETIME
+    "session" -> MemoryRetention.SESSION_LIFETIME
+    else -> MemoryRetention.DURABLE
+}
+
+fun stableMemoryContentHash(
+    title: String,
+    body: String,
+    kind: MemoryFactKind,
+    canonicalKey: String?,
+): String {
+    val normalized = listOf(kind.name, canonicalKey.orEmpty(), title.trim(), body.trim())
+        .joinToString("\n") { it.lowercase(Locale.ROOT).replace(Regex("""\s+"""), " ") }
+    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(normalized.toByteArray())
+    return digest.joinToString("") { "%02x".format(it) }
+}
 
 fun FloatArray.toBlob(): ByteArray {
     val buffer = ByteBuffer.allocate(size * 4).order(ByteOrder.LITTLE_ENDIAN)
@@ -263,6 +475,14 @@ object MemorySanitizer {
         result = result.replace(filePathRegex, "[redacted-path]")
         return result
     }
+
+    fun looksSecret(text: String): Boolean =
+        apiKeysRegex.containsMatchIn(text) ||
+            authHeaderRegex.containsMatchIn(text) ||
+            bearerTokenRegex.containsMatchIn(text) ||
+            envVarsRegex.containsMatchIn(text) ||
+            longTokenRegex.containsMatchIn(text) ||
+            hexRegex.containsMatchIn(text)
 }
 
 fun redactMemoryText(text: String): String {

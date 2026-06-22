@@ -99,7 +99,7 @@ class MemoryCoreTest {
                     title = "Write tests first",
                     body = "Implement features test-first in this project.",
                     scope = projectScope(),
-                    slotKey = "test_first_rule",
+                    slotKey = "project.rule.test.first",
                     confidence = 0.91f,
                     evidenceText = "Before implementing the feature, write tests first.",
                 )
@@ -120,7 +120,7 @@ class MemoryCoreTest {
                     kind = MemoryFactKind.PREFERENCE,
                     title = "User prefers Kotlin",
                     body = "User wants Kotlin implementation.",
-                    slotKey = "implementation_language",
+                    slotKey = "user.preference.implementation.language",
                     confidence = 0.45f,
                     evidenceText = "запомни: хочу реализацию на Kotlin",
                 )
@@ -187,7 +187,7 @@ class MemoryCoreTest {
                     title = "Chat storage",
                     body = "Use Postgres in this chat only.",
                     scope = chatScope("chat-2"),
-                    slotKey = "memory_storage_target",
+                    slotKey = "project.decision.memory.storage.target",
                     confidence = 0.95f,
                     evidenceText = "Use Postgres in this chat only.",
                 )
@@ -203,7 +203,7 @@ class MemoryCoreTest {
                 kind = MemoryFactKind.PROJECT_DECISION,
                 title = "Project storage",
                 body = "Use SQLite in the project scope.",
-                slotKey = "memory_storage_target",
+                slotKey = "project.decision.memory.storage.target",
                 confidence = 0.9f,
                 evidenceText = "project evidence",
                 sourceEventId = projectSourceId,
@@ -226,7 +226,7 @@ class MemoryCoreTest {
                     title = "Primary career goal: Anthropic",
                     body = "User wants to work at Anthropic.",
                     scope = MemoryScope("global", "global:global"),
-                    slotKey = "career_goal_anthropic",
+                    slotKey = "user.preference.career.goal.anthropic",
                     confidence = 0.95f,
                     evidenceText = "My primary career goal is Anthropic.",
                 )
@@ -272,7 +272,28 @@ class MemoryCoreTest {
     }
 
     @Test
-    fun `retrieveForPrompt prepends pinned facts includes legacy scopes and keeps five facts`() = runTest {
+    fun `migration queues legacy chat facts and excludes them from global retrieval`() = runTest {
+        val dbPath = Files.createTempDirectory("souz-memory-v1-test-").resolve("memory.db")
+        seedLegacyV1MemoryDb(dbPath)
+        val repository = SqliteMemoryRepository(dbPath)
+        val memoryService = MemoryService(repository, FakeEmbeddingClient())
+
+        val migratedChatFacts = repository.listFacts(
+            MemoryFactFilter(scope = MemoryScope("chat", "chat-legacy"))
+        )
+        val block = memoryService.retrieveForPrompt(
+            scopes = listOf(globalScope()),
+            query = "legacy kotlin chat memory",
+            limit = 5,
+        )
+
+        assertEquals(listOf("fact-legacy-chat"), migratedChatFacts.map { it.id })
+        assertTrue(block.facts.none { it.id == "fact-legacy-chat" })
+        assertEquals(1, countRows(dbPath, "memory_maintenance_jobs"))
+    }
+
+    @Test
+    fun `retrieveForPrompt uses pinned as relevance boost and keeps bounded facts`() = runTest {
         val fixture = createFixture()
         val pinnedPreference = fixture.createManual(
             title = "User Language",
@@ -297,13 +318,14 @@ class MemoryCoreTest {
             query = "kotlin desktop memory",
         )
 
-        assertEquals(5, block.facts.size)
-        assertEquals(setOf(pinnedPreference.id, pinnedLegacy.id), block.facts.take(2).map { it.id }.toSet())
-        assertEquals(listOf(strong.id, medium.id, weak.id), block.facts.drop(2).map { it.id })
+        assertEquals(3, block.facts.size)
+        assertTrue(block.facts.none { it.id == pinnedPreference.id })
+        assertTrue(block.facts.none { it.id == pinnedLegacy.id })
+        assertEquals(setOf(strong.id, medium.id, weak.id), block.facts.map { it.id }.toSet())
     }
 
     @Test
-    fun `retrieveForPrompt lazily backfills facts without embeddings in hot path`() = runTest {
+    fun `retrieveForPrompt does not backfill facts without embeddings in hot path`() = runTest {
         val fixture = createFixture()
         val sourceId = fixture.repository.insertSourceEvent(
             NewMemorySourceEvent(
@@ -339,11 +361,11 @@ class MemoryCoreTest {
         assertEquals(1, block.facts.size)
         assertEquals(factId, block.facts.first().id)
         assertEquals(1, fixture.embedder.queryCallCount)
-        assertEquals(1, fixture.embedder.documentCallCount)
+        assertEquals(0, fixture.embedder.documentCallCount)
     }
 
     @Test
-    fun `retrieveForPrompt backfills at most five missing embeddings per request`() = runTest {
+    fun `retrieveForPrompt does not build document embeddings for missing embeddings`() = runTest {
         val fixture = createFixture()
         repeat(7) { index ->
             fixture.createLegacy(
@@ -362,7 +384,7 @@ class MemoryCoreTest {
         )
 
         assertEquals(1, fixture.embedder.queryCallCount)
-        assertEquals(5, fixture.embedder.documentCallCount)
+        assertEquals(0, fixture.embedder.documentCallCount)
     }
 
     @Test
@@ -540,29 +562,28 @@ class MemoryCoreTest {
     }
 
     @Test
-    fun `createManualFact cleans up source event after embedding failure`() = runTest {
+    fun `createManualFact keeps canonical fact after embedding failure`() = runTest {
         val fixture = createFixture()
         fixture.embedder.mode = FakeEmbeddingClient.Mode.THROW_ON_DOCUMENT
 
-        val result = kotlin.runCatching {
-            fixture.memoryService.createManualFact(
-                CreateMemoryFactInput(
-                    scope = globalScope(),
-                    kind = MemoryFactKind.SEMANTIC,
-                    title = "Manual note",
-                    body = "Remember this manual note.",
-                )
+        val fact = fixture.memoryService.createManualFact(
+            CreateMemoryFactInput(
+                scope = globalScope(),
+                kind = MemoryFactKind.SEMANTIC,
+                title = "Manual note",
+                body = "Remember this manual note.",
             )
-        }
+        )
 
-        assertTrue(result.isFailure)
-        assertEquals(0, fixture.countRows("memory_source_events"))
-        assertEquals(0, fixture.countRows("memory_facts"))
-        assertEquals(0, fixture.countRows("memory_fact_evidence"))
+        assertEquals(MemoryFactStatus.ACTIVE, fixture.repository.getFact(fact.id)?.status)
+        assertEquals(1, fixture.countRows("memory_source_events"))
+        assertEquals(1, fixture.countRows("memory_facts"))
+        assertEquals(1, fixture.countRows("memory_fact_evidence"))
+        assertEquals(1, fixture.countRows("memory_index_jobs"))
     }
 
     @Test
-    fun `capture cleans up source event after embedding failure`() = runTest {
+    fun `capture keeps fact after embedding failure`() = runTest {
         val fixture = createFixture(
             writer = FixedWriter(
                 candidate(
@@ -577,14 +598,13 @@ class MemoryCoreTest {
         )
         fixture.embedder.mode = FakeEmbeddingClient.Mode.THROW_ON_DOCUMENT
 
-        val result = kotlin.runCatching {
-            fixture.capture()
-        }
+        val created = fixture.capture()
 
-        assertTrue(result.isFailure)
-        assertEquals(0, fixture.countRows("memory_source_events"))
-        assertEquals(0, fixture.countRows("memory_facts"))
-        assertEquals(0, fixture.countRows("memory_fact_evidence"))
+        assertEquals(1, created.size)
+        assertEquals(1, fixture.countRows("memory_source_events"))
+        assertEquals(1, fixture.countRows("memory_facts"))
+        assertEquals(1, fixture.countRows("memory_fact_evidence"))
+        assertEquals(1, fixture.countRows("memory_index_jobs"))
     }
 
     @Test
@@ -599,33 +619,30 @@ class MemoryCoreTest {
         // Set mode to THROW_ON_DOCUMENT
         fixture.embedder.mode = FakeEmbeddingClient.Mode.THROW_ON_DOCUMENT
 
-        // Capture replacement; this should throw/fail
-        val result = kotlin.runCatching {
-            fixture.capture(
-                userMessage = "Use SQLite for desktop memory storage.",
-                primaryScope = projectScope(),
-                scopes = listOf(projectScope()),
-            )
-        }
-        assertTrue(result.isFailure)
+        val second = fixture.capture(
+            userMessage = "Use SQLite for desktop memory storage.",
+            primaryScope = projectScope(),
+            scopes = listOf(projectScope()),
+        ).single()
 
-        // Verify the old fact remains ACTIVE, and new fact was not created or has status ACTIVE.
         val oldFact = fixture.repository.getFact(first.id)
+        val newFact = fixture.repository.getFact(second.id)
         assertNotNull(oldFact)
-        assertEquals(MemoryFactStatus.ACTIVE, oldFact.status)
+        assertNotNull(newFact)
+        assertEquals(MemoryFactStatus.RETIRED, oldFact.status)
+        assertEquals(MemoryFactStatus.ACTIVE, newFact.status)
 
-        // Find active fact by slot key is still the old one
-        val activeFact = fixture.repository.findActiveFactBySlotKey(projectScope(), "memory_storage_target")
+        val activeFact = fixture.repository.findActiveFactBySlotKey(projectScope(), "project.decision.memory.storage.target")
         assertNotNull(activeFact)
-        assertEquals(first.id, activeFact.id)
+        assertEquals(second.id, activeFact.id)
 
-        // Old semantic search still works
+        fixture.embedder.mode = FakeEmbeddingClient.Mode.NORMAL
         val hits = fixture.search(projectScope(), "postgres storage")
-        assertEquals(listOf(first.id), hits.map { it.fact.id })
+        assertTrue(hits.none { it.fact.id == first.id })
     }
 
     @Test
-    fun `updateFact with failing document embedding`() = runTest {
+    fun `updateFact persists text even when document embedding fails`() = runTest {
         val fixture = createFixture()
         val fact = fixture.createManual(
             scope = projectScope(),
@@ -637,32 +654,26 @@ class MemoryCoreTest {
         // Set mode to THROW_ON_DOCUMENT
         fixture.embedder.mode = FakeEmbeddingClient.Mode.THROW_ON_DOCUMENT
 
-        // updateFact should throw/fail
-        val result = kotlin.runCatching {
-            fixture.memoryService.updateFact(
-                factId = fact.id,
-                patch = MemoryFactPatch(
-                    title = "Desktop storage",
-                    body = "Use SQLite for desktop memory storage.",
-                )
+        fixture.memoryService.updateFact(
+            factId = fact.id,
+            patch = MemoryFactPatch(
+                title = "Desktop storage",
+                body = "Use SQLite for desktop memory storage.",
             )
-        }
-        assertTrue(result.isFailure)
+        )
 
-        // Check text remains old
         val currentFact = fixture.repository.getFact(fact.id)
         assertNotNull(currentFact)
-        assertEquals("Initial storage", currentFact.title)
-        assertEquals("Use Postgres for memory storage.", currentFact.body)
+        assertEquals("Desktop storage", currentFact.title)
+        assertEquals("Use SQLite for desktop memory storage.", currentFact.body)
 
-        // Old semantic search still works by previous content
         fixture.embedder.mode = FakeEmbeddingClient.Mode.NORMAL
-        val hits = fixture.search(projectScope(), "postgres storage")
+        val hits = fixture.search(projectScope(), "sqlite storage")
         assertEquals(listOf(fact.id), hits.map { it.fact.id })
     }
 
     @Test
-    fun `retrieveForPrompt rethrows cancellation from embedding backfill`() = runTest {
+    fun `retrieveForPrompt does not run document embedding cancellation path`() = runTest {
         val fixture = createFixture()
         fixture.createLegacy(
             title = "Use Kotlin",
@@ -672,13 +683,13 @@ class MemoryCoreTest {
         )
         fixture.embedder.mode = FakeEmbeddingClient.Mode.CANCEL_ON_DOCUMENT
 
-        assertFailsWith<CancellationException> {
-            fixture.memoryService.retrieveForPrompt(
-                scopes = listOf(globalScope()),
-                query = "kotlin implementation",
-                limit = 5,
-            )
-        }
+        val block = fixture.memoryService.retrieveForPrompt(
+            scopes = listOf(globalScope()),
+            query = "kotlin implementation",
+            limit = 5,
+        )
+
+        assertEquals(1, block.facts.size)
     }
 
     @Test
@@ -816,7 +827,9 @@ class MemoryCoreTest {
             limit = 5,
         )
 
-    private fun Fixture.countRows(table: String): Int {
+    private fun Fixture.countRows(table: String): Int = countRows(dbPath, table)
+
+    private fun countRows(dbPath: Path, table: String): Int {
         Class.forName("org.sqlite.JDBC")
         DriverManager.getConnection("jdbc:sqlite:${dbPath.toAbsolutePath()}").use { connection ->
             connection.prepareStatement("select count(*) from $table").use { statement ->
@@ -824,6 +837,102 @@ class MemoryCoreTest {
                     rs.next()
                     return rs.getInt(1)
                 }
+            }
+        }
+    }
+
+    private fun seedLegacyV1MemoryDb(dbPath: Path) {
+        Class.forName("org.sqlite.JDBC")
+        DriverManager.getConnection("jdbc:sqlite:${dbPath.toAbsolutePath()}").use { connection ->
+            listOf(
+                """
+                create table memory_source_events (
+                    id text primary key,
+                    scope_type text not null,
+                    scope_id text not null,
+                    source_type text not null,
+                    source_ref text,
+                    text text not null,
+                    metadata_json text not null default '{}',
+                    created_at text not null
+                )
+                """.trimIndent(),
+                """
+                create table memory_facts (
+                    id text primary key,
+                    scope_type text not null,
+                    scope_id text not null,
+                    kind text not null,
+                    title text not null,
+                    body text not null,
+                    slot_key text,
+                    status text not null,
+                    confidence real not null,
+                    pinned integer not null,
+                    created_by text not null,
+                    created_at text not null,
+                    updated_at text not null,
+                    supersedes_fact_id text
+                )
+                """.trimIndent(),
+                """
+                create table memory_fact_evidence (
+                    fact_id text not null,
+                    source_event_id text not null,
+                    evidence_text text,
+                    primary key (fact_id, source_event_id)
+                )
+                """.trimIndent(),
+                """
+                create table memory_fact_embeddings (
+                    fact_id text primary key,
+                    embedding_model text not null,
+                    embedding_blob blob not null,
+                    dimension integer not null,
+                    updated_at text not null
+                )
+                """.trimIndent(),
+                """
+                insert into memory_source_events(
+                    id, scope_type, scope_id, source_type, source_ref, text, metadata_json, created_at
+                ) values (
+                    'source-legacy-chat',
+                    'chat',
+                    'chat-legacy',
+                    'turn',
+                    'chat-legacy',
+                    'Legacy Kotlin chat memory.',
+                    '{}',
+                    '2026-05-24T10:15:30Z'
+                )
+                """.trimIndent(),
+                """
+                insert into memory_facts(
+                    id, scope_type, scope_id, kind, title, body, slot_key, status, confidence, pinned,
+                    created_by, created_at, updated_at, supersedes_fact_id
+                ) values (
+                    'fact-legacy-chat',
+                    'chat',
+                    'chat-legacy',
+                    'SEMANTIC',
+                    'Legacy Kotlin chat',
+                    'Legacy Kotlin chat memory.',
+                    null,
+                    'ACTIVE',
+                    1.0,
+                    0,
+                    'writer',
+                    '2026-05-24T10:15:30Z',
+                    '2026-05-24T11:15:30Z',
+                    null
+                )
+                """.trimIndent(),
+                """
+                insert into memory_fact_evidence(fact_id, source_event_id, evidence_text)
+                values ('fact-legacy-chat', 'source-legacy-chat', 'Legacy Kotlin chat memory.')
+                """.trimIndent(),
+            ).forEach { sql ->
+                connection.createStatement().use { statement -> statement.execute(sql) }
             }
         }
     }
@@ -883,7 +992,7 @@ class MemoryCoreTest {
                     title = "Memory storage target",
                     body = input.userMessage,
                     scope = scope,
-                    slotKey = "memory_storage_target",
+                    slotKey = "project.decision.memory.storage.target",
                     confidence = 0.95f,
                     evidenceText = input.userMessage,
                 )

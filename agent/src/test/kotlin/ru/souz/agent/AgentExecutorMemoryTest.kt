@@ -15,6 +15,7 @@ import ru.souz.agent.state.AgentContext
 import ru.souz.agent.state.AgentSettings
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.LLMRequest
+import ru.souz.llms.LocalUserId
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.memory.CompletedTurnMemoryInput
 import ru.souz.memory.ConversationMemoryRuntime
@@ -67,16 +68,14 @@ class AgentExecutorMemoryTest {
         val captured = withTimeout(1_000) { memoryRuntime.captureStarted.await() }
 
         assertEquals("assistant response", result.output)
-        assertEquals(
-            CompletedTurnMemoryInput(
-                conversationId = "conversation-1",
-                userMessageId = "user-message-1",
-                assistantMessageId = "assistant-message-1",
-                userMessage = "hello",
-                assistantMessage = "assistant response",
-            ),
-            captured,
-        )
+        assertEquals("conversation-1", captured.conversationId)
+        assertEquals("conversation-1", captured.context.conversationId?.value)
+        assertEquals("session-conversation-1", captured.context.sessionId?.value)
+        assertEquals(LocalUserId.default(), captured.context.ownerId.value)
+        assertEquals("user-message-1", captured.userMessageId)
+        assertEquals("assistant-message-1", captured.assistantMessageId)
+        assertEquals("hello", captured.userMessage)
+        assertEquals("assistant response", captured.assistantMessage)
         assertFalse(memoryRuntime.captureFinished.isCompleted)
 
         memoryRuntime.releaseCapture.complete(Unit)

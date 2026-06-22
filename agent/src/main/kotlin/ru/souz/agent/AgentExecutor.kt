@@ -9,6 +9,11 @@ import ru.souz.agent.runtime.AgentRuntimeEventSink
 import ru.souz.agent.state.AgentContext
 import ru.souz.memory.CompletedTurnMemoryInput
 import ru.souz.memory.ConversationMemoryRuntime
+import ru.souz.memory.ConversationId
+import ru.souz.memory.MemoryContext
+import ru.souz.memory.MemoryOwnerId
+import ru.souz.memory.MemorySessionId
+import ru.souz.memory.MemorySurface
 import ru.souz.memory.NoopConversationMemoryRuntime
 
 class AgentExecutor internal constructor(
@@ -66,6 +71,13 @@ class AgentExecutor internal constructor(
             try {
                 memoryRuntime.captureCompletedTurn(
                     CompletedTurnMemoryInput(
+                        context = MemoryContext(
+                            ownerId = MemoryOwnerId(ctx.toolInvocationMeta.userId),
+                            surface = MemorySurface.DESKTOP,
+                            conversationId = ctx.toolInvocationMeta.conversationId?.let(::ConversationId),
+                            sessionId = ctx.toolInvocationMeta.conversationId?.let { MemorySessionId("session-$it") },
+                            projectId = null,
+                        ),
                         conversationId = ctx.toolInvocationMeta.conversationId,
                         userMessageId = ctx.toolInvocationMeta.attributes["userMessageId"]
                             ?: ctx.toolInvocationMeta.requestId,

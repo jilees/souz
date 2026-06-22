@@ -20,9 +20,6 @@ class LlmMemoryWriter(
     private val logger = LoggerFactory.getLogger(LlmMemoryWriter::class.java)
 
     override suspend fun extractCandidates(input: MemoryCaptureInput): List<MemoryFactCandidate> {
-        val explicitRememberCandidate = buildExplicitRememberCandidate(input)
-        if (explicitRememberCandidate != null) return listOf(explicitRememberCandidate)
-
         val response = api.message(
             LLMRequest.Chat(
                 model = settingsProvider.gigaModel.alias,
@@ -58,11 +55,10 @@ class LlmMemoryWriter(
                         kind = candidate.kind,
                         title = candidate.title,
                         body = candidate.body,
-                        scope = candidate.scopeType?.let { type ->
-                            candidate.scopeId?.let { id -> MemoryScope(type = type, id = id) }
-                        },
-                        slotKey = candidate.slotKey,
+                        requestedScope = candidate.requestedScope ?: candidate.scopeType?.toRequestedScopeOrNull(),
+                        canonicalKey = normalizeCanonicalKey(candidate.canonicalKey ?: candidate.slotKey),
                         confidence = candidate.confidence,
+                        importance = candidate.importance ?: candidate.confidence,
                         evidenceText = candidate.evidenceText,
                     )
                 }
@@ -71,15 +67,19 @@ class LlmMemoryWriter(
     }
 
     private fun buildUserPrompt(input: MemoryCaptureInput): String = buildString {
-        appendLine("Primary scope: ${input.primaryScope.type}:${input.primaryScope.id}")
-        appendLine("Available scopes: ${input.scopes.joinToString { "${it.type}:${it.id}" }}")
-        appendLine("Conversation ID: ${input.conversationId.orEmpty()}")
+        val context = input.context
+        appendLine("Available semantic scopes:")
+        appendLine("- GLOBAL")
+        if (context.projectId != null) appendLine("- PROJECT")
+        if (context.surface == MemorySurface.BACKEND && context.conversationId != null) appendLine("- CHAT")
+        if (context.sessionId != null) appendLine("- SESSION")
+        appendLine("Surface: ${context.surface}")
         appendLine()
         appendLine("User message:")
-        appendLine(input.userMessage.trim())
+        appendLine(MemorySanitizer.redact(input.userMessage.trim()))
         appendLine()
-        appendLine("Assistant message:")
-        appendLine(input.assistantMessage.trim())
+        appendLine("Assistant message (context only, not evidence):")
+        appendLine(MemorySanitizer.redact(input.assistantMessage.trim()))
     }
 
     private fun String.extractJsonArray(): String {
@@ -98,12 +98,24 @@ class LlmMemoryWriter(
         val kind: MemoryFactKind = MemoryFactKind.SEMANTIC,
         val title: String = "",
         val body: String = "",
+        val requestedScope: RequestedMemoryScope? = null,
         val scopeType: String? = null,
-        val scopeId: String? = null,
         val slotKey: String? = null,
+        val canonicalKey: String? = null,
         val confidence: Float = 0f,
+        val importance: Float? = null,
         val evidenceText: String = "",
     )
+
+    private fun String.toRequestedScopeOrNull(): RequestedMemoryScope? =
+        RequestedMemoryScope.entries.firstOrNull { it.name.equals(this, ignoreCase = true) }
+            ?: when (lowercase()) {
+                "global" -> RequestedMemoryScope.GLOBAL
+                "project" -> RequestedMemoryScope.PROJECT
+                "chat", "thread" -> RequestedMemoryScope.CHAT
+                "session" -> RequestedMemoryScope.SESSION
+                else -> null
+            }
 
     private companion object {
         private const val WRITER_SYSTEM_PROMPT = """
@@ -134,13 +146,16 @@ Each item:
   "kind": "PREFERENCE|PROCEDURE|PROJECT_RULE|PROJECT_DECISION|SEMANTIC|EPISODE_NOTE",
   "title": "...",
   "body": "...",
-  "scopeType": "global|project|thread|chat",
-  "scopeId": "...",
-  "slotKey": "stable_snake_case_key_or_null",
+  "requestedScope": "GLOBAL|PROJECT|CHAT|SESSION",
+  "canonicalKey": "controlled.semantic.key.or_null",
   "confidence": 0.0,
+  "importance": 0.0,
   "evidenceText": "short exact quote or close excerpt from the turn"
 }
 
+Never return owner IDs or concrete project/chat/session IDs.
+Use assistant text only as context; evidenceText must come from user text.
+Use canonicalKey only for stable namespaces such as user.preference.response_language or project.rule.test_command.
 If there is no durable memory, return [].
 """
     }

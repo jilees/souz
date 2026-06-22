@@ -44,15 +44,15 @@ class MemoryRulesTest {
 
     @Test
     fun `explicit remember parser gives negative priority`() {
-        assertEquals(ExplicitMemoryIntent.SKIP, parseExplicitMemoryIntent("не запоминай это"))
-        assertEquals(ExplicitMemoryIntent.SKIP, parseExplicitMemoryIntent("don't remember this"))
-        assertEquals(ExplicitMemoryIntent.SKIP, parseExplicitMemoryIntent("forget this"))
-        assertEquals(ExplicitMemoryIntent.SKIP, parseExplicitMemoryIntent("забудь это"))
-        assertEquals(ExplicitMemoryIntent.SAVE, parseExplicitMemoryIntent("запомни, что я предпочитаю Kotlin"))
-        assertEquals(ExplicitMemoryIntent.SAVE, parseExplicitMemoryIntent("remember that I prefer Kotlin"))
-        assertEquals(ExplicitMemoryIntent.SAVE, parseExplicitMemoryIntent("don't forget that I prefer Kotlin"))
-        assertEquals(ExplicitMemoryIntent.SAVE, parseExplicitMemoryIntent("не забудь, что я предпочитаю Kotlin"))
-        assertEquals(ExplicitMemoryIntent.SKIP, parseExplicitMemoryIntent("remember that, but don't save this"))
+        assertEquals(ExplicitMemoryIntent.DO_NOT_CAPTURE_THIS_TURN, parseExplicitMemoryIntent("не запоминай это"))
+        assertEquals(ExplicitMemoryIntent.DO_NOT_CAPTURE_THIS_TURN, parseExplicitMemoryIntent("don't remember this"))
+        assertEquals(ExplicitMemoryIntent.FORGET_EXISTING, parseExplicitMemoryIntent("forget this"))
+        assertEquals(ExplicitMemoryIntent.FORGET_EXISTING, parseExplicitMemoryIntent("забудь это"))
+        assertEquals(ExplicitMemoryIntent.REMEMBER_SIGNAL, parseExplicitMemoryIntent("запомни, что я предпочитаю Kotlin"))
+        assertEquals(ExplicitMemoryIntent.REMEMBER_SIGNAL, parseExplicitMemoryIntent("remember that I prefer Kotlin"))
+        assertEquals(ExplicitMemoryIntent.REMEMBER_SIGNAL, parseExplicitMemoryIntent("don't forget that I prefer Kotlin"))
+        assertEquals(ExplicitMemoryIntent.REMEMBER_SIGNAL, parseExplicitMemoryIntent("не забудь, что я предпочитаю Kotlin"))
+        assertEquals(ExplicitMemoryIntent.DO_NOT_CAPTURE_THIS_TURN, parseExplicitMemoryIntent("remember that, but don't save this"))
         assertEquals(ExplicitMemoryIntent.NONE, parseExplicitMemoryIntent("Explain how an LSTM forget gate works"))
         assertEquals(ExplicitMemoryIntent.NONE, parseExplicitMemoryIntent("Расскажи про forgetting curve"))
         assertEquals(ExplicitMemoryIntent.NONE, parseExplicitMemoryIntent("Просто ответь на вопрос"))
@@ -73,11 +73,11 @@ class MemoryRulesTest {
         )
 
         assertNotNull(candidate)
-        assertEquals(MemoryScope("chat", "chat-1"), candidate.scope)
+        assertEquals(RequestedMemoryScope.GLOBAL, candidate.requestedScope)
         assertEquals(MemoryFactKind.PREFERENCE, candidate.kind)
         assertEquals("I prefer Kotlin implementation", candidate.title)
         assertEquals("I prefer Kotlin implementation.", candidate.body)
-        assertEquals("i_prefer_kotlin_implementation", candidate.slotKey)
+        assertEquals("user.preference.code.language", candidate.canonicalKey)
     }
 
     @Test

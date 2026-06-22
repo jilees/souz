@@ -7,7 +7,13 @@ import ru.souz.memory.MemoryFactFilter
 import ru.souz.memory.MemoryFactKind
 import ru.souz.memory.MemoryFactPatch
 import ru.souz.memory.MemoryFactStatus
+import ru.souz.memory.MemoryMaintenanceBlockReason
+import ru.souz.memory.MemoryMaintenanceMode
+import ru.souz.memory.MemoryMaintenancePreferences
+import ru.souz.memory.MemoryMaintenanceStatus
+import ru.souz.memory.MemoryMaintenanceWorkerState
 import ru.souz.memory.MemoryScope
+import java.time.Instant
 import ru.souz.ui.VMEvent
 import ru.souz.ui.VMSideEffect
 import ru.souz.ui.VMState
@@ -23,7 +29,34 @@ data class MemoryUiState(
     val error: String? = null,
     val editor: MemoryEditorState? = null,
     val confirm: PendingMemoryConfirm? = null,
+    val maintenance: MemoryMaintenanceUiState = MemoryMaintenanceUiState(),
 ) : VMState
+
+data class MemoryMaintenanceUiState(
+    val mode: MemoryMaintenanceMode = MemoryMaintenanceMode.OFF,
+    val lastEnabledMode: MemoryMaintenanceMode = MemoryMaintenanceMode.LOCAL_ONLY,
+    val dailyCloudTokenLimitInput: String = "0",
+    val maxCloudCallsPerDayInput: String = "0",
+    val maxTokensPerRunInput: String = "2000",
+    val maxClustersPerRunInput: String = "10",
+    val runWhenIdle: Boolean = true,
+    val tokensUsedToday: Int = 0,
+    val cloudCallsToday: Int = 0,
+    val usageIsEstimated: Boolean = false,
+    val pendingClusters: Int = 0,
+    val blockedClusters: Int = 0,
+    val workerState: MemoryMaintenanceWorkerState = MemoryMaintenanceWorkerState.IDLE,
+    val blockedReason: MemoryMaintenanceBlockReason? = MemoryMaintenanceBlockReason.DREAMER_DISABLED,
+    val activeModelLabel: String? = null,
+    val lastAttemptedAt: Instant? = null,
+    val lastCompletedAt: Instant? = null,
+    val nextBudgetResetAt: Instant? = null,
+    val isRunningNow: Boolean = false,
+    val lastErrorCode: String? = null,
+    val fieldError: String? = null,
+) {
+    val isEnabled: Boolean get() = mode != MemoryMaintenanceMode.OFF
+}
 
 data class MemoryFiltersUi(
     val status: MemoryStatusFilter = MemoryStatusFilter.ACTIVE,
@@ -85,6 +118,15 @@ sealed interface MemoryAction : VMEvent {
     data object CancelConfirmAction : MemoryAction
     data object CloseDialog : MemoryAction
     data object ClearError : MemoryAction
+    data class SetDreamerEnabled(val enabled: Boolean) : MemoryAction
+    data class SelectDreamerMode(val mode: MemoryMaintenanceMode) : MemoryAction
+    data class SetDailyTokenLimit(val value: String) : MemoryAction
+    data class SetDailyCallLimit(val value: String) : MemoryAction
+    data class SetMaxTokensPerRun(val value: String) : MemoryAction
+    data class SetMaxClustersPerRun(val value: String) : MemoryAction
+    data class SetRunWhenIdle(val enabled: Boolean) : MemoryAction
+    data object RunDreamerNow : MemoryAction
+    data object RefreshDreamerStatus : MemoryAction
 }
 
 sealed interface MemoryEffect : VMSideEffect {
@@ -116,7 +158,7 @@ fun MemoryEditorInput.toCreateInput(): CreateMemoryFactInput =
         kind = kind,
         title = title.trim(),
         body = body.trim(),
-        slotKey = slotKey?.trim()?.ifBlank { null },
+        canonicalKey = slotKey?.trim()?.ifBlank { null },
         pinned = pinned,
     )
 
@@ -127,8 +169,8 @@ fun MemoryEditorInput.toPatch(): MemoryFactPatch {
         kind = kind,
         title = title.trim(),
         body = body.trim(),
-        slotKey = trimmedSlotKey?.ifBlank { null },
-        clearSlotKey = trimmedSlotKey.isNullOrBlank(),
+        canonicalKey = trimmedSlotKey?.ifBlank { null },
+        clearCanonicalKey = trimmedSlotKey.isNullOrBlank(),
         pinned = pinned,
     )
 }
@@ -143,7 +185,7 @@ fun MemoryFactDetails.toEditorState(): MemoryEditorState =
             kind = fact.kind,
             scopeType = fact.scope.type,
             scopeId = fact.scope.id,
-            slotKey = fact.slotKey,
+            slotKey = fact.canonicalKey,
             pinned = fact.pinned,
         ),
     )
@@ -165,3 +207,43 @@ fun newMemoryEditorState(): MemoryEditorState =
 
 fun List<MemoryFact>.sortedForUi(): List<MemoryFact> =
     sortedWith(compareByDescending<MemoryFact> { it.pinned }.thenByDescending { it.updatedAt })
+
+fun MemoryMaintenanceStatus.toUiState(isRunningNow: Boolean = false): MemoryMaintenanceUiState =
+    MemoryMaintenanceUiState(
+        mode = preferences.mode,
+        lastEnabledMode = preferences.lastEnabledMode,
+        dailyCloudTokenLimitInput = preferences.dailyCloudTokenLimit.toString(),
+        maxCloudCallsPerDayInput = preferences.maxCloudCallsPerDay.toString(),
+        maxTokensPerRunInput = preferences.maxTokensPerRun.toString(),
+        maxClustersPerRunInput = preferences.maxClustersPerRun.toString(),
+        runWhenIdle = preferences.runWhenIdle,
+        tokensUsedToday = cloudTokensUsedToday,
+        cloudCallsToday = cloudCallsUsedToday,
+        usageIsEstimated = usageIsEstimated,
+        pendingClusters = pendingClusters,
+        blockedClusters = blockedClusters,
+        workerState = workerState,
+        blockedReason = blockedReason,
+        activeModelLabel = activeModelLabel,
+        lastAttemptedAt = lastAttemptedAt,
+        lastCompletedAt = lastCompletedAt,
+        nextBudgetResetAt = nextBudgetResetAt,
+        isRunningNow = isRunningNow,
+        lastErrorCode = lastErrorCode,
+    )
+
+fun MemoryMaintenanceUiState.toPreferences(): MemoryMaintenancePreferences? {
+    val dailyLimit = dailyCloudTokenLimitInput.toIntOrNull()?.coerceIn(0, 1_000_000) ?: return null
+    val callLimit = maxCloudCallsPerDayInput.toIntOrNull()?.coerceIn(0, 10_000) ?: return null
+    val maxTokens = maxTokensPerRunInput.toIntOrNull()?.coerceIn(256, 100_000) ?: return null
+    val maxClusters = maxClustersPerRunInput.toIntOrNull()?.coerceIn(1, 1_000) ?: return null
+    return MemoryMaintenancePreferences(
+        mode = mode,
+        lastEnabledMode = lastEnabledMode.takeIf { it != MemoryMaintenanceMode.OFF } ?: MemoryMaintenanceMode.LOCAL_ONLY,
+        dailyCloudTokenLimit = dailyLimit,
+        maxCloudCallsPerDay = callLimit,
+        maxTokensPerRun = maxTokens,
+        maxClustersPerRun = maxClusters,
+        runWhenIdle = runWhenIdle,
+    )
+}

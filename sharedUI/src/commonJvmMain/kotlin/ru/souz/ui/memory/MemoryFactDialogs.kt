@@ -65,7 +65,7 @@ internal fun MemoryFactDetailsPanel(
                 MemoryCenteredText(stringResource(Res.string.memory_details_select))
             }
 
-            else -> state.selectedFact?.let { details ->
+            else -> state.selectedFact.let { details ->
                 val fact = details.fact
                 val scrollState = rememberScrollState()
 
@@ -106,7 +106,7 @@ internal fun MemoryFactDetailsPanel(
                     MemoryDetailItem(stringResource(Res.string.memory_details_created_by), createdByLabel(fact.createdBy))
                     MemoryDetailItem(stringResource(Res.string.memory_details_created_at), fact.createdAt.memoryLabel())
                     MemoryDetailItem(stringResource(Res.string.memory_details_updated_at), fact.updatedAt.memoryLabel())
-                    fact.slotKey?.let {
+                    fact.canonicalKey?.let {
                         MemoryDetailItem(stringResource(Res.string.memory_details_slot_key), it)
                     }
                     fact.supersedesFactId?.let {

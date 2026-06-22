@@ -109,10 +109,12 @@ import ru.souz.skills.registry.SkillStorageScope
 import ru.souz.tool.skills.ToolRunSkillCommand
 import ru.souz.memory.ConversationMemoryRuntime
 import ru.souz.memory.DesktopConversationMemoryRuntime
+import ru.souz.memory.DesktopMemoryMaintenanceController
 import ru.souz.memory.EmbeddingClient
 import ru.souz.memory.LlmEmbeddingClient
 import ru.souz.memory.LlmMemoryWriter
 import ru.souz.memory.MemoryCaptureService
+import ru.souz.memory.MemoryMaintenanceController
 import ru.souz.memory.MemoryRepository
 import ru.souz.memory.MemoryService
 import ru.souz.memory.MemoryWriter
@@ -169,6 +171,9 @@ val mainDiModule = DI.Module(DiTags.MODULE_MAIN) {
     bindSingleton<MemoryWriter> { LlmMemoryWriter(instance(), instance()) }
     bindSingleton { MemoryService(instance(), instance()) }
     bindSingleton { MemoryCaptureService(instance(), instance()) }
+    bindSingleton<MemoryMaintenanceController> {
+        DesktopMemoryMaintenanceController(instance<SouzPaths>().stateRoot.resolve("memory.db"))
+    }
     bindSingleton<ConversationMemoryRuntime> { DesktopConversationMemoryRuntime(instance(), instance()) }
     bindSingleton<AgentDesktopInfoRepository> { instance<DesktopInfoRepository>() }
     bindSingleton<BackgroundIndexRefresher>(overrides = true) { instance<DesktopInfoRepository>() }

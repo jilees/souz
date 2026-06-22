@@ -22,6 +22,11 @@ import ru.souz.memory.MemoryFactFilter
 import ru.souz.memory.MemoryFactKind
 import ru.souz.memory.MemoryFactPatch
 import ru.souz.memory.MemoryFactStatus
+import ru.souz.memory.MemoryMaintenanceBlockReason
+import ru.souz.memory.MemoryMaintenanceController
+import ru.souz.memory.MemoryMaintenanceMode
+import ru.souz.memory.MemoryMaintenancePreferences
+import ru.souz.memory.MemoryMaintenanceStatus
 import ru.souz.memory.MemoryScope
 import ru.souz.memory.MemoryService
 import ru.souz.memory.MemorySourceEvent
@@ -130,7 +135,7 @@ class MemoryViewModelTest {
                     kind = MemoryFactKind.PREFERENCE,
                     title = "Remember this",
                     body = "Manual fact body",
-                    slotKey = "pref",
+                    canonicalKey = "pref",
                     pinned = true,
                 )
             )
@@ -174,7 +179,7 @@ class MemoryViewModelTest {
                     kind = existing.kind,
                     title = "Updated title",
                     body = existing.body,
-                    clearSlotKey = true,
+                    clearCanonicalKey = true,
                     pinned = existing.pinned,
                 )
             )
@@ -283,10 +288,53 @@ class MemoryViewModelTest {
         assertTrue(state.facts.isEmpty())
     }
 
-    private fun createViewModel(service: MemoryService): MemoryViewModel =
+    @Test
+    fun `dreamer mode is saved and run now delegates to maintenance controller`() = runTest(dispatcher) {
+        val service = mockk<MemoryService>()
+        coEvery { service.listFacts(any()) } returns emptyList()
+        val controller = FakeMaintenanceController()
+
+        val viewModel = createViewModel(service, controller)
+        viewModel.onAction(MemoryAction.Load)
+        advanceUntilIdle()
+        viewModel.onAction(MemoryAction.SelectDreamerMode(MemoryMaintenanceMode.LOCAL_ONLY))
+        advanceUntilIdle()
+        viewModel.onAction(MemoryAction.RunDreamerNow)
+        advanceUntilIdle()
+
+        assertEquals(MemoryMaintenanceMode.LOCAL_ONLY, controller.savedPreferences?.mode)
+        assertEquals(MemoryMaintenanceMode.LOCAL_ONLY, viewModel.uiState.value.maintenance.mode)
+        assertEquals(1, controller.runNowCount)
+    }
+
+    @Test
+    fun `invalid dreamer limits are rejected before saving preferences`() = runTest(dispatcher) {
+        val service = mockk<MemoryService>()
+        coEvery { service.listFacts(any()) } returns emptyList()
+        val controller = FakeMaintenanceController()
+
+        val viewModel = createViewModel(service, controller)
+        viewModel.onAction(MemoryAction.Load)
+        advanceUntilIdle()
+        viewModel.onAction(MemoryAction.SetMaxTokensPerRun("oops"))
+        advanceUntilIdle()
+        viewModel.onAction(MemoryAction.SelectDreamerMode(MemoryMaintenanceMode.LOCAL_ONLY))
+        advanceUntilIdle()
+
+        assertEquals("Invalid Dreamer limits", viewModel.uiState.value.maintenance.fieldError)
+        assertNull(controller.savedPreferences)
+    }
+
+    private fun createViewModel(
+        service: MemoryService,
+        maintenanceController: MemoryMaintenanceController? = null,
+    ): MemoryViewModel =
         MemoryViewModel(
             DI {
                 bindSingleton<MemoryService> { service }
+                maintenanceController?.let { controller ->
+                    bindSingleton<MemoryMaintenanceController> { controller }
+                }
             }
         )
 
@@ -311,4 +359,36 @@ class MemoryViewModelTest {
         updatedAt = Instant.parse("2026-05-24T11:15:30Z"),
         supersedesFactId = null,
     )
+
+    private class FakeMaintenanceController : MemoryMaintenanceController {
+        var savedPreferences: MemoryMaintenancePreferences? = null
+            private set
+        var runNowCount: Int = 0
+            private set
+        private var currentStatus = MemoryMaintenanceStatus(
+            preferences = MemoryMaintenancePreferences(),
+            blockedReason = MemoryMaintenanceBlockReason.DREAMER_DISABLED,
+        )
+
+        override suspend fun status(): MemoryMaintenanceStatus = currentStatus
+
+        override suspend fun savePreferences(preferences: MemoryMaintenancePreferences): MemoryMaintenanceStatus {
+            savedPreferences = preferences
+            currentStatus = currentStatus.copy(
+                preferences = preferences,
+                blockedReason = if (preferences.mode == MemoryMaintenanceMode.OFF) {
+                    MemoryMaintenanceBlockReason.DREAMER_DISABLED
+                } else {
+                    MemoryMaintenanceBlockReason.NO_PENDING_CLUSTERS
+                },
+            )
+            return currentStatus
+        }
+
+        override suspend fun runNow(): MemoryMaintenanceStatus {
+            runNowCount += 1
+            currentStatus = currentStatus.copy(lastAttemptedAt = Instant.parse("2026-05-24T12:00:00Z"))
+            return currentStatus
+        }
+    }
 }

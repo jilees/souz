@@ -2,7 +2,12 @@ package ru.souz.ui.memory
 
 import org.kodein.di.DI
 import org.kodein.di.DIAware
+import org.kodein.di.direct
 import org.kodein.di.instance
+import org.kodein.di.instanceOrNull
+import ru.souz.memory.MemoryMaintenanceController
+import ru.souz.memory.MemoryMaintenanceMode
+import ru.souz.memory.NoopMemoryMaintenanceController
 import ru.souz.memory.MemoryService
 import ru.souz.ui.BaseViewModel
 
@@ -11,6 +16,8 @@ class MemoryViewModel(
 ) : BaseViewModel<MemoryUiState, MemoryAction, MemoryEffect>(), DIAware {
 
     private val memoryService: MemoryService by di.instance()
+    private val maintenanceController: MemoryMaintenanceController =
+        di.direct.instanceOrNull<MemoryMaintenanceController>() ?: NoopMemoryMaintenanceController
 
     override fun initialState(): MemoryUiState = MemoryUiState()
 
@@ -19,6 +26,7 @@ class MemoryViewModel(
     override suspend fun handleEvent(event: MemoryAction) {
         when (event) {
             MemoryAction.Load -> loadFacts()
+            MemoryAction.RefreshDreamerStatus -> refreshMaintenanceStatus()
             is MemoryAction.ChangeFilters -> changeFilters(event.filters)
             MemoryAction.OpenCreateDialog -> setState { copy(editor = newMemoryEditorState(), error = null) }
             is MemoryAction.OpenEditDialog -> openEditDialog(event.factId)
@@ -32,6 +40,14 @@ class MemoryViewModel(
             MemoryAction.CancelConfirmAction -> setState { copy(confirm = null) }
             MemoryAction.CloseDialog -> setState { copy(editor = null) }
             MemoryAction.ClearError -> setState { copy(error = null) }
+            is MemoryAction.SetDreamerEnabled -> setDreamerEnabled(event.enabled)
+            is MemoryAction.SelectDreamerMode -> selectDreamerMode(event.mode)
+            is MemoryAction.SetDailyTokenLimit -> setMaintenanceInput { copy(dailyCloudTokenLimitInput = event.value) }
+            is MemoryAction.SetDailyCallLimit -> setMaintenanceInput { copy(maxCloudCallsPerDayInput = event.value) }
+            is MemoryAction.SetMaxTokensPerRun -> setMaintenanceInput { copy(maxTokensPerRunInput = event.value) }
+            is MemoryAction.SetMaxClustersPerRun -> setMaintenanceInput { copy(maxClustersPerRunInput = event.value) }
+            is MemoryAction.SetRunWhenIdle -> saveMaintenance(currentState.maintenance.copy(runWhenIdle = event.enabled))
+            MemoryAction.RunDreamerNow -> runDreamerNow()
         }
     }
 
@@ -51,6 +67,17 @@ class MemoryViewModel(
         }.onFailure { error ->
             fail(error, "Failed to load memory")
             setState { copy(isLoading = false) }
+        }
+        refreshMaintenanceStatus()
+    }
+
+    private suspend fun refreshMaintenanceStatus() {
+        runCatching {
+            maintenanceController.status()
+        }.onSuccess { status ->
+            setState { copy(maintenance = status.toUiState()) }
+        }.onFailure { error ->
+            fail(error, "Failed to load Dreamer status")
         }
     }
 
@@ -207,5 +234,58 @@ class MemoryViewModel(
         input.scopeType.isBlank() -> "Scope type is required"
         input.scopeId.isBlank() -> "Scope id is required"
         else -> null
+    }
+
+    private suspend fun setDreamerEnabled(enabled: Boolean) {
+        val current = currentState.maintenance
+        val nextMode = if (enabled) {
+            current.lastEnabledMode.takeIf { it != MemoryMaintenanceMode.OFF } ?: MemoryMaintenanceMode.LOCAL_ONLY
+        } else {
+            MemoryMaintenanceMode.OFF
+        }
+        saveMaintenance(current.copy(mode = nextMode))
+    }
+
+    private suspend fun selectDreamerMode(mode: MemoryMaintenanceMode) {
+        val normalized = if (mode == MemoryMaintenanceMode.OFF) MemoryMaintenanceMode.OFF else mode
+        saveMaintenance(
+            currentState.maintenance.copy(
+                mode = normalized,
+                lastEnabledMode = normalized.takeIf { it != MemoryMaintenanceMode.OFF }
+                    ?: currentState.maintenance.lastEnabledMode,
+            )
+        )
+    }
+
+    private suspend fun setMaintenanceInput(update: MemoryMaintenanceUiState.() -> MemoryMaintenanceUiState) {
+        setState { copy(maintenance = maintenance.update().copy(fieldError = null)) }
+    }
+
+    private suspend fun saveMaintenance(next: MemoryMaintenanceUiState) {
+        val preferences = next.toPreferences()
+        if (preferences == null) {
+            setState { copy(maintenance = next.copy(fieldError = "Invalid Dreamer limits")) }
+            return
+        }
+        runCatching {
+            maintenanceController.savePreferences(preferences)
+        }.onSuccess { status ->
+            setState { copy(maintenance = status.toUiState()) }
+        }.onFailure { error ->
+            fail(error, "Failed to save Dreamer settings")
+        }
+    }
+
+    private suspend fun runDreamerNow() {
+        if (currentState.maintenance.mode == MemoryMaintenanceMode.OFF) return
+        setState { copy(maintenance = maintenance.copy(isRunningNow = true)) }
+        runCatching {
+            maintenanceController.runNow()
+        }.onSuccess { status ->
+            setState { copy(maintenance = status.toUiState(isRunningNow = false)) }
+        }.onFailure { error ->
+            fail(error, "Failed to run Dreamer")
+            setState { copy(maintenance = maintenance.copy(isRunningNow = false)) }
+        }
     }
 }

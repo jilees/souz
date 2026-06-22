@@ -26,18 +26,19 @@ class SqliteMemoryRepository(
         connection.prepareStatement(
             """
             insert into memory_source_events(
-                id, scope_type, scope_id, source_type, source_ref, text, metadata_json, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                id, owner_id, scope_type, scope_id, source_type, source_ref, text, metadata_json, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, id)
-            statement.setString(2, input.scope.type)
-            statement.setString(3, input.scope.id)
-            statement.setString(4, input.sourceType)
-            statement.setString(5, input.sourceRef)
-            statement.setString(6, input.text)
-            statement.setString(7, input.metadataJson)
-            statement.setString(8, input.createdAt.toString())
+            statement.setString(2, input.ownerId.value)
+            statement.setString(3, input.scope.type)
+            statement.setString(4, input.scope.id)
+            statement.setString(5, input.sourceType)
+            statement.setString(6, input.sourceRef)
+            statement.setString(7, input.text)
+            statement.setString(8, input.metadataJson)
+            statement.setString(9, input.createdAt.toString())
             statement.executeUpdate()
         }
         id
@@ -51,20 +52,22 @@ class SqliteMemoryRepository(
     ): String = withConnection { connection ->
         val id = UUID.randomUUID().toString()
         connection.inTransaction {
-            if (input.slotKey != null && input.status == MemoryFactStatus.ACTIVE) {
+            val canonicalKey = controlledCanonicalKey(input.canonicalKey)
+            if (canonicalKey != null && input.status == MemoryFactStatus.ACTIVE) {
                 prepareStatement(
                     """
                     update memory_facts
                     set status = ?, updated_at = ?
-                    where scope_type = ? and scope_id = ? and slot_key = ? and status = ?
+                    where owner_id = ? and scope_type = ? and scope_id = ? and canonical_key = ? and status = ?
                     """.trimIndent()
                 ).use { statement ->
                     statement.setString(1, MemoryFactStatus.RETIRED.name)
                     statement.setString(2, Instant.now().toString())
-                    statement.setString(3, input.scope.type)
-                    statement.setString(4, input.scope.id)
-                    statement.setString(5, input.slotKey)
-                    statement.setString(6, MemoryFactStatus.ACTIVE.name)
+                    statement.setString(3, input.ownerId.value)
+                    statement.setString(4, input.scope.type)
+                    statement.setString(5, input.scope.id)
+                    statement.setString(6, canonicalKey)
+                    statement.setString(7, MemoryFactStatus.ACTIVE.name)
                     statement.executeUpdate()
                 }
             }
@@ -72,25 +75,35 @@ class SqliteMemoryRepository(
             prepareStatement(
                 """
                 insert into memory_facts(
-                    id, scope_type, scope_id, kind, title, body, slot_key, status, confidence,
-                    pinned, created_by, created_at, updated_at, supersedes_fact_id
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, owner_id, scope_type, scope_id, kind, title, body, slot_key, canonical_key, status,
+                    validity, retention, sensitivity, confidence, importance, pinned, created_by, version,
+                    content_hash, created_at, updated_at, last_observed_at, supersedes_fact_id
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, id)
-                statement.setString(2, input.scope.type)
-                statement.setString(3, input.scope.id)
-                statement.setString(4, input.kind.name)
-                statement.setString(5, input.title)
-                statement.setString(6, input.body)
-                statement.setString(7, input.slotKey)
-                statement.setString(8, input.status.name)
-                statement.setFloat(9, input.confidence)
-                statement.setInt(10, if (input.pinned) 1 else 0)
-                statement.setString(11, input.createdBy)
-                statement.setString(12, input.createdAt.toString())
-                statement.setString(13, input.updatedAt.toString())
-                statement.setString(14, input.supersedesFactId)
+                statement.setString(2, input.ownerId.value)
+                statement.setString(3, input.scope.type)
+                statement.setString(4, input.scope.id)
+                statement.setString(5, input.kind.name)
+                statement.setString(6, input.title)
+                statement.setString(7, input.body)
+                statement.setString(8, canonicalKey)
+                statement.setString(9, canonicalKey)
+                statement.setString(10, input.status.name)
+                statement.setString(11, input.validity.name)
+                statement.setString(12, input.retention.name)
+                statement.setString(13, input.sensitivity.name)
+                statement.setFloat(14, input.confidence)
+                statement.setFloat(15, input.importance)
+                statement.setInt(16, if (input.pinned) 1 else 0)
+                statement.setString(17, input.createdBy)
+                statement.setLong(18, input.version)
+                statement.setString(19, input.contentHash)
+                statement.setString(20, input.createdAt.toString())
+                statement.setString(21, input.updatedAt.toString())
+                statement.setString(22, input.lastObservedAt.toString())
+                statement.setString(23, input.supersedesFactId)
                 statement.executeUpdate()
             }
             if (evidence.isNotEmpty()) {
@@ -147,6 +160,7 @@ class SqliteMemoryRepository(
                 e.source_event_id,
                 e.evidence_text,
                 se.id as source_id,
+                se.owner_id as source_owner_id,
                 se.scope_type as source_scope_type,
                 se.scope_id as source_scope_id,
                 se.source_type as source_type,
@@ -173,6 +187,7 @@ class SqliteMemoryRepository(
                                 ),
                                 sourceEvent = MemorySourceEvent(
                                     id = rs.getString("source_id"),
+                                    ownerId = MemoryOwnerId(rs.getString("source_owner_id") ?: LEGACY_OWNER_ID),
                                     scope = MemoryScope(
                                         type = rs.getString("source_scope_type"),
                                         id = rs.getString("source_scope_id"),
@@ -199,6 +214,10 @@ class SqliteMemoryRepository(
         if (filter.statuses.isNotEmpty()) {
             clauses += "status in (${placeholders(filter.statuses.size)})"
             params.addAll(filter.statuses.map(MemoryFactStatus::name))
+        }
+        filter.ownerId?.let { ownerId ->
+            clauses += "owner_id = ?"
+            params.add(ownerId.value)
         }
         if (filter.kinds.isNotEmpty()) {
             clauses += "kind in (${placeholders(filter.kinds.size)})"
@@ -253,29 +272,47 @@ class SqliteMemoryRepository(
             val updatedRows = prepareStatement(
                 """
                 update memory_facts
-                set scope_type = ?,
+                set owner_id = ?,
+                    scope_type = ?,
                     scope_id = ?,
                     kind = ?,
                     title = ?,
                     body = ?,
                     slot_key = ?,
+                    canonical_key = ?,
+                    validity = ?,
+                    retention = ?,
+                    sensitivity = ?,
                     confidence = ?,
+                    importance = ?,
                     pinned = ?,
+                    version = ?,
+                    content_hash = ?,
+                    last_observed_at = ?,
                     updated_at = ?
                 where id = ? and updated_at = ?
                 """.trimIndent()
             ).use { statement ->
-                statement.setString(1, fact.scope.type)
-                statement.setString(2, fact.scope.id)
-                statement.setString(3, fact.kind.name)
-                statement.setString(4, fact.title)
-                statement.setString(5, fact.body)
-                statement.setString(6, fact.slotKey)
-                statement.setFloat(7, fact.confidence)
-                statement.setInt(8, if (fact.pinned) 1 else 0)
-                statement.setString(9, fact.updatedAt.toString())
-                statement.setString(10, fact.id)
-                statement.setString(11, expectedUpdatedAt.toString())
+                statement.setString(1, fact.ownerId.value)
+                statement.setString(2, fact.scope.type)
+                statement.setString(3, fact.scope.id)
+                statement.setString(4, fact.kind.name)
+                statement.setString(5, fact.title)
+                statement.setString(6, fact.body)
+                statement.setString(7, fact.canonicalKey)
+                statement.setString(8, fact.canonicalKey)
+                statement.setString(9, fact.validity.name)
+                statement.setString(10, fact.retention.name)
+                statement.setString(11, fact.sensitivity.name)
+                statement.setFloat(12, fact.confidence)
+                statement.setFloat(13, fact.importance)
+                statement.setInt(14, if (fact.pinned) 1 else 0)
+                statement.setLong(15, fact.version)
+                statement.setString(16, fact.contentHash)
+                statement.setString(17, fact.lastObservedAt.toString())
+                statement.setString(18, fact.updatedAt.toString())
+                statement.setString(19, fact.id)
+                statement.setString(20, expectedUpdatedAt.toString())
                 statement.executeUpdate()
             }
             if (updatedRows == 0) {
@@ -376,26 +413,266 @@ class SqliteMemoryRepository(
         }
     }
 
+    override suspend fun enqueueEmbeddingJob(
+        factId: String,
+        ownerId: MemoryOwnerId,
+        model: String,
+        contentHash: String,
+    ) = withConnection { connection ->
+        connection.prepareStatement(
+            """
+            insert into memory_index_jobs(
+                fact_id, owner_id, embedding_model, content_hash, status, attempt_count,
+                next_attempt_at, created_at, updated_at
+            ) values (?, ?, ?, ?, 'PENDING', 0, ?, ?, ?)
+            on conflict(fact_id, embedding_model, content_hash) do update set
+                status = case when status = 'COMPLETED' then status else 'PENDING' end,
+                updated_at = excluded.updated_at
+            """.trimIndent()
+        ).use { statement ->
+            val now = Instant.now().toString()
+            statement.setString(1, factId)
+            statement.setString(2, ownerId.value)
+            statement.setString(3, model)
+            statement.setString(4, contentHash)
+            statement.setString(5, now)
+            statement.setString(6, now)
+            statement.setString(7, now)
+            statement.executeUpdate()
+            Unit
+        }
+    }
+
+    override suspend fun markEmbeddingJobCompleted(
+        factId: String,
+        model: String,
+        contentHash: String,
+    ) = updateIndexJob(factId, model, contentHash, "COMPLETED", null)
+
+    override suspend fun markEmbeddingJobFailed(
+        factId: String,
+        model: String,
+        contentHash: String,
+        errorCode: String,
+    ) = updateIndexJob(factId, model, contentHash, "FAILED", errorCode.take(80))
+
+    private suspend fun updateIndexJob(
+        factId: String,
+        model: String,
+        contentHash: String,
+        status: String,
+        errorCode: String?,
+    ) = withConnection { connection ->
+        connection.prepareStatement(
+            """
+            update memory_index_jobs
+            set status = ?,
+                attempt_count = attempt_count + case when ? = 'FAILED' then 1 else 0 end,
+                last_error_code = ?,
+                updated_at = ?
+            where fact_id = ? and embedding_model = ? and content_hash = ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, status)
+            statement.setString(2, status)
+            statement.setString(3, errorCode)
+            statement.setString(4, Instant.now().toString())
+            statement.setString(5, factId)
+            statement.setString(6, model)
+            statement.setString(7, contentHash)
+            statement.executeUpdate()
+            Unit
+        }
+    }
+
+    override suspend fun recordOperation(
+        factId: String?,
+        ownerId: MemoryOwnerId,
+        type: MemoryOperationType,
+        reason: String,
+    ) = withConnection { connection ->
+        connection.prepareStatement(
+            """
+            insert into memory_operation_log(id, fact_id, owner_id, type, reason, created_at)
+            values (?, ?, ?, ?, ?, ?)
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, UUID.randomUUID().toString())
+            statement.setString(2, factId)
+            statement.setString(3, ownerId.value)
+            statement.setString(4, type.name)
+            statement.setString(5, reason.take(120))
+            statement.setString(6, Instant.now().toString())
+            statement.executeUpdate()
+            Unit
+        }
+    }
+
+    override suspend fun recordRetrieval(factIds: List<String>) {
+        if (factIds.isEmpty()) return
+        withConnection { connection ->
+            connection.prepareStatement(
+                """
+                insert into memory_fact_stats(fact_id, last_retrieved_at, retrieval_count)
+                values (?, ?, 1)
+                on conflict(fact_id) do update set
+                    last_retrieved_at = excluded.last_retrieved_at,
+                    retrieval_count = retrieval_count + 1
+                """.trimIndent()
+            ).use { statement ->
+                val now = Instant.now().toString()
+                factIds.distinct().forEach { factId ->
+                    statement.setString(1, factId)
+                    statement.setString(2, now)
+                    statement.addBatch()
+                }
+                statement.executeBatch()
+            }
+        }
+    }
+
+    override suspend fun createTombstone(
+        ownerId: MemoryOwnerId,
+        scope: MemoryScope,
+        canonicalKey: String?,
+        subjectKey: String?,
+        reason: String,
+    ) = withConnection { connection ->
+        connection.prepareStatement(
+            """
+            insert into memory_tombstones(id, owner_id, scope_type, scope_id, canonical_key, subject_key, reason, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, UUID.randomUUID().toString())
+            statement.setString(2, ownerId.value)
+            statement.setString(3, scope.type)
+            statement.setString(4, scope.id)
+            statement.setString(5, canonicalKey)
+            statement.setString(6, subjectKey)
+            statement.setString(7, reason.take(80))
+            statement.setString(8, Instant.now().toString())
+            statement.executeUpdate()
+            Unit
+        }
+    }
+
+    override suspend fun hasTombstone(
+        ownerId: MemoryOwnerId,
+        scopes: List<MemoryScope>,
+        canonicalKey: String?,
+        subjectKey: String?,
+    ): Boolean {
+        if (canonicalKey == null && subjectKey == null) return false
+        return withConnection { connection ->
+            val scopeClause = scopes.joinToString(" or ") { "(scope_type = ? and scope_id = ?)" }
+            connection.prepareStatement(
+                """
+                select 1 from memory_tombstones
+                where owner_id = ?
+                  and ($scopeClause)
+                  and (
+                    (? is not null and canonical_key = ?)
+                    or (? is not null and subject_key = ?)
+                  )
+                limit 1
+                """.trimIndent()
+            ).use { statement ->
+                var index = 1
+                statement.setString(index++, ownerId.value)
+                scopes.forEach { scope ->
+                    statement.setString(index++, scope.type)
+                    statement.setString(index++, scope.id)
+                }
+                statement.setString(index++, canonicalKey)
+                statement.setString(index++, canonicalKey)
+                statement.setString(index++, subjectKey)
+                statement.setString(index, subjectKey)
+                statement.executeQuery().use { it.next() }
+            }
+        }
+    }
+
     override suspend fun findActiveFactBySlotKey(
         scope: MemoryScope,
         slotKey: String,
+    ): MemoryFact? = findActiveFactByCanonicalKey(MemoryOwnerId(LEGACY_OWNER_ID), scope, slotKey)
+
+    override suspend fun findActiveFactByCanonicalKey(
+        ownerId: MemoryOwnerId,
+        scope: MemoryScope,
+        canonicalKey: String,
     ): MemoryFact? = withConnection { connection ->
         connection.prepareStatement(
             """
             select * from memory_facts
-            where scope_type = ?
+            where owner_id = ?
+              and scope_type = ?
               and scope_id = ?
-              and slot_key = ?
+              and canonical_key = ?
               and status = ?
             order by updated_at desc
             limit 1
             """.trimIndent()
         ).use { statement ->
-            statement.setString(1, scope.type)
-            statement.setString(2, scope.id)
-            statement.setString(3, slotKey)
-            statement.setString(4, MemoryFactStatus.ACTIVE.name)
+            statement.setString(1, ownerId.value)
+            statement.setString(2, scope.type)
+            statement.setString(3, scope.id)
+            statement.setString(4, canonicalKey)
+            statement.setString(5, MemoryFactStatus.ACTIVE.name)
             statement.executeQuery().use { rs -> rs.toFactOrNull() }
+        }
+    }
+
+    override suspend fun lexicalSearchFacts(
+        ownerId: MemoryOwnerId,
+        scopes: List<MemoryScope>,
+        query: String,
+        limit: Int,
+    ): List<MemoryFactSearchHit> {
+        if (scopes.isEmpty() || query.isBlank()) return emptyList()
+        val terms = query.lowercase().split(Regex("""[^\p{L}\p{N}_./:-]+""")).filter { it.length >= 2 }.take(8)
+        if (terms.isEmpty()) return emptyList()
+        return withConnection { connection ->
+            val scopeClause = scopes.joinToString(" or ") { "(scope_type = ? and scope_id = ?)" }
+            val likeClause = terms.joinToString(" or ") { "(lower(title) like ? or lower(body) like ? or lower(coalesce(canonical_key, '')) like ?)" }
+            connection.prepareStatement(
+                """
+                select * from memory_facts
+                where owner_id = ?
+                  and status = ?
+                  and ($scopeClause)
+                  and ($likeClause)
+                order by updated_at desc
+                limit ?
+                """.trimIndent()
+            ).use { statement ->
+                var index = 1
+                statement.setString(index++, ownerId.value)
+                statement.setString(index++, MemoryFactStatus.ACTIVE.name)
+                scopes.forEach { scope ->
+                    statement.setString(index++, scope.type)
+                    statement.setString(index++, scope.id)
+                }
+                terms.forEach { term ->
+                    val like = "%$term%"
+                    statement.setString(index++, like)
+                    statement.setString(index++, like)
+                    statement.setString(index++, like)
+                }
+                statement.setInt(index, limit)
+                statement.executeQuery().use { rs ->
+                    buildList {
+                        while (rs.next()) {
+                            val fact = rs.toFact()
+                            val score = terms.count { term ->
+                                "${fact.title} ${fact.body} ${fact.canonicalKey.orEmpty()}".lowercase().contains(term)
+                            }.toFloat() / terms.size
+                            add(MemoryFactSearchHit(fact, score))
+                        }
+                    }.sortedByDescending(MemoryFactSearchHit::score)
+                }
+            }
         }
     }
 
@@ -406,6 +683,7 @@ class SqliteMemoryRepository(
     ) = withConnection { it.upsertEmbedding(factId, embedding, model) }
 
     override suspend fun searchFacts(
+        ownerId: MemoryOwnerId,
         scopes: List<MemoryScope>,
         model: String,
         queryEmbedding: FloatArray,
@@ -422,15 +700,17 @@ class SqliteMemoryRepository(
                 from memory_facts f
                 join memory_fact_embeddings e on e.fact_id = f.id
                 where f.status = ?
+                  and f.owner_id = ?
                   and e.embedding_model = ?
                   and e.dimension = ?
                   and ($scopeClause)
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, MemoryFactStatus.ACTIVE.name)
-                statement.setString(2, model)
-                statement.setInt(3, queryEmbedding.size)
-                var index = 4
+                statement.setString(2, ownerId.value)
+                statement.setString(3, model)
+                statement.setInt(4, queryEmbedding.size)
+                var index = 5
                 scopes.forEach { scope ->
                     statement.setString(index++, scope.type)
                     statement.setString(index++, scope.id)
@@ -509,11 +789,84 @@ class SqliteMemoryRepository(
     }
 
     private fun ensureCurrentSchema(connection: Connection) {
-        MIGRATION_V1.forEach { sql ->
+        connection.createStatement().use { statement ->
+            statement.execute(
+                """
+                create table if not exists schema_migrations (
+                    version integer primary key,
+                    name text not null,
+                    checksum text not null,
+                    applied_at text not null
+                )
+                """.trimIndent()
+            )
+        }
+        applyMigration(connection, 1, "initial_memory_schema", MIGRATION_V1)
+        applyMigration(connection, 2, "typed_memory_columns", MIGRATION_V2)
+        connection.createStatement().use { statement -> statement.execute("pragma user_version = 2") }
+    }
+
+    private fun applyMigration(
+        connection: Connection,
+        version: Int,
+        name: String,
+        statements: List<String>,
+    ) {
+        val applied = connection.prepareStatement("select 1 from schema_migrations where version = ?").use { statement ->
+            statement.setInt(1, version)
+            statement.executeQuery().use { it.next() }
+        }
+        if (applied) return
+        if (version == 2) {
+            ensureTypedMemoryColumns(connection)
+        }
+        statements.forEach { sql ->
             connection.createStatement().use { statement -> statement.execute(sql) }
         }
+        connection.prepareStatement(
+            "insert into schema_migrations(version, name, checksum, applied_at) values (?, ?, ?, ?)"
+        ).use { statement ->
+            statement.setInt(1, version)
+            statement.setString(2, name)
+            statement.setString(3, statements.joinToString("\n").hashCode().toString())
+            statement.setString(4, Instant.now().toString())
+            statement.executeUpdate()
+        }
+    }
+
+    private fun ensureTypedMemoryColumns(connection: Connection) {
+        connection.addColumnIfMissing("memory_source_events", "owner_id", "text not null default '$LEGACY_OWNER_ID'")
+        connection.addColumnIfMissing("memory_facts", "owner_id", "text not null default '$LEGACY_OWNER_ID'")
+        connection.addColumnIfMissing("memory_facts", "canonical_key", "text")
+        connection.addColumnIfMissing("memory_facts", "validity", "text not null default '${MemoryFactValidity.VALID.name}'")
+        connection.addColumnIfMissing("memory_facts", "retention", "text not null default '${MemoryRetention.DURABLE.name}'")
+        connection.addColumnIfMissing("memory_facts", "sensitivity", "text not null default '${MemorySensitivity.NORMAL.name}'")
+        connection.addColumnIfMissing("memory_facts", "importance", "real not null default 1.0")
+        connection.addColumnIfMissing("memory_facts", "version", "integer not null default 1")
+        connection.addColumnIfMissing("memory_facts", "content_hash", "text")
+        connection.addColumnIfMissing("memory_facts", "last_observed_at", "text")
+        connection.addColumnIfMissing("memory_fact_embeddings", "content_hash", "text")
+        connection.addColumnIfMissing("memory_fact_embeddings", "created_at", "text")
         connection.createStatement().use { statement ->
-            statement.execute("pragma user_version = 1")
+            statement.execute("update memory_facts set canonical_key = slot_key where canonical_key is null and slot_key is not null")
+            statement.execute("update memory_facts set content_hash = lower(hex(randomblob(16))) where content_hash is null")
+            statement.execute("update memory_facts set last_observed_at = updated_at where last_observed_at is null")
+            statement.execute("update memory_fact_embeddings set created_at = updated_at where created_at is null")
+        }
+    }
+
+    private fun Connection.addColumnIfMissing(table: String, column: String, definition: String) {
+        val exists = prepareStatement("pragma table_info($table)").use { statement ->
+            statement.executeQuery().use { rs ->
+                var found = false
+                while (rs.next()) {
+                    if (rs.getString("name").equals(column, ignoreCase = true)) found = true
+                }
+                found
+            }
+        }
+        if (!exists) {
+            createStatement().use { it.execute("alter table $table add column $column $definition") }
         }
     }
 
@@ -522,6 +875,7 @@ class SqliteMemoryRepository(
     private fun ResultSet.toFact(): MemoryFact =
         MemoryFact(
             id = getString("id"),
+            ownerId = MemoryOwnerId(getStringOrDefault("owner_id", LEGACY_OWNER_ID)),
             scope = MemoryScope(
                 type = getString("scope_type"),
                 id = getString("scope_id"),
@@ -529,15 +883,57 @@ class SqliteMemoryRepository(
             kind = MemoryFactKind.valueOf(getString("kind")),
             title = getString("title"),
             body = getString("body"),
-            slotKey = getString("slot_key"),
+            slotKey = getNullableString("slot_key"),
+            canonicalKey = getNullableString("canonical_key") ?: getNullableString("slot_key"),
             status = MemoryFactStatus.valueOf(getString("status")),
+            validity = enumValueOrDefault(getStringOrDefault("validity", MemoryFactValidity.VALID.name), MemoryFactValidity.VALID),
+            retention = enumValueOrDefault(getStringOrDefault("retention", MemoryRetention.DURABLE.name), MemoryRetention.DURABLE),
+            sensitivity = enumValueOrDefault(getStringOrDefault("sensitivity", MemorySensitivity.NORMAL.name), MemorySensitivity.NORMAL),
             confidence = getFloat("confidence"),
+            importance = getFloatOrDefault("importance", getFloat("confidence")),
             pinned = getInt("pinned") != 0,
             createdBy = getString("created_by"),
+            version = getLongOrDefault("version", 1L),
+            contentHash = getStringOrDefault(
+                "content_hash",
+                stableMemoryContentHash(
+                    getString("title"),
+                    getString("body"),
+                    MemoryFactKind.valueOf(getString("kind")),
+                    getNullableString("canonical_key") ?: getNullableString("slot_key"),
+                ),
+            ),
             createdAt = Instant.parse(getString("created_at")),
             updatedAt = Instant.parse(getString("updated_at")),
-            supersedesFactId = getString("supersedes_fact_id"),
+            lastObservedAt = Instant.parse(getStringOrDefault("last_observed_at", getString("updated_at"))),
+            supersedesFactId = getNullableString("supersedes_fact_id"),
         )
+
+    private fun ResultSet.hasColumn(name: String): Boolean {
+        val meta = metaData
+        for (index in 1..meta.columnCount) {
+            if (meta.getColumnLabel(index).equals(name, ignoreCase = true)) return true
+        }
+        return false
+    }
+
+    private fun ResultSet.getNullableString(name: String): String? =
+        if (hasColumn(name)) getString(name) else null
+
+    private fun ResultSet.getStringOrDefault(name: String, default: String): String =
+        getNullableString(name) ?: default
+
+    private fun ResultSet.getFloatOrDefault(name: String, default: Float): Float =
+        if (hasColumn(name)) getFloat(name) else default
+
+    private fun ResultSet.getLongOrDefault(name: String, default: Long): Long =
+        if (hasColumn(name)) getLong(name) else default
+
+    private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String, default: T): T =
+        enumValues<T>().firstOrNull { it.name == value } ?: default
+
+    private fun controlledCanonicalKey(raw: String?): String? =
+        normalizeCanonicalKey(raw)
 
     private fun bindParams(
         statement: PreparedStatement,
@@ -668,6 +1064,122 @@ class SqliteMemoryRepository(
             "create index if not exists memory_facts_updated_idx on memory_facts(updated_at desc)",
             "create index if not exists memory_source_events_scope_idx on memory_source_events(scope_type, scope_id, created_at desc)",
             "create unique index if not exists memory_active_slot_unique on memory_facts(scope_type, scope_id, slot_key) where status = 'ACTIVE' and slot_key is not null",
+        )
+        private val MIGRATION_V2 = listOf(
+            "create index if not exists memory_facts_owner_scope_idx on memory_facts(owner_id, scope_type, scope_id, status)",
+            "create index if not exists memory_facts_owner_canonical_idx on memory_facts(owner_id, scope_type, scope_id, canonical_key)",
+            "create unique index if not exists memory_active_canonical_unique on memory_facts(owner_id, scope_type, scope_id, canonical_key) where status = 'ACTIVE' and canonical_key is not null",
+            "create index if not exists memory_facts_content_hash_idx on memory_facts(content_hash)",
+            "create index if not exists memory_source_events_owner_scope_idx on memory_source_events(owner_id, scope_type, scope_id, created_at desc)",
+            """
+            create table if not exists memory_fact_stats (
+                fact_id text primary key,
+                last_retrieved_at text,
+                retrieval_count integer not null default 0
+            )
+            """.trimIndent(),
+            """
+            create table if not exists memory_index_jobs (
+                fact_id text not null,
+                owner_id text not null,
+                embedding_model text not null,
+                content_hash text not null,
+                status text not null,
+                attempt_count integer not null default 0,
+                next_attempt_at text not null,
+                last_error_code text,
+                lease_owner text,
+                lease_expires_at text,
+                created_at text not null,
+                updated_at text not null,
+                primary key (fact_id, embedding_model, content_hash)
+            )
+            """.trimIndent(),
+            "create index if not exists memory_index_jobs_status_idx on memory_index_jobs(status, next_attempt_at)",
+            """
+            create table if not exists memory_operation_log (
+                id text primary key,
+                fact_id text,
+                owner_id text not null,
+                type text not null,
+                reason text not null,
+                created_at text not null
+            )
+            """.trimIndent(),
+            "create index if not exists memory_operation_log_owner_idx on memory_operation_log(owner_id, created_at desc)",
+            """
+            create table if not exists memory_tombstones (
+                id text primary key,
+                owner_id text not null,
+                scope_type text not null,
+                scope_id text not null,
+                canonical_key text,
+                subject_key text,
+                reason text not null,
+                created_at text not null,
+                expires_at text
+            )
+            """.trimIndent(),
+            "create index if not exists memory_tombstones_lookup_idx on memory_tombstones(owner_id, scope_type, scope_id, canonical_key, subject_key)",
+            """
+            create table if not exists memory_maintenance_jobs (
+                cluster_key text primary key,
+                owner_id text not null,
+                status text not null,
+                priority integer not null default 0,
+                latest_dirty_at text not null,
+                reasons text not null default '',
+                lease_owner text,
+                lease_expires_at text,
+                attempt_count integer not null default 0,
+                next_attempt_at text not null,
+                created_at text not null,
+                updated_at text not null
+            )
+            """.trimIndent(),
+            "create index if not exists memory_maintenance_jobs_status_idx on memory_maintenance_jobs(status, priority desc, next_attempt_at)",
+            """
+            insert or ignore into memory_maintenance_jobs(
+                cluster_key,
+                owner_id,
+                status,
+                priority,
+                latest_dirty_at,
+                reasons,
+                next_attempt_at,
+                created_at,
+                updated_at
+            )
+            select
+                'legacy-chat:' || owner_id || ':' || scope_id,
+                owner_id,
+                'PENDING',
+                10,
+                max(updated_at),
+                'legacy_chat_fact_migration',
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            from memory_facts
+            where scope_type in ('chat', 'thread')
+            group by owner_id, scope_id
+            """.trimIndent(),
+            """
+            create table if not exists memory_budget_reservations (
+                request_id text primary key,
+                period_key text not null,
+                estimated_input_tokens integer not null,
+                reserved_output_tokens integer not null,
+                actual_input_tokens integer,
+                actual_output_tokens integer,
+                call_count integer not null default 1,
+                status text not null,
+                is_estimated integer not null default 0,
+                created_at text not null,
+                updated_at text not null
+            )
+            """.trimIndent(),
+            "create index if not exists memory_budget_period_idx on memory_budget_reservations(period_key, status)",
         )
     }
 }

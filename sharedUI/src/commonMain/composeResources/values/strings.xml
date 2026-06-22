@@ -234,14 +234,14 @@
     <string name="memory_details_created_by">Created by</string>
     <string name="memory_details_created_at">Created at</string>
     <string name="memory_details_updated_at">Updated at</string>
-    <string name="memory_details_slot_key">Slot key</string>
+    <string name="memory_details_slot_key">Canonical key</string>
     <string name="memory_details_supersedes">Supersedes fact</string>
     <string name="memory_editor_create_title">Create memory fact</string>
     <string name="memory_editor_edit_title">Edit memory fact</string>
     <string name="memory_editor_title">Title</string>
     <string name="memory_editor_body">Body</string>
     <string name="memory_editor_kind">Kind</string>
-    <string name="memory_editor_slot_key">Slot key</string>
+    <string name="memory_editor_slot_key">Canonical key</string>
     <string name="memory_editor_pinned">Pinned</string>
     <string name="memory_button_save">Save fact</string>
     <string name="memory_button_saving">Saving...</string>
