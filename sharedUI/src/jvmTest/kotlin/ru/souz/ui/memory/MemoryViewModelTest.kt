@@ -22,6 +22,8 @@ import ru.souz.memory.MemoryFactFilter
 import ru.souz.memory.MemoryFactKind
 import ru.souz.memory.MemoryFactPatch
 import ru.souz.memory.MemoryFactStatus
+import ru.souz.memory.MemoryOwnerId
+import ru.souz.memory.MemoryOwnerProvider
 import ru.souz.memory.MemoryMaintenanceBlockReason
 import ru.souz.memory.MemoryMaintenanceController
 import ru.souz.memory.MemoryMaintenanceMode
@@ -69,7 +71,7 @@ class MemoryViewModelTest {
         assertEquals(listOf("fact-1", "fact-2"), state.facts.map { it.id })
         assertFalse(state.isLoading)
         assertNull(state.error)
-        coVerify(exactly = 1) { service.listFacts(MemoryFactFilter()) }
+        coVerify(exactly = 1) { service.listFacts(MemoryFactFilter(ownerId = MemoryOwnerId("desktop-owner"))) }
     }
 
     @Test
@@ -97,6 +99,7 @@ class MemoryViewModelTest {
                         MemoryFactStatus.RETIRED,
                     ),
                     kinds = setOf(MemoryFactKind.PROJECT_RULE),
+                    ownerId = MemoryOwnerId("desktop-owner"),
                     scope = MemoryScope("chat", "chat-42"),
                     query = "kotlin",
                 )
@@ -121,7 +124,7 @@ class MemoryViewModelTest {
                     kind = MemoryFactKind.PREFERENCE,
                     scopeType = "global",
                     scopeId = "global",
-                    slotKey = "pref",
+                    canonicalKey = "user.preference.language",
                     pinned = true,
                 )
             )
@@ -135,12 +138,13 @@ class MemoryViewModelTest {
                     kind = MemoryFactKind.PREFERENCE,
                     title = "Remember this",
                     body = "Manual fact body",
-                    canonicalKey = "pref",
+                    ownerId = MemoryOwnerId("desktop-owner"),
+                    canonicalKey = "user.preference.language",
                     pinned = true,
                 )
             )
         }
-        coVerify(exactly = 1) { service.listFacts(MemoryFactFilter()) }
+        coVerify(exactly = 1) { service.listFacts(MemoryFactFilter(ownerId = MemoryOwnerId("desktop-owner"))) }
         assertNull(viewModel.uiState.value.editor)
         assertFalse(viewModel.uiState.value.isSaving)
         assertEquals(listOf("fact-created"), viewModel.uiState.value.facts.map { it.id })
@@ -164,7 +168,7 @@ class MemoryViewModelTest {
                     kind = existing.kind,
                     scopeType = "chat",
                     scopeId = "chat-1",
-                    slotKey = "",
+                    canonicalKey = "",
                     pinned = existing.pinned,
                 )
             )
@@ -184,7 +188,7 @@ class MemoryViewModelTest {
                 )
             )
         }
-        coVerify(exactly = 1) { service.listFacts(MemoryFactFilter()) }
+        coVerify(exactly = 1) { service.listFacts(MemoryFactFilter(ownerId = MemoryOwnerId("desktop-owner"))) }
         assertEquals("Updated title", viewModel.uiState.value.facts.single().title)
     }
 
@@ -200,7 +204,7 @@ class MemoryViewModelTest {
         advanceUntilIdle()
 
         coVerify(exactly = 1) { service.updateFact("fact-1", MemoryFactPatch(pinned = true)) }
-        coVerify(exactly = 1) { service.listFacts(MemoryFactFilter()) }
+        coVerify(exactly = 1) { service.listFacts(MemoryFactFilter(ownerId = MemoryOwnerId("desktop-owner"))) }
     }
 
     @Test
@@ -233,7 +237,7 @@ class MemoryViewModelTest {
                 PendingMemoryConfirm.Kind.Retire -> coVerify(exactly = 1) { service.retireFact("fact-1") }
                 PendingMemoryConfirm.Kind.Delete -> coVerify(exactly = 1) { service.deleteFact("fact-1") }
             }
-            coVerify(exactly = 1) { service.listFacts(MemoryFactFilter()) }
+            coVerify(exactly = 1) { service.listFacts(MemoryFactFilter(ownerId = MemoryOwnerId("desktop-owner"))) }
             assertNull(viewModel.uiState.value.confirm)
         }
     }
@@ -325,13 +329,40 @@ class MemoryViewModelTest {
         assertNull(controller.savedPreferences)
     }
 
+    @Test
+    fun `invalid canonical key is rejected before save`() = runTest(dispatcher) {
+        val service = mockk<MemoryService>(relaxed = true)
+        val viewModel = createViewModel(service)
+
+        viewModel.onAction(
+            MemoryAction.SaveFact(
+                MemoryEditorInput(
+                    factId = null,
+                    title = "Remember this",
+                    body = "Manual fact body",
+                    kind = MemoryFactKind.PREFERENCE,
+                    scopeType = "global",
+                    scopeId = "global",
+                    canonicalKey = "plain-key",
+                    pinned = false,
+                )
+            )
+        )
+        advanceUntilIdle()
+
+        assertEquals("Invalid canonical key", viewModel.uiState.value.error)
+        coVerify(exactly = 0) { service.createManualFact(any()) }
+    }
+
     private fun createViewModel(
         service: MemoryService,
         maintenanceController: MemoryMaintenanceController? = null,
+        ownerProvider: MemoryOwnerProvider = MemoryOwnerProvider { MemoryOwnerId("desktop-owner") },
     ): MemoryViewModel =
         MemoryViewModel(
             DI {
                 bindSingleton<MemoryService> { service }
+                bindSingleton<MemoryOwnerProvider> { ownerProvider }
                 maintenanceController?.let { controller ->
                     bindSingleton<MemoryMaintenanceController> { controller }
                 }

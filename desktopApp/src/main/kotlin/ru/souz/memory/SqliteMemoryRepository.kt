@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 
 class SqliteMemoryRepository(
     private val dbPath: Path,
+    private val legacyOwnerMigrationTarget: MemoryOwnerId? = null,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : MemoryRepository {
     private val initMutex = Mutex()
@@ -329,40 +330,29 @@ class SqliteMemoryRepository(
 
     override suspend fun deleteFact(factId: String): Unit = withConnection { connection ->
         connection.inTransaction {
-            val sourceEventIds = ArrayList<String>()
-            prepareStatement(
-                "select source_event_id from memory_fact_evidence where fact_id = ?"
-            ).use { statement ->
-                statement.setString(1, factId)
-                statement.executeQuery().use { rs ->
-                    while (rs.next()) {
-                        sourceEventIds.add(rs.getString("source_event_id"))
-                    }
+            deleteFactById(factId)
+        }
+    }
+
+    override suspend fun deleteFactsByScope(ownerId: MemoryOwnerId, scope: MemoryScope): Unit = withConnection { connection ->
+        val normalized = scope.normalized()
+        val factIds = connection.prepareStatement(
+            """
+            select id from memory_facts
+            where owner_id = ? and scope_type = ? and scope_id = ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, ownerId.value)
+            statement.setString(2, normalized.type)
+            statement.setString(3, normalized.id)
+            statement.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) add(rs.getString("id"))
                 }
             }
-
-            prepareStatement(
-                "delete from memory_fact_embeddings where fact_id = ?"
-            ).use { statement ->
-                statement.setString(1, factId)
-                statement.executeUpdate()
-            }
-
-            prepareStatement(
-                "delete from memory_fact_evidence where fact_id = ?"
-            ).use { statement ->
-                statement.setString(1, factId)
-                statement.executeUpdate()
-            }
-
-            prepareStatement(
-                "delete from memory_facts where id = ?"
-            ).use { statement ->
-                statement.setString(1, factId)
-                statement.executeUpdate()
-            }
-
-            sourceEventIds.distinct().forEach { deleteSourceEventIfUnused(it) }
+        }
+        connection.inTransaction {
+            factIds.forEach { factId -> deleteFactById(factId) }
         }
     }
 
@@ -803,7 +793,11 @@ class SqliteMemoryRepository(
         }
         applyMigration(connection, 1, "initial_memory_schema", MIGRATION_V1)
         applyMigration(connection, 2, "typed_memory_columns", MIGRATION_V2)
-        connection.createStatement().use { statement -> statement.execute("pragma user_version = 2") }
+        if (legacyOwnerMigrationTarget != null) {
+            applyMigration(connection, 3, "desktop_legacy_owner_migration", emptyList())
+        }
+        val version = if (legacyOwnerMigrationTarget == null) 2 else 3
+        connection.createStatement().use { statement -> statement.execute("pragma user_version = $version") }
     }
 
     private fun applyMigration(
@@ -820,6 +814,9 @@ class SqliteMemoryRepository(
         if (version == 2) {
             ensureTypedMemoryColumns(connection)
         }
+        if (version == 3) {
+            migrateLegacyOwner(connection, legacyOwnerMigrationTarget)
+        }
         statements.forEach { sql ->
             connection.createStatement().use { statement -> statement.execute(sql) }
         }
@@ -831,6 +828,25 @@ class SqliteMemoryRepository(
             statement.setString(3, statements.joinToString("\n").hashCode().toString())
             statement.setString(4, Instant.now().toString())
             statement.executeUpdate()
+        }
+    }
+
+    private fun migrateLegacyOwner(connection: Connection, targetOwnerId: MemoryOwnerId?) {
+        val target = targetOwnerId?.value?.trim()?.takeIf(String::isNotBlank) ?: return
+        if (target == LEGACY_OWNER_ID) return
+        listOf(
+            "memory_source_events",
+            "memory_facts",
+            "memory_index_jobs",
+            "memory_operation_log",
+            "memory_tombstones",
+            "memory_maintenance_jobs",
+        ).forEach { table ->
+            connection.prepareStatement("update $table set owner_id = ? where owner_id = ?").use { statement ->
+                statement.setString(1, target)
+                statement.setString(2, LEGACY_OWNER_ID)
+                statement.executeUpdate()
+            }
         }
     }
 
@@ -974,6 +990,57 @@ class SqliteMemoryRepository(
             statement.setString(2, sourceEventId)
             statement.executeUpdate()
         }
+    }
+
+    private fun Connection.deleteFactById(factId: String) {
+        val sourceEventIds = ArrayList<String>()
+        prepareStatement(
+            "select source_event_id from memory_fact_evidence where fact_id = ?"
+        ).use { statement ->
+            statement.setString(1, factId)
+            statement.executeQuery().use { rs ->
+                while (rs.next()) {
+                    sourceEventIds.add(rs.getString("source_event_id"))
+                }
+            }
+        }
+
+        prepareStatement(
+            "delete from memory_fact_embeddings where fact_id = ?"
+        ).use { statement ->
+            statement.setString(1, factId)
+            statement.executeUpdate()
+        }
+
+        prepareStatement(
+            "delete from memory_fact_stats where fact_id = ?"
+        ).use { statement ->
+            statement.setString(1, factId)
+            statement.executeUpdate()
+        }
+
+        prepareStatement(
+            "delete from memory_index_jobs where fact_id = ?"
+        ).use { statement ->
+            statement.setString(1, factId)
+            statement.executeUpdate()
+        }
+
+        prepareStatement(
+            "delete from memory_fact_evidence where fact_id = ?"
+        ).use { statement ->
+            statement.setString(1, factId)
+            statement.executeUpdate()
+        }
+
+        prepareStatement(
+            "delete from memory_facts where id = ?"
+        ).use { statement ->
+            statement.setString(1, factId)
+            statement.executeUpdate()
+        }
+
+        sourceEventIds.distinct().forEach { deleteSourceEventIfUnused(it) }
     }
 
     private fun Connection.upsertEmbedding(

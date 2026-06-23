@@ -70,7 +70,7 @@ class AgentExecutorMemoryTest {
         assertEquals("assistant response", result.output)
         assertEquals("conversation-1", captured.conversationId)
         assertEquals("conversation-1", captured.context.conversationId?.value)
-        assertEquals("session-conversation-1", captured.context.sessionId?.value)
+        assertEquals("conversation-1", captured.context.sessionId?.value)
         assertEquals(LocalUserId.default(), captured.context.ownerId.value)
         assertEquals("user-message-1", captured.userMessageId)
         assertEquals("assistant-message-1", captured.assistantMessageId)

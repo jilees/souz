@@ -5,10 +5,13 @@ import org.kodein.di.DIAware
 import org.kodein.di.direct
 import org.kodein.di.instance
 import org.kodein.di.instanceOrNull
+import ru.souz.memory.LegacyMemoryOwnerProvider
 import ru.souz.memory.MemoryMaintenanceController
 import ru.souz.memory.MemoryMaintenanceMode
 import ru.souz.memory.NoopMemoryMaintenanceController
+import ru.souz.memory.MemoryOwnerProvider
 import ru.souz.memory.MemoryService
+import ru.souz.memory.normalizeCanonicalKey
 import ru.souz.ui.BaseViewModel
 
 class MemoryViewModel(
@@ -16,6 +19,8 @@ class MemoryViewModel(
 ) : BaseViewModel<MemoryUiState, MemoryAction, MemoryEffect>(), DIAware {
 
     private val memoryService: MemoryService by di.instance()
+    private val ownerProvider: MemoryOwnerProvider =
+        di.direct.instanceOrNull<MemoryOwnerProvider>() ?: LegacyMemoryOwnerProvider
     private val maintenanceController: MemoryMaintenanceController =
         di.direct.instanceOrNull<MemoryMaintenanceController>() ?: NoopMemoryMaintenanceController
 
@@ -56,7 +61,7 @@ class MemoryViewModel(
     private suspend fun loadFacts() {
         setState { copy(isLoading = true, error = null) }
         runCatching {
-            memoryService.listFacts(currentState.filters.toDomainFilter())
+            memoryService.listFacts(currentState.filters.toDomainFilter(ownerProvider.currentOwnerId()))
         }.onSuccess { facts ->
             setState {
                 copy(
@@ -107,7 +112,7 @@ class MemoryViewModel(
         setState { copy(isSaving = true, error = null) }
         runCatching {
             if (input.factId == null) {
-                memoryService.createManualFact(input.toCreateInput())
+                memoryService.createManualFact(input.toCreateInput(ownerProvider.currentOwnerId()))
             } else {
                 memoryService.updateFact(input.factId, input.toPatch())
             }
@@ -233,6 +238,8 @@ class MemoryViewModel(
         input.body.isBlank() -> "Body is required"
         input.scopeType.isBlank() -> "Scope type is required"
         input.scopeId.isBlank() -> "Scope id is required"
+        input.canonicalKey?.trim()?.takeIf(String::isNotBlank)?.let(::normalizeCanonicalKey) == null &&
+            !input.canonicalKey.isNullOrBlank() -> "Invalid canonical key"
         else -> null
     }
 

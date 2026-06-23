@@ -210,84 +210,92 @@ private fun MemoryMaintenanceControls(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.42f),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.28f),
         contentColor = MaterialTheme.glassColors.textPrimary,
         shape = MaterialTheme.shapes.small,
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Dreamer", fontWeight = FontWeight.SemiBold)
-                    Switch(
-                        checked = state.isEnabled,
-                        onCheckedChange = { onAction(MemoryAction.SetDreamerEnabled(it)) },
-                    )
-                    SingleChoiceSegmentedButtonRow {
-                        MemoryMaintenanceMode.entries.forEachIndexed { index, mode ->
-                            SegmentedButton(
-                                selected = state.mode == mode,
-                                onClick = { onAction(MemoryAction.SelectDreamerMode(mode)) },
-                                shape = SegmentedButtonDefaults.itemShape(index, MemoryMaintenanceMode.entries.size),
-                                enabled = mode != MemoryMaintenanceMode.LOCAL_THEN_CLOUD || state.isEnabled,
-                            ) {
-                                Text(
-                                    when (mode) {
-                                        MemoryMaintenanceMode.OFF -> "Off"
-                                        MemoryMaintenanceMode.LOCAL_ONLY -> "Local"
-                                        MemoryMaintenanceMode.LOCAL_THEN_CLOUD -> "Cloud"
-                                    }
-                                )
-                            }
+                Text("Dreamer", fontWeight = FontWeight.SemiBold)
+                Switch(
+                    checked = state.isEnabled,
+                    onCheckedChange = { onAction(MemoryAction.SetDreamerEnabled(it)) },
+                )
+                SingleChoiceSegmentedButtonRow {
+                    listOf(
+                        MemoryMaintenanceMode.OFF to "Off",
+                        MemoryMaintenanceMode.LOCAL_ONLY to "Local",
+                        MemoryMaintenanceMode.LOCAL_THEN_CLOUD to "Cloud",
+                    ).forEachIndexed { index, (mode, label) ->
+                        SegmentedButton(
+                            selected = state.mode == mode,
+                            onClick = { onAction(MemoryAction.SelectDreamerMode(mode)) },
+                            shape = SegmentedButtonDefaults.itemShape(index, 3),
+                            enabled = mode != MemoryMaintenanceMode.LOCAL_THEN_CLOUD || state.isEnabled,
+                        ) {
+                            Text(label)
                         }
                     }
                 }
                 Text(
-                    text = "Pending ${state.pendingClusters} · Blocked ${state.blockedClusters} · Cloud ${state.tokensUsedToday}/${state.dailyCloudTokenLimitInput} tokens · ${state.cloudCallsToday}/${state.maxCloudCallsPerDayInput} calls",
+                    text = "Pending ${state.pendingClusters} · Blocked ${state.blockedClusters}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.glassColors.textPrimary.copy(alpha = 0.72f),
+                    modifier = Modifier.weight(1f),
+                )
+                Button(
+                    onClick = { onAction(MemoryAction.RunDreamerNow) },
+                    enabled = state.isEnabled && !state.isRunningNow,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Text(if (state.isRunningNow) "Running" else "Run")
+                }
+            }
+            val statusText = buildList {
+                state.lastErrorCode?.let { add("Error $it") }
+                state.blockedReason?.let { add("Blocked ${it.name.lowercase().replace('_', ' ')}") }
+                if (state.mode == MemoryMaintenanceMode.LOCAL_THEN_CLOUD) {
+                    add("Cloud ${state.tokensUsedToday}/${state.dailyCloudTokenLimitInput} tokens")
+                    add("${state.cloudCallsToday}/${state.maxCloudCallsPerDayInput} calls")
+                }
+            }.joinToString(" · ")
+            if (statusText.isNotBlank()) {
+                Text(
+                    text = statusText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.glassColors.textPrimary.copy(alpha = 0.72f),
                 )
-                state.blockedReason?.let {
-                    Text(
-                        text = "Blocked: ${it.name.lowercase().replace('_', ' ')}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
+            }
+            if (state.mode == MemoryMaintenanceMode.LOCAL_THEN_CLOUD) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = state.dailyCloudTokenLimitInput,
+                        onValueChange = { onAction(MemoryAction.SetDailyTokenLimit(it)) },
+                        label = { Text("Tokens/day") },
+                        modifier = Modifier.width(124.dp),
+                        singleLine = true,
+                        colors = memoryTextFieldColors(),
+                    )
+                    OutlinedTextField(
+                        value = state.maxCloudCallsPerDayInput,
+                        onValueChange = { onAction(MemoryAction.SetDailyCallLimit(it)) },
+                        label = { Text("Calls/day") },
+                        modifier = Modifier.width(116.dp),
+                        singleLine = true,
+                        colors = memoryTextFieldColors(),
                     )
                 }
-            }
-            OutlinedTextField(
-                value = state.dailyCloudTokenLimitInput,
-                onValueChange = { onAction(MemoryAction.SetDailyTokenLimit(it)) },
-                label = { Text("Tokens/day") },
-                enabled = state.mode == MemoryMaintenanceMode.LOCAL_THEN_CLOUD,
-                modifier = Modifier.width(120.dp),
-                singleLine = true,
-                colors = memoryTextFieldColors(),
-            )
-            OutlinedTextField(
-                value = state.maxCloudCallsPerDayInput,
-                onValueChange = { onAction(MemoryAction.SetDailyCallLimit(it)) },
-                label = { Text("Calls/day") },
-                enabled = state.mode == MemoryMaintenanceMode.LOCAL_THEN_CLOUD,
-                modifier = Modifier.width(110.dp),
-                singleLine = true,
-                colors = memoryTextFieldColors(),
-            )
-            Button(
-                onClick = { onAction(MemoryAction.RunDreamerNow) },
-                enabled = state.isEnabled && !state.isRunningNow,
-            ) {
-                Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                Text(if (state.isRunningNow) "Running" else "Run now")
             }
         }
     }

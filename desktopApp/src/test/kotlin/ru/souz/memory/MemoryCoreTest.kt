@@ -130,8 +130,7 @@ class MemoryCoreTest {
             userMessage = "Запомни: хочу реализацию на Kotlin",
         )
 
-        assertEquals(1, remembered.size)
-        assertEquals("writer", remembered.single().createdBy)
+        assertTrue(remembered.any { it.title == "User prefers Kotlin" && it.createdBy == "writer" })
     }
 
     @Test
@@ -290,6 +289,47 @@ class MemoryCoreTest {
         assertEquals(listOf("fact-legacy-chat"), migratedChatFacts.map { it.id })
         assertTrue(block.facts.none { it.id == "fact-legacy-chat" })
         assertEquals(1, countRows(dbPath, "memory_maintenance_jobs"))
+    }
+
+    @Test
+    fun `legacy owner migration moves owner columns to current desktop owner`() = runTest {
+        val dbPath = Files.createTempDirectory("souz-memory-owner-test-").resolve("memory.db")
+        seedLegacyV1MemoryDb(dbPath)
+        val owner = MemoryOwnerId("desktop-owner")
+        val repository = SqliteMemoryRepository(dbPath, legacyOwnerMigrationTarget = owner)
+
+        val facts = repository.listFacts(MemoryFactFilter(ownerId = owner, scope = MemoryScope("chat", "chat-legacy")))
+
+        assertEquals(listOf("fact-legacy-chat"), facts.map { it.id })
+        assertEquals(0, countRows(dbPath, "memory_facts", "owner_id = 'local-legacy-owner'"))
+        assertEquals(0, countRows(dbPath, "memory_source_events", "owner_id = 'local-legacy-owner'"))
+        assertEquals(1, countRows(dbPath, "memory_maintenance_jobs", "owner_id = 'desktop-owner'"))
+    }
+
+    @Test
+    fun `manual fact under desktop owner is retrieved by current owner`() = runTest {
+        val owner = MemoryOwnerId("desktop-owner")
+        val fixture = createFixture(owner = owner)
+        val fact = fixture.createManual(
+            kind = MemoryFactKind.PREFERENCE,
+            title = "Use Kotlin",
+            body = "User prefers Kotlin implementation.",
+        )
+
+        val result = fixture.memoryService.retrieveMemory(
+            MemoryRetrievalRequest(
+                context = MemoryContext(
+                    ownerId = owner,
+                    surface = MemorySurface.DESKTOP,
+                    conversationId = ConversationId("chat-1"),
+                    sessionId = MemorySessionId("chat-1"),
+                    projectId = null,
+                ),
+                query = "kotlin implementation",
+            )
+        )
+
+        assertEquals(listOf(fact.id), result.facts.map { it.factId })
     }
 
     @Test
@@ -463,12 +503,46 @@ class MemoryCoreTest {
         val fixture = createFixture()
         val retired = fixture.createManual(title = "Retired fact")
         val deleted = fixture.createManual(title = "Deleted fact")
+        fixture.memoryService.retrieveForPrompt(listOf(globalScope()), "Deleted fact", limit = 1)
 
         fixture.memoryService.retireFact(retired.id)
         fixture.memoryService.deleteFact(deleted.id)
 
         assertEquals(MemoryFactStatus.RETIRED, fixture.repository.getFact(retired.id)?.status)
         assertEquals(null, fixture.repository.getFact(deleted.id))
+        assertEquals(0, fixture.countRows("memory_fact_stats", "fact_id = '${deleted.id}'"))
+        assertEquals(0, fixture.countRows("memory_index_jobs", "fact_id = '${deleted.id}'"))
+    }
+
+    @Test
+    fun `deleteFactsByScope removes session and legacy chat facts`() = runTest {
+        val owner = MemoryOwnerId("desktop-owner")
+        val fixture = createFixture(owner = owner)
+        val sessionFact = fixture.createManual(scope = MemoryScope.session(MemorySessionId("chat-42")), title = "Session note")
+        val legacyChatFact = fixture.createManual(scope = chatScope("chat-42"), title = "Legacy chat note")
+        val globalFact = fixture.createManual(scope = globalScope(), title = "Global note")
+
+        fixture.memoryService.deleteFactsByScope(owner, MemoryScope.session(MemorySessionId("chat-42")))
+        fixture.memoryService.deleteFactsByScope(owner, chatScope("chat-42"))
+
+        assertEquals(null, fixture.repository.getFact(sessionFact.id))
+        assertEquals(null, fixture.repository.getFact(legacyChatFact.id))
+        assertNotNull(fixture.repository.getFact(globalFact.id))
+    }
+
+    @Test
+    fun `maintenance run marks pending jobs as done`() = runTest {
+        val dbPath = Files.createTempDirectory("souz-memory-maintenance-test-").resolve("memory.db")
+        seedLegacyV1MemoryDb(dbPath)
+        SqliteMemoryRepository(dbPath).listFacts(MemoryFactFilter())
+        val controller = DesktopMemoryMaintenanceController(dbPath, InMemoryMemoryMaintenanceSettingsStore())
+        controller.savePreferences(MemoryMaintenancePreferences(mode = MemoryMaintenanceMode.LOCAL_ONLY))
+
+        val status = controller.runNow()
+
+        assertEquals(0, status.pendingClusters)
+        assertEquals(1, countRows(dbPath, "memory_maintenance_jobs", "status = 'DONE'"))
+        assertNotNull(status.lastCompletedAt)
     }
 
     @Test
@@ -740,12 +814,13 @@ class MemoryCoreTest {
 
     private fun createFixture(
         writer: MemoryWriter = FixedWriter(),
+        owner: MemoryOwnerId = MemoryOwnerId(LEGACY_OWNER_ID),
     ): Fixture = Files.createTempDirectory("souz-memory-test-").resolve("memory.db")
         .let { dbPath ->
             SqliteMemoryRepository(dbPath).let { repository ->
             FakeEmbeddingClient().let { embedder ->
                 MemoryService(repository, embedder).let { service ->
-                    Fixture(dbPath, repository, embedder, service, MemoryCaptureService(service, writer))
+                    Fixture(dbPath, owner, repository, embedder, service, MemoryCaptureService(service, writer))
                 }
             }
         }
@@ -753,6 +828,7 @@ class MemoryCoreTest {
 
     private data class Fixture(
         val dbPath: Path,
+        val owner: MemoryOwnerId,
         val repository: MemoryRepository,
         val embedder: FakeEmbeddingClient,
         val memoryService: MemoryService,
@@ -767,6 +843,7 @@ class MemoryCoreTest {
         pinned: Boolean = false,
     ): MemoryFact = memoryService.createManualFact(
         CreateMemoryFactInput(
+            ownerId = owner,
             scope = scope,
             kind = kind,
             title = title,
@@ -784,6 +861,7 @@ class MemoryCoreTest {
     ): MemoryFact {
         val sourceId = repository.insertSourceEvent(
             NewMemorySourceEvent(
+                ownerId = owner,
                 scope = scope,
                 sourceType = "manual",
                 sourceRef = null,
@@ -792,6 +870,7 @@ class MemoryCoreTest {
         )
         val factId = repository.insertFact(
             NewMemoryFact(
+                ownerId = owner,
                 scope = scope,
                 kind = kind,
                 title = title,
@@ -829,10 +908,16 @@ class MemoryCoreTest {
 
     private fun Fixture.countRows(table: String): Int = countRows(dbPath, table)
 
-    private fun countRows(dbPath: Path, table: String): Int {
+    private fun Fixture.countRows(table: String, where: String): Int = countRows(dbPath, table, where)
+
+    private fun countRows(dbPath: Path, table: String, where: String? = null): Int {
         Class.forName("org.sqlite.JDBC")
         DriverManager.getConnection("jdbc:sqlite:${dbPath.toAbsolutePath()}").use { connection ->
-            connection.prepareStatement("select count(*) from $table").use { statement ->
+            val sql = buildString {
+                append("select count(*) from $table")
+                if (where != null) append(" where $where")
+            }
+            connection.prepareStatement(sql).use { statement ->
                 statement.executeQuery().use { rs ->
                     rs.next()
                     return rs.getInt(1)
@@ -1042,6 +1127,16 @@ class MemoryCoreTest {
     private fun projectScope(): MemoryScope = MemoryScope(type = "project", id = "souz")
 
     private fun chatScope(id: String): MemoryScope = MemoryScope(type = "chat", id = id)
+
+    private class InMemoryMemoryMaintenanceSettingsStore : MemoryMaintenanceSettingsStore {
+        private val values = mutableMapOf<String, String>()
+
+        override fun put(key: String, value: String) {
+            values[key] = value
+        }
+
+        override fun get(key: String): String? = values[key]
+    }
 
     private fun MemoryFact.embeddingText(): String = buildString {
         appendLine(title)

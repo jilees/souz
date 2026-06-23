@@ -107,6 +107,10 @@ class MemoryService(
     }
 
     suspend fun createCapturedFact(input: CreateCapturedFactInput): MemoryFact {
+        return tryCreateCapturedFact(input) ?: error("Memory fact is blocked by tombstone")
+    }
+
+    suspend fun tryCreateCapturedFact(input: CreateCapturedFactInput): MemoryFact? {
         val scope = input.scope.normalized()
         val cleanTitle = MemorySanitizer.redact(input.title.trim())
         val cleanBody = MemorySanitizer.redact(input.body.trim())
@@ -114,7 +118,7 @@ class MemoryService(
         val canonicalKey = controlledCanonicalKey(input.canonicalKey)
         val existing = canonicalKey?.let { repo.findActiveFactByCanonicalKey(input.ownerId, scope, it) }
         if (repo.hasTombstone(input.ownerId, listOf(scope), canonicalKey, cleanTitle.normalizedSubjectKey())) {
-            return existing ?: error("Memory fact is blocked by tombstone")
+            return null
         }
         return createFact(
             input = NewMemoryFact(
@@ -186,6 +190,9 @@ class MemoryService(
     suspend fun retireFact(factId: String) = repo.retireFact(factId)
 
     suspend fun deleteFact(factId: String) = repo.deleteFact(factId)
+
+    suspend fun deleteFactsByScope(ownerId: MemoryOwnerId, scope: MemoryScope) =
+        repo.deleteFactsByScope(ownerId, scope)
 
     suspend fun deleteSourceEventIfUnused(sourceEventId: String) = repo.deleteSourceEventIfUnused(sourceEventId)
 
@@ -361,32 +368,57 @@ class MemoryService(
     ): Int {
         val scopes = context.allowedRetrievalScopes(includeChat = context.surface == MemorySurface.BACKEND)
         val query = text.removeForgetMarkers()
-        val candidates = (
-            repo.lexicalSearchFacts(context.ownerId, scopes, query, 20) +
-                exactCandidates(context.ownerId, scopes, query, 20)
+        val match = confidentForgetMatch(context.ownerId, scopes, query) ?: return 0
+        if (hardDelete) {
+            repo.deleteFact(match.id)
+            repo.recordOperation(match.id, match.ownerId, MemoryOperationType.DELETE, "explicit_delete")
+        } else {
+            repo.retireFact(match.id)
+            repo.recordOperation(match.id, match.ownerId, MemoryOperationType.FORGET, "explicit_forget")
+            repo.createTombstone(
+                ownerId = match.ownerId,
+                scope = match.scope,
+                canonicalKey = match.canonicalKey,
+                subjectKey = match.title.normalizedSubjectKey(),
+                reason = "explicit_forget",
             )
-            .distinctBy { it.fact.id }
-            .filter { it.fact.status == MemoryFactStatus.ACTIVE }
-            .take(8)
-        var changed = 0
-        candidates.forEach { hit ->
-            if (hardDelete) {
-                repo.deleteFact(hit.fact.id)
-                repo.recordOperation(hit.fact.id, hit.fact.ownerId, MemoryOperationType.DELETE, "explicit_delete")
-            } else {
-                repo.retireFact(hit.fact.id)
-                repo.recordOperation(hit.fact.id, hit.fact.ownerId, MemoryOperationType.FORGET, "explicit_forget")
-                repo.createTombstone(
-                    ownerId = hit.fact.ownerId,
-                    scope = hit.fact.scope,
-                    canonicalKey = hit.fact.canonicalKey,
-                    subjectKey = hit.fact.title.normalizedSubjectKey(),
-                    reason = "explicit_forget",
+        }
+        return 1
+    }
+
+    private suspend fun confidentForgetMatch(
+        ownerId: MemoryOwnerId,
+        scopes: List<MemoryScope>,
+        query: String,
+    ): MemoryFact? {
+        val normalizedQuery = query.trim()
+        if (normalizedQuery.isBlank()) return null
+
+        normalizeCanonicalKey(normalizedQuery)?.let { key ->
+            val matches = scopes
+                .mapNotNull { scope -> repo.findActiveFactByCanonicalKey(ownerId, scope, key) }
+                .distinctBy(MemoryFact::id)
+            return matches.singleOrNull()
+        }
+
+        val lowerQuery = normalizedQuery.lowercase()
+        val matches = scopes
+            .flatMap { scope ->
+                repo.listFacts(
+                    MemoryFactFilter(
+                        ownerId = ownerId,
+                        scope = scope,
+                        statuses = setOf(MemoryFactStatus.ACTIVE),
+                        limit = 100,
+                    )
                 )
             }
-            changed++
-        }
-        return changed
+            .filter { fact ->
+                fact.title.trim().lowercase() == lowerQuery ||
+                    fact.canonicalKey?.trim()?.lowercase() == lowerQuery
+            }
+            .distinctBy(MemoryFact::id)
+        return matches.singleOrNull()
     }
 
     private suspend fun exactCandidates(

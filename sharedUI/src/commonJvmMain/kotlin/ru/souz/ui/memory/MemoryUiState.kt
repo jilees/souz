@@ -12,7 +12,9 @@ import ru.souz.memory.MemoryMaintenanceMode
 import ru.souz.memory.MemoryMaintenancePreferences
 import ru.souz.memory.MemoryMaintenanceStatus
 import ru.souz.memory.MemoryMaintenanceWorkerState
+import ru.souz.memory.MemoryOwnerId
 import ru.souz.memory.MemoryScope
+import ru.souz.memory.normalizeCanonicalKey
 import java.time.Instant
 import ru.souz.ui.VMEvent
 import ru.souz.ui.VMSideEffect
@@ -89,7 +91,7 @@ data class MemoryEditorInput(
     val kind: MemoryFactKind,
     val scopeType: String,
     val scopeId: String,
-    val slotKey: String?,
+    val canonicalKey: String?,
     val pinned: Boolean,
 )
 
@@ -133,8 +135,9 @@ sealed interface MemoryEffect : VMSideEffect {
     data class ShowError(val message: String) : MemoryEffect
 }
 
-fun MemoryFiltersUi.toDomainFilter(): MemoryFactFilter =
+fun MemoryFiltersUi.toDomainFilter(ownerId: MemoryOwnerId? = null): MemoryFactFilter =
     MemoryFactFilter(
+        ownerId = ownerId,
         statuses = when (status) {
             MemoryStatusFilter.ACTIVE -> setOf(MemoryFactStatus.ACTIVE)
             MemoryStatusFilter.RETIRED -> setOf(MemoryFactStatus.RETIRED)
@@ -152,25 +155,26 @@ fun MemoryFiltersUi.toDomainFilter(): MemoryFactFilter =
         query = query.trim().takeIf(String::isNotBlank),
     )
 
-fun MemoryEditorInput.toCreateInput(): CreateMemoryFactInput =
+fun MemoryEditorInput.toCreateInput(ownerId: MemoryOwnerId): CreateMemoryFactInput =
     CreateMemoryFactInput(
+        ownerId = ownerId,
         scope = MemoryScope(scopeType.trim(), scopeId.trim()),
         kind = kind,
         title = title.trim(),
         body = body.trim(),
-        canonicalKey = slotKey?.trim()?.ifBlank { null },
+        canonicalKey = normalizeCanonicalKey(canonicalKey),
         pinned = pinned,
     )
 
 fun MemoryEditorInput.toPatch(): MemoryFactPatch {
-    val trimmedSlotKey = slotKey?.trim()
+    val trimmedCanonicalKey = canonicalKey?.trim()
     return MemoryFactPatch(
         scope = MemoryScope(scopeType.trim(), scopeId.trim()),
         kind = kind,
         title = title.trim(),
         body = body.trim(),
-        canonicalKey = trimmedSlotKey?.ifBlank { null },
-        clearCanonicalKey = trimmedSlotKey.isNullOrBlank(),
+        canonicalKey = normalizeCanonicalKey(trimmedCanonicalKey),
+        clearCanonicalKey = trimmedCanonicalKey.isNullOrBlank(),
         pinned = pinned,
     )
 }
@@ -185,7 +189,7 @@ fun MemoryFactDetails.toEditorState(): MemoryEditorState =
             kind = fact.kind,
             scopeType = fact.scope.type,
             scopeId = fact.scope.id,
-            slotKey = fact.canonicalKey,
+            canonicalKey = fact.canonicalKey,
             pinned = fact.pinned,
         ),
     )
@@ -200,7 +204,7 @@ fun newMemoryEditorState(): MemoryEditorState =
             kind = MemoryFactKind.SEMANTIC,
             scopeType = "global",
             scopeId = "global",
-            slotKey = null,
+            canonicalKey = null,
             pinned = false,
         ),
     )

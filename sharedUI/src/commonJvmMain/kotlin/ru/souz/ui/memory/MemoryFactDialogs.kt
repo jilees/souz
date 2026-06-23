@@ -222,7 +222,7 @@ internal fun MemoryFactEditorDialog(
     var kind by remember(editor) { mutableStateOf(editor.input.kind) }
     val scopeType = editor.input.scopeType.ifBlank { DEFAULT_SCOPE_TYPE }
     val scopeId = editor.input.scopeId.ifBlank { DEFAULT_SCOPE_ID }
-    var slotKey by remember(editor) { mutableStateOf(editor.input.slotKey.orEmpty()) }
+    var canonicalKey by remember(editor) { mutableStateOf(editor.input.canonicalKey.orEmpty()) }
     var pinned by remember(editor) { mutableStateOf(editor.input.pinned) }
     val scopeLabel = memoryScopeLabel(scopeType, scopeId)
     var showValidationErrors by remember { mutableStateOf(false) }
@@ -264,7 +264,7 @@ internal fun MemoryFactEditorDialog(
                         kind = kind,
                         scopeType = scopeType,
                         scopeId = scopeId,
-                        slotKey = slotKey,
+                        canonicalKey = canonicalKey,
                         pinned = pinned,
                     )
                 )
@@ -306,8 +306,8 @@ internal fun MemoryFactEditorDialog(
                 )
                 LabeledTextField(
                     label = stringResource(Res.string.memory_editor_slot_key),
-                    value = slotKey,
-                    onValueChange = { slotKey = it },
+                    value = canonicalKey,
+                    onValueChange = { canonicalKey = it },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )

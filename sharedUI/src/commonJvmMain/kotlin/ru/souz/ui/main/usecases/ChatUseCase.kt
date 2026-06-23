@@ -45,6 +45,7 @@ class ChatUseCase internal constructor(
     private val observabilityTracker: ChatObservabilityTracker,
     private val log: DesktopStructuredLogger,
     private val tokenLogging: TokenLogging,
+    private val memoryConversationCleanup: MemoryConversationCleanup = NoopMemoryConversationCleanup,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val l = LoggerFactory.getLogger(ChatUseCase::class.java)
@@ -169,7 +170,10 @@ class ChatUseCase internal constructor(
     }
 
     fun finishCurrentConversation(reason: ChatConversationCloseReason) {
-        observabilityTracker.finishCurrentConversation(reason)
+        val conversationId = observabilityTracker.finishCurrentConversation(reason)
+        if (conversationId != null && reason in CLEANUP_REASONS) {
+            memoryConversationCleanup.cleanupConversation(conversationId)
+        }
     }
 
     fun setContext(ctx: AgentContext<String>) {
@@ -617,6 +621,10 @@ class ChatUseCase internal constructor(
     private companion object {
         const val CODE_BLOCK = "```"
         const val MAX_AGENT_ACTIONS = 8
+        val CLEANUP_REASONS = setOf(
+            ChatConversationCloseReason.NEW_CONVERSATION,
+            ChatConversationCloseReason.CLEAR_CONTEXT,
+        )
     }
 
     private data class ActiveRequestMessages(

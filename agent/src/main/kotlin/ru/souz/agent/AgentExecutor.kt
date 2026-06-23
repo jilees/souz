@@ -75,7 +75,7 @@ class AgentExecutor internal constructor(
                             ownerId = MemoryOwnerId(ctx.toolInvocationMeta.userId),
                             surface = MemorySurface.DESKTOP,
                             conversationId = ctx.toolInvocationMeta.conversationId?.let(::ConversationId),
-                            sessionId = ctx.toolInvocationMeta.conversationId?.let { MemorySessionId("session-$it") },
+                            sessionId = ctx.toolInvocationMeta.conversationId?.let(::MemorySessionId),
                             projectId = null,
                         ),
                         conversationId = ctx.toolInvocationMeta.conversationId,

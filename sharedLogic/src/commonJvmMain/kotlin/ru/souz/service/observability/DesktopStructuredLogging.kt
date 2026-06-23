@@ -303,7 +303,7 @@ class ChatObservabilityTracker(
         return previous.currentConversationId
     }
 
-    fun finishCurrentConversation(reason: ChatConversationCloseReason) {
+    fun finishCurrentConversation(reason: ChatConversationCloseReason): String? {
         val previous = state.getAndUpdate { current ->
             val conversationId = current.currentConversationId ?: return@getAndUpdate current
             val hasActiveRequests = (current.activeRequestCounts[conversationId] ?: 0) > 0
@@ -321,12 +321,13 @@ class ChatObservabilityTracker(
                 },
             )
         }
-        val conversationId = previous.currentConversationId ?: return
+        val conversationId = previous.currentConversationId ?: return null
         if ((previous.activeRequestCounts[conversationId] ?: 0) == 0) {
             previous.metricsByConversationId[conversationId]?.let { metrics ->
                 onConversationFinished(conversationId, metrics, reason)
             }
         }
+        return conversationId
     }
 
     fun markConversationRequestStarted(conversationId: String) {

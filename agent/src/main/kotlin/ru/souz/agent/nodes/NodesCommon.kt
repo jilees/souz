@@ -222,7 +222,7 @@ internal class NodesCommon(
                         ownerId = MemoryOwnerId(meta.userId),
                         surface = MemorySurface.DESKTOP,
                         conversationId = meta.conversationId?.let(::ConversationId),
-                        sessionId = meta.conversationId?.let { MemorySessionId("session-$it") },
+                        sessionId = meta.conversationId?.let(::MemorySessionId),
                         projectId = null,
                     ),
                     query = userText,

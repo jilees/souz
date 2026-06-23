@@ -11,39 +11,30 @@ object NoopDesktopMemoryProjectContextProvider : DesktopMemoryProjectContextProv
     override fun currentProjectId(): ProjectId? = null
 }
 
-class DesktopMemoryContextProvider(
-    private val projectContextProvider: DesktopMemoryProjectContextProvider = NoopDesktopMemoryProjectContextProvider,
-) {
-    fun current(conversationId: String?): MemoryContext = MemoryContext(
-        ownerId = MemoryOwnerId(stableOwnerId()),
-        surface = MemorySurface.DESKTOP,
-        conversationId = conversationId?.let(::ConversationId),
-        sessionId = MemorySessionId(activeSessionId()),
-        projectId = projectContextProvider.currentProjectId(),
-    )
-
-    fun rotateSession(): MemorySessionId {
-        val id = UUID.randomUUID().toString()
-        ConfigStore.put(ACTIVE_SESSION_KEY, id)
-        return MemorySessionId(id)
-    }
-
-    private fun stableOwnerId(): String {
-        ConfigStore.get<String>(OWNER_KEY)?.trim()?.takeIf(String::isNotBlank)?.let { return it }
+class DesktopMemoryOwnerProvider : MemoryOwnerProvider {
+    override fun currentOwnerId(): MemoryOwnerId {
+        ConfigStore.get<String>(OWNER_KEY)?.trim()?.takeIf(String::isNotBlank)?.let { return MemoryOwnerId(it) }
         val generated = UUID.randomUUID().toString()
         ConfigStore.put(OWNER_KEY, generated)
-        return generated
-    }
-
-    private fun activeSessionId(): String {
-        ConfigStore.get<String>(ACTIVE_SESSION_KEY)?.trim()?.takeIf(String::isNotBlank)?.let { return it }
-        return rotateSession().value
+        return MemoryOwnerId(generated)
     }
 
     private companion object {
         private const val OWNER_KEY = "MEMORY_LOCAL_OWNER_ID"
-        private const val ACTIVE_SESSION_KEY = "MEMORY_ACTIVE_SESSION_ID"
     }
+}
+
+class DesktopMemoryContextProvider(
+    private val projectContextProvider: DesktopMemoryProjectContextProvider = NoopDesktopMemoryProjectContextProvider,
+    private val ownerProvider: MemoryOwnerProvider = DesktopMemoryOwnerProvider(),
+) {
+    fun current(conversationId: String?): MemoryContext = MemoryContext(
+        ownerId = ownerProvider.currentOwnerId(),
+        surface = MemorySurface.DESKTOP,
+        conversationId = conversationId?.let(::ConversationId),
+        sessionId = conversationId?.let(::MemorySessionId),
+        projectId = projectContextProvider.currentProjectId(),
+    )
 }
 
 class DesktopConversationMemoryRuntime(

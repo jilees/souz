@@ -29,6 +29,17 @@ interface MemoryRepository {
 
     suspend fun deleteFact(factId: String)
 
+    suspend fun deleteFactsByScope(ownerId: MemoryOwnerId, scope: MemoryScope) {
+        listFacts(
+            MemoryFactFilter(
+                ownerId = ownerId,
+                scope = scope.normalized(),
+                statuses = setOf(MemoryFactStatus.ACTIVE, MemoryFactStatus.RETIRED),
+                limit = 1_000,
+            )
+        ).forEach { fact -> deleteFact(fact.id) }
+    }
+
     suspend fun deleteSourceEventIfUnused(sourceEventId: String)
 
     suspend fun findActiveFactBySlotKey(

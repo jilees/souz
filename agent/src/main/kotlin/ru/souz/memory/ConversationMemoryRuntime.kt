@@ -3,6 +3,14 @@ package ru.souz.memory
 @JvmInline
 value class MemoryOwnerId(val value: String)
 
+fun interface MemoryOwnerProvider {
+    fun currentOwnerId(): MemoryOwnerId
+}
+
+object LegacyMemoryOwnerProvider : MemoryOwnerProvider {
+    override fun currentOwnerId(): MemoryOwnerId = MemoryOwnerId(LEGACY_OWNER_ID)
+}
+
 @JvmInline
 value class MemorySessionId(val value: String)
 
