@@ -47,7 +47,7 @@ class BackendConversationRuntimeSettingsTest {
             systemPrompt = "backend test prompt",
             toolCatalog = BackendNoopAgentToolCatalog,
             skillRegistryRepository = UnusedSkillRegistryRepository,
-            captureScope = backgroundScope,
+            agentBackgroundScope = backgroundScope,
         )
         val request = turnRequest().copy(requestTimeoutMillis = 45_000L)
 
@@ -158,7 +158,7 @@ private fun runtimeFactory(
         logObjectMapper = jacksonObjectMapper(),
         systemPrompt = "backend test prompt",
         toolCatalog = toolCatalog,
-        captureScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        agentBackgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     )
 
 private fun conversationKey(): AgentConversationKey =

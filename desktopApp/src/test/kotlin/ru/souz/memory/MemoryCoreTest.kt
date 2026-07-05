@@ -6,8 +6,12 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.DriverManager
 import java.time.Instant
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -15,6 +19,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import ru.souz.ui.main.usecases.MemoryServiceConversationCleanup
 
 class MemoryCoreTest {
     @Test
@@ -92,6 +97,84 @@ class MemoryCoreTest {
     }
 
     @Test
+    fun `listFacts treats sql wildcard query characters literally`() = runTest {
+        val fixture = createFixture()
+        fixture.createManual(
+            scope = globalScope(),
+            title = "Ordinary note",
+            body = "This note should not match a percent-only search.",
+        )
+
+        val facts = fixture.repository.listFacts(
+            MemoryFactFilter(
+                ownerId = fixture.owner,
+                scope = globalScope(),
+                query = "%",
+                limit = 10,
+            )
+        )
+
+        assertTrue(facts.isEmpty())
+    }
+
+    @Test
+    fun `lexicalSearchFacts treats sql wildcard query characters literally`() = runTest {
+        val fixture = createFixture()
+        fixture.createManual(
+            scope = globalScope(),
+            title = "Kotlin lexical note",
+            body = "This note should not match a k-underscore lexical search.",
+        )
+
+        val hits = fixture.repository.lexicalSearchFacts(
+            ownerId = fixture.owner,
+            scopes = listOf(globalScope()),
+            query = "k_",
+            limit = 10,
+        )
+
+        assertTrue(hits.isEmpty())
+    }
+
+    @Test
+    fun `updateFact replacing canonical key retires previous active fact`() = runTest {
+        val fixture = createFixture()
+        val oldFact = fixture.memoryService.createManualFact(
+            CreateMemoryFactInput(
+                ownerId = fixture.owner,
+                scope = projectScope(),
+                kind = MemoryFactKind.PROJECT_DECISION,
+                title = "Old storage",
+                body = "Use Postgres for memory storage.",
+                canonicalKey = "project.decision.memory.storage.target",
+            )
+        )
+        val editedFact = fixture.memoryService.createManualFact(
+            CreateMemoryFactInput(
+                ownerId = fixture.owner,
+                scope = projectScope(),
+                kind = MemoryFactKind.PROJECT_DECISION,
+                title = "Edited storage",
+                body = "Use SQLite for memory storage.",
+                canonicalKey = "project.decision.memory.storage.edited",
+            )
+        )
+
+        val updated = fixture.memoryService.updateFact(
+            factId = editedFact.id,
+            patch = MemoryFactPatch(canonicalKey = "project.decision.memory.storage.target"),
+        )
+
+        val activeFacts = fixture.repository.listFacts(MemoryFactFilter(scope = projectScope()))
+
+        assertEquals("project.decision.memory.storage.target", updated.canonicalKey)
+        assertEquals(oldFact.id, updated.supersedesFactId)
+        assertEquals(MemoryFactStatus.RETIRED, fixture.repository.getFact(oldFact.id)?.status)
+        assertEquals(MemoryFactStatus.ACTIVE, fixture.repository.getFact(editedFact.id)?.status)
+        assertEquals(listOf(editedFact.id), activeFacts.map { it.id })
+    }
+
+    @Test
     fun `capture creates valid fact with evidence and explicit remember accepts lower confidence`() = runTest {
         val fixture = createFixture(
             writer = FixedWriter(
@@ -132,6 +215,45 @@ class MemoryCoreTest {
         )
 
         assertTrue(remembered.any { it.title == "User prefers Kotlin" && it.createdBy == "writer" })
+    }
+
+    @Test
+    fun `capture does not persist tombstoned candidate evidence in allowed fact source event`() = runTest {
+        val fixture = createFixture(
+            writer = FixedWriter(
+                candidate(
+                    kind = MemoryFactKind.PREFERENCE,
+                    title = "Blocked preference",
+                    body = "Do not relearn this.",
+                    slotKey = "user.preference.blocked",
+                    confidence = 0.9f,
+                    evidenceText = "Blocked evidence must not be persisted.",
+                ),
+                candidate(
+                    kind = MemoryFactKind.PREFERENCE,
+                    title = "Allowed preference",
+                    body = "Remember allowed preference.",
+                    slotKey = "user.preference.allowed",
+                    confidence = 0.9f,
+                    evidenceText = "Allowed evidence may be persisted.",
+                ),
+            )
+        )
+        fixture.repository.createTombstone(
+            ownerId = fixture.owner,
+            scope = globalScope(),
+            canonicalKey = "user.preference.blocked",
+            subjectKey = null,
+            reason = "test",
+        )
+
+        val created = fixture.capture(userMessage = "We discussed memory preferences.")
+        val details = fixture.repository.getFactDetails(created.single().id)
+
+        assertNotNull(details)
+        assertEquals("Allowed preference", details.fact.title)
+        assertEquals("Allowed evidence may be persisted.", details.evidence.single().sourceEvent.text)
+        assertFalse(details.evidence.single().sourceEvent.text.contains("Blocked evidence"))
     }
 
     @Test
@@ -176,6 +298,35 @@ class MemoryCoreTest {
         assertEquals(MemoryFactStatus.RETIRED, oldFact.status)
         assertEquals(MemoryFactStatus.ACTIVE, newFact.status)
         assertEquals(first.id, newFact.supersedesFactId)
+    }
+
+    @Test
+    fun `manual canonical replacement records superseded fact`() = runTest {
+        val fixture = createFixture()
+        val first = fixture.memoryService.createManualFact(
+            CreateMemoryFactInput(
+                ownerId = fixture.owner,
+                scope = projectScope(),
+                kind = MemoryFactKind.PROJECT_DECISION,
+                title = "Storage target",
+                body = "Use Postgres for memory storage.",
+                canonicalKey = "project.decision.memory.storage.target",
+            )
+        )
+
+        val second = fixture.memoryService.createManualFact(
+            CreateMemoryFactInput(
+                ownerId = fixture.owner,
+                scope = projectScope(),
+                kind = MemoryFactKind.PROJECT_DECISION,
+                title = "Storage target",
+                body = "Use SQLite for desktop memory storage.",
+                canonicalKey = "project.decision.memory.storage.target",
+            )
+        )
+
+        assertEquals(MemoryFactStatus.RETIRED, fixture.repository.getFact(first.id)?.status)
+        assertEquals(first.id, second.supersedesFactId)
     }
 
     @Test
@@ -436,7 +587,6 @@ class MemoryCoreTest {
             MemoryRetrievalRequest(
                 context = MemoryContext(
                     ownerId = owner,
-                    surface = MemorySurface.DESKTOP,
                     conversationId = ConversationId("chat-1"),
                     sessionId = MemorySessionId("chat-1"),
                     projectId = null,
@@ -446,6 +596,34 @@ class MemoryCoreTest {
         )
 
         assertEquals(listOf(fact.id), result.facts.map { it.factId })
+    }
+
+    @Test
+    fun `retrieveMemory keeps raw legacy prefixed session facts in active session`() = runTest {
+        val fixture = createFixture()
+        fixture.repository.listFacts(MemoryFactFilter(limit = 1))
+        seedRawCurrentSchemaFact(
+            dbPath = fixture.dbPath,
+            factId = "fact-raw-legacy-session",
+            scope = MemoryScope("session", "session:chat-1"),
+            title = "Legacy session retrieval",
+            body = "Current session uses Kotlin retrieval.",
+            retention = MemoryRetention.SESSION_LIFETIME,
+        )
+
+        val result = fixture.memoryService.retrieveMemory(
+            MemoryRetrievalRequest(
+                context = MemoryContext(
+                    ownerId = fixture.owner,
+                    conversationId = ConversationId("chat-1"),
+                    sessionId = MemorySessionId("chat-1"),
+                    projectId = null,
+                ),
+                query = "Kotlin retrieval",
+            )
+        )
+
+        assertTrue(result.facts.any { it.factId == "fact-raw-legacy-session" })
     }
 
     @Test
@@ -647,6 +825,23 @@ class MemoryCoreTest {
     }
 
     @Test
+    fun `deleteFactsByScope removes legacy thread scope rows through chat scope`() = runTest {
+        val fixture = createFixture()
+        fixture.repository.listFacts(MemoryFactFilter(limit = 1))
+        seedRawCurrentSchemaFact(
+            dbPath = fixture.dbPath,
+            factId = "fact-raw-legacy-thread",
+            scope = MemoryScope("thread", "chat-42"),
+            title = "Raw legacy thread note",
+            body = "Old thread scoped fact should be deleted with chat cleanup.",
+        )
+
+        fixture.memoryService.deleteFactsByScope(fixture.owner, chatScope("chat-42"))
+
+        assertEquals(null, fixture.repository.getFact("fact-raw-legacy-thread"))
+    }
+
+    @Test
     fun `closed session scope rejects late writer insert in repository transaction`() = runTest {
         val fixture = createFixture(owner = MemoryOwnerId("desktop-owner"))
         val scope = MemoryScope.session(MemorySessionId("chat-42"))
@@ -671,6 +866,68 @@ class MemoryCoreTest {
                 evidence = emptyList(),
             )
         }
+    }
+
+    @Test
+    fun `cleanup closing conversation prevents in flight capture from recreating session facts`() = runTest {
+        val owner = MemoryOwnerId("desktop-owner")
+        val conversationId = "chat-42"
+        val sessionScope = MemoryScope.session(MemorySessionId(conversationId))
+        val writer = BlockingWriter(
+            candidate(
+                kind = MemoryFactKind.SEMANTIC,
+                title = "Late session note",
+                body = "This should not be stored after cleanup.",
+                scope = sessionScope,
+                confidence = 0.9f,
+                evidenceText = "This should not be stored after cleanup.",
+            )
+        )
+        val fixture = createFixture(writer = writer, owner = owner)
+        val cleanup = MemoryServiceConversationCleanup(
+            memoryService = fixture.memoryService,
+            ownerProvider = MemoryOwnerProvider { owner },
+        )
+        val capture = async {
+            fixture.captureService.captureAfterTurn(
+                MemoryCaptureInput(
+                    context = MemoryContext(
+                        ownerId = owner,
+                        conversationId = ConversationId(conversationId),
+                        sessionId = MemorySessionId(conversationId),
+                        projectId = null,
+                    ),
+                    scopes = listOf(sessionScope),
+                    userMessage = "Remember a session-only note.",
+                    assistantMessage = "Saved.",
+                    conversationId = conversationId,
+                    userMessageId = "u-1",
+                    assistantMessageId = "a-1",
+                )
+            )
+        }
+        writer.firstCallEntered.await()
+
+        cleanup.cleanupConversation(conversationId)
+        writer.releaseFirstCall.complete(Unit)
+
+        assertTrue(capture.await().isEmpty())
+        assertEquals(
+            0,
+            countRows(
+                fixture.dbPath,
+                "memory_facts",
+                "owner_id = '${owner.value}' and scope_type in ('session', 'chat') and scope_id = '$conversationId'",
+            )
+        )
+        assertEquals(
+            0,
+            countRows(
+                fixture.dbPath,
+                "memory_source_events",
+                "owner_id = '${owner.value}' and scope_type = 'session' and scope_id = '$conversationId'",
+            )
+        )
     }
 
     @Test
@@ -701,6 +958,215 @@ class MemoryCoreTest {
     }
 
     @Test
+    fun `dreamer consolidates pending scope into provenance linked replacement`() = runTest {
+        val fixture = createFixture(owner = MemoryOwnerId("desktop-owner"))
+        val scope = projectScope()
+        val first = fixture.createManual(
+            scope = scope,
+            title = "Memory storage target",
+            body = "Memory is desktop-only for now.",
+        )
+        val second = fixture.createManual(
+            scope = scope,
+            title = "Memory backend boundary",
+            body = "Backend must not get memory yet.",
+        )
+        val sourceEventIds = listOf(first, second)
+            .map { fact -> fixture.repository.getFactDetails(fact.id) }
+            .mapNotNull { details -> details?.evidence?.singleOrNull()?.sourceEvent?.id }
+        val controller = DesktopMemoryMaintenanceController(
+            dbPath = fixture.dbPath,
+            settingsStore = InMemoryMemoryMaintenanceSettingsStore(),
+            worker = MemoryMaintenanceWorker(
+                dbPath = fixture.dbPath,
+                consolidator = FixedMemoryConsolidator(sourceEventIds),
+                embeddingModel = fixture.embedder.model,
+            ),
+        )
+        controller.savePreferences(MemoryMaintenancePreferences(mode = MemoryMaintenanceMode.LOCAL_ONLY))
+
+        val status = controller.runNow()
+
+        val activeFacts = fixture.repository.listFacts(
+            MemoryFactFilter(
+                ownerId = fixture.owner,
+                scope = scope,
+                statuses = setOf(MemoryFactStatus.ACTIVE),
+            )
+        )
+        val replacement = activeFacts.single()
+        val replacementDetails = fixture.repository.getFactDetails(replacement.id)
+
+        assertEquals(0, status.pendingClusters)
+        assertEquals(MemoryMaintenanceBlockReason.NO_PENDING_CLUSTERS, status.blockedReason)
+        assertEquals(MemoryFactStatus.RETIRED, fixture.repository.getFact(first.id)?.status)
+        assertEquals(MemoryFactStatus.RETIRED, fixture.repository.getFact(second.id)?.status)
+        assertEquals("Memory rollout boundary", replacement.title)
+        assertEquals("dreamer", replacement.createdBy)
+        assertEquals(sourceEventIds.toSet(), replacementDetails?.evidence?.map { it.sourceEvent.id }?.toSet())
+        assertEquals(
+            setOf(first.id, second.id),
+            dreamerSupersededFactIds(fixture.dbPath, replacement.id),
+        )
+        assertEquals(1, countRows(fixture.dbPath, "memory_index_jobs", "fact_id = '${replacement.id}'"))
+        assertEquals(1, countRows(fixture.dbPath, "memory_maintenance_jobs", "status = 'DONE'"))
+    }
+
+    @Test
+    fun `dreamer quality gate rejects non compact replacements`() = runTest {
+        val fixture = createFixture(owner = MemoryOwnerId("desktop-owner"))
+        val scope = projectScope()
+        val first = fixture.createManual(
+            scope = scope,
+            title = "Memory storage target",
+            body = "Memory is desktop-only for now.",
+        )
+        val second = fixture.createManual(
+            scope = scope,
+            title = "Memory backend boundary",
+            body = "Backend must not get memory yet.",
+        )
+        val sourceEventIds = listOf(first, second)
+            .map { fact -> fixture.repository.getFactDetails(fact.id) }
+            .mapNotNull { details -> details?.evidence?.singleOrNull()?.sourceEvent?.id }
+        val controller = DesktopMemoryMaintenanceController(
+            dbPath = fixture.dbPath,
+            settingsStore = InMemoryMemoryMaintenanceSettingsStore(),
+            worker = MemoryMaintenanceWorker(
+                dbPath = fixture.dbPath,
+                consolidator = FixedCandidatesMemoryConsolidator(
+                    MemoryConsolidationCandidate(
+                        kind = MemoryFactKind.PROJECT_DECISION,
+                        title = "Memory storage target",
+                        body = "Memory is desktop-only for now.",
+                        canonicalKey = "project.decision.memory.storage.target",
+                        confidence = 0.9f,
+                        evidenceSourceEventIds = sourceEventIds.take(1),
+                    ),
+                    MemoryConsolidationCandidate(
+                        kind = MemoryFactKind.PROJECT_DECISION,
+                        title = "Memory backend boundary",
+                        body = "Backend must not get memory yet.",
+                        canonicalKey = "project.decision.memory.backend.boundary",
+                        confidence = 0.9f,
+                        evidenceSourceEventIds = sourceEventIds.drop(1),
+                    ),
+                ),
+                embeddingModel = fixture.embedder.model,
+            ),
+        )
+        controller.savePreferences(MemoryMaintenancePreferences(mode = MemoryMaintenanceMode.LOCAL_ONLY))
+
+        val status = controller.runNow()
+
+        assertEquals(0, status.pendingClusters)
+        assertEquals(MemoryMaintenanceBlockReason.NO_PENDING_CLUSTERS, status.blockedReason)
+        assertEquals(MemoryFactStatus.ACTIVE, fixture.repository.getFact(first.id)?.status)
+        assertEquals(MemoryFactStatus.ACTIVE, fixture.repository.getFact(second.id)?.status)
+        assertEquals(0, countRows(fixture.dbPath, "memory_facts", "created_by = 'dreamer'"))
+        assertEquals(1, countRows(fixture.dbPath, "memory_maintenance_jobs", "status = 'DONE'"))
+        assertEquals(1, countRows(fixture.dbPath, "memory_operation_log", "reason like '%quality_rejected%'"))
+    }
+
+    @Test
+    fun `maintenance runNow does not start overlapping worker runs`() = runTest {
+        val fixture = createFixture(owner = MemoryOwnerId("desktop-owner"))
+        val scope = projectScope()
+        val first = fixture.createManual(
+            scope = scope,
+            title = "Memory storage target",
+            body = "Memory is desktop-only for now.",
+        )
+        val second = fixture.createManual(
+            scope = scope,
+            title = "Memory backend boundary",
+            body = "Backend must not get memory yet.",
+        )
+        val sourceEventIds = listOf(first, second)
+            .map { fact -> fixture.repository.getFactDetails(fact.id) }
+            .mapNotNull { details -> details?.evidence?.singleOrNull()?.sourceEvent?.id }
+        val consolidator = BlockingMemoryConsolidator(sourceEventIds)
+        val controller = DesktopMemoryMaintenanceController(
+            dbPath = fixture.dbPath,
+            settingsStore = InMemoryMemoryMaintenanceSettingsStore(),
+            worker = MemoryMaintenanceWorker(
+                dbPath = fixture.dbPath,
+                consolidator = consolidator,
+                embeddingModel = fixture.embedder.model,
+            ),
+        )
+        controller.savePreferences(MemoryMaintenancePreferences(mode = MemoryMaintenanceMode.LOCAL_ONLY))
+
+        val firstRun = async { controller.runNow() }
+        consolidator.firstCallEntered.await()
+        val overlappingStatus = controller.runNow()
+        consolidator.releaseFirstCall.complete(Unit)
+        firstRun.await()
+
+        assertEquals(MemoryMaintenanceWorkerState.RUNNING, overlappingStatus.workerState)
+        assertEquals(1, consolidator.callCount)
+    }
+
+    @Test
+    fun `background maintenance ticks only when enabled pending idle and not running`() = runTest {
+        val controller = FakeMemoryMaintenanceController()
+        var busy = true
+        val runner = DesktopMemoryMaintenanceBackgroundRunner(
+            controller = controller,
+            scope = this,
+            isAppBusy = { busy },
+            initialDelay = 1.seconds,
+            interval = 1.minutes,
+        )
+
+        assertNull(runner.tick())
+        assertEquals(0, controller.runCount)
+
+        busy = false
+        assertNotNull(runner.tick())
+        assertEquals(1, controller.runCount)
+
+        controller.nextStatus = controller.nextStatus.copy(workerState = MemoryMaintenanceWorkerState.RUNNING)
+        assertNull(runner.tick())
+        assertEquals(1, controller.runCount)
+    }
+
+    @Test
+    fun `retrieving durable facts queues dreamer region but session facts do not`() = runTest {
+        val fixture = createFixture(owner = MemoryOwnerId("desktop-owner"))
+        val projectFact = fixture.createManual(
+            scope = projectScope(),
+            title = "Dreamer retrieval candidate",
+            body = "Dreamer should revisit retrieved durable project facts.",
+        )
+        val sessionFact = fixture.createManual(
+            scope = MemoryScope.session(MemorySessionId("chat-1")),
+            title = "Session note",
+            body = "Session-only notes are not durable Dreamer input.",
+        )
+        clearMaintenanceJobs(fixture.dbPath)
+
+        fixture.repository.recordRetrieval(listOf(projectFact.id, sessionFact.id))
+
+        assertEquals(
+            1,
+            countRows(
+                fixture.dbPath,
+                "memory_maintenance_jobs",
+                "status = 'PENDING' and reasons like '%dreamer_region_rewrite%'",
+            )
+        )
+        assertEquals(
+            0,
+            countRows(
+                fixture.dbPath,
+                "memory_maintenance_jobs",
+                "cluster_key like '%session%'",
+            )
+        )
+    }
+
+    @Test
     fun `maintenance blocks unsupported jobs without completion`() = runTest {
         val dbPath = Files.createTempDirectory("souz-memory-maintenance-unsupported-test-").resolve("memory.db")
         SqliteMemoryRepository(dbPath).listFacts(MemoryFactFilter())
@@ -717,6 +1183,37 @@ class MemoryCoreTest {
         assertEquals(0, countRows(dbPath, "memory_maintenance_jobs", "status = 'DONE'"))
         assertNotNull(status.lastAttemptedAt)
         assertNull(status.lastCompletedAt)
+    }
+
+    @Test
+    fun `failed optimistic update does not retire canonical conflict`() = runTest {
+        val fixture = createFixture()
+        val stale = fixture.createManual(
+            title = "Old language preference",
+            body = "User used to prefer Java.",
+            canonicalKey = "user.preference.previous.language",
+        )
+        val active = fixture.createManual(
+            title = "Active language preference",
+            body = "User prefers Kotlin.",
+            canonicalKey = "user.preference.language",
+        )
+        val updatedElsewhere = fixture.memoryService.updateFact(
+            factId = stale.id,
+            patch = MemoryFactPatch(title = "Updated elsewhere"),
+        )
+        val staleAttempt = stale.copy(
+            title = "Stale update",
+            canonicalKey = "user.preference.language",
+            updatedAt = java.time.Instant.now(),
+        )
+
+        assertFailsWith<IllegalStateException> {
+            fixture.repository.updateFact(staleAttempt, expectedUpdatedAt = stale.updatedAt)
+        }
+
+        assertEquals(MemoryFactStatus.ACTIVE, fixture.repository.getFact(active.id)?.status)
+        assertEquals(MemoryFactStatus.ACTIVE, fixture.repository.getFact(updatedElsewhere.id)?.status)
     }
 
     @Test
@@ -1066,6 +1563,7 @@ class MemoryCoreTest {
         scope: MemoryScope = globalScope(),
         kind: MemoryFactKind = MemoryFactKind.SEMANTIC,
         pinned: Boolean = false,
+        canonicalKey: String? = null,
     ): MemoryFact = memoryService.createManualFact(
         CreateMemoryFactInput(
             ownerId = owner,
@@ -1074,6 +1572,7 @@ class MemoryCoreTest {
             title = title,
             body = body,
             pinned = pinned,
+            canonicalKey = canonicalKey,
         )
     )
 
@@ -1147,6 +1646,35 @@ class MemoryCoreTest {
                     rs.next()
                     return rs.getInt(1)
                 }
+            }
+        }
+    }
+
+    private fun dreamerSupersededFactIds(dbPath: Path, replacementFactId: String): Set<String> {
+        Class.forName("org.sqlite.JDBC")
+        DriverManager.getConnection("jdbc:sqlite:${dbPath.toAbsolutePath()}").use { connection ->
+            connection.prepareStatement(
+                """
+                select superseded_fact_id
+                from memory_fact_supersedes
+                where replacement_fact_id = ?
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, replacementFactId)
+                statement.executeQuery().use { rs ->
+                    return buildSet {
+                        while (rs.next()) add(rs.getString("superseded_fact_id"))
+                    }
+                }
+            }
+        }
+    }
+
+    private fun clearMaintenanceJobs(dbPath: Path) {
+        Class.forName("org.sqlite.JDBC")
+        DriverManager.getConnection("jdbc:sqlite:${dbPath.toAbsolutePath()}").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeUpdate("delete from memory_maintenance_jobs")
             }
         }
     }
@@ -1275,6 +1803,74 @@ class MemoryCoreTest {
                 )
                 """.trimIndent()
             ).use { it.executeUpdate() }
+        }
+    }
+
+    private fun seedRawCurrentSchemaFact(
+        dbPath: Path,
+        factId: String,
+        scope: MemoryScope,
+        title: String,
+        body: String,
+        canonicalKey: String? = null,
+        retention: MemoryRetention = MemoryRetention.DURABLE,
+    ) {
+        Class.forName("org.sqlite.JDBC")
+        DriverManager.getConnection("jdbc:sqlite:${dbPath.toAbsolutePath()}").use { connection ->
+            val now = "2026-05-24T10:15:30Z"
+            val sourceId = "source-$factId"
+            connection.prepareStatement(
+                """
+                insert into memory_source_events(
+                    id, owner_id, scope_type, scope_id, source_type, source_ref, text, metadata_json, created_at
+                ) values (?, ?, ?, ?, 'manual', null, ?, '{}', ?)
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, sourceId)
+                statement.setString(2, LEGACY_OWNER_ID)
+                statement.setString(3, scope.type)
+                statement.setString(4, scope.id)
+                statement.setString(5, body)
+                statement.setString(6, now)
+                statement.executeUpdate()
+            }
+            connection.prepareStatement(
+                """
+                insert into memory_facts(
+                    id, owner_id, scope_type, scope_id, kind, title, body, slot_key, canonical_key, status,
+                    validity, retention, sensitivity, confidence, importance, pinned, created_by, version,
+                    content_hash, created_at, updated_at, last_observed_at, supersedes_fact_id
+                ) values (?, ?, ?, ?, ?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, 0, 'user', 1, ?, ?, ?, ?, null)
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, factId)
+                statement.setString(2, LEGACY_OWNER_ID)
+                statement.setString(3, scope.type)
+                statement.setString(4, scope.id)
+                statement.setString(5, MemoryFactKind.SEMANTIC.name)
+                statement.setString(6, title)
+                statement.setString(7, body)
+                statement.setString(8, canonicalKey)
+                statement.setString(9, MemoryFactStatus.ACTIVE.name)
+                statement.setString(10, MemoryFactValidity.VALID.name)
+                statement.setString(11, retention.name)
+                statement.setString(12, MemorySensitivity.NORMAL.name)
+                statement.setFloat(13, 1f)
+                statement.setFloat(14, 0.5f)
+                statement.setString(15, stableMemoryContentHash(title, body, MemoryFactKind.SEMANTIC, canonicalKey))
+                statement.setString(16, now)
+                statement.setString(17, now)
+                statement.setString(18, now)
+                statement.executeUpdate()
+            }
+            connection.prepareStatement(
+                "insert into memory_fact_evidence(fact_id, source_event_id, evidence_text) values (?, ?, ?)"
+            ).use { statement ->
+                statement.setString(1, factId)
+                statement.setString(2, sourceId)
+                statement.setString(3, body)
+                statement.executeUpdate()
+            }
         }
     }
 
@@ -1418,6 +2014,92 @@ class MemoryCoreTest {
     private class FixedWriter(private vararg val candidates: MemoryFactCandidate) : MemoryWriter {
         override suspend fun extractCandidates(input: MemoryCaptureInput): List<MemoryFactCandidate> =
             candidates.toList()
+    }
+
+    private class BlockingWriter(
+        private vararg val candidates: MemoryFactCandidate,
+    ) : MemoryWriter {
+        val firstCallEntered = CompletableDeferred<Unit>()
+        val releaseFirstCall = CompletableDeferred<Unit>()
+
+        override suspend fun extractCandidates(input: MemoryCaptureInput): List<MemoryFactCandidate> {
+            firstCallEntered.complete(Unit)
+            releaseFirstCall.await()
+            return candidates.toList()
+        }
+    }
+
+    private class FixedMemoryConsolidator(
+        private val sourceEventIds: List<String>,
+    ) : MemoryConsolidator {
+        override suspend fun consolidate(input: MemoryConsolidationInput): List<MemoryConsolidationCandidate> =
+            listOf(
+                MemoryConsolidationCandidate(
+                    kind = MemoryFactKind.PROJECT_DECISION,
+                    title = "Memory rollout boundary",
+                    body = "Memory stays desktop-only until Android and backend wiring are explicitly added.",
+                    canonicalKey = "project.decision.memory.rollout.boundary",
+                    confidence = 0.9f,
+                    importance = 0.9f,
+                    evidenceSourceEventIds = sourceEventIds,
+                )
+            )
+    }
+
+    private class FixedCandidatesMemoryConsolidator(
+        private vararg val candidates: MemoryConsolidationCandidate,
+    ) : MemoryConsolidator {
+        override suspend fun consolidate(input: MemoryConsolidationInput): List<MemoryConsolidationCandidate> =
+            candidates.toList()
+    }
+
+    private class BlockingMemoryConsolidator(
+        private val sourceEventIds: List<String>,
+    ) : MemoryConsolidator {
+        val firstCallEntered = CompletableDeferred<Unit>()
+        val releaseFirstCall = CompletableDeferred<Unit>()
+        var callCount: Int = 0
+            private set
+
+        override suspend fun consolidate(input: MemoryConsolidationInput): List<MemoryConsolidationCandidate> {
+            callCount += 1
+            if (callCount == 1) {
+                firstCallEntered.complete(Unit)
+                releaseFirstCall.await()
+            }
+            return listOf(
+                MemoryConsolidationCandidate(
+                    kind = MemoryFactKind.PROJECT_DECISION,
+                    title = "Memory rollout boundary",
+                    body = "Memory stays desktop-only until Android and backend wiring are explicitly added.",
+                    canonicalKey = "project.decision.memory.rollout.boundary",
+                    confidence = 0.9f,
+                    importance = 0.9f,
+                    evidenceSourceEventIds = sourceEventIds,
+                )
+            )
+        }
+    }
+
+    private class FakeMemoryMaintenanceController : MemoryMaintenanceController {
+        var nextStatus = MemoryMaintenanceStatus(
+            preferences = MemoryMaintenancePreferences(mode = MemoryMaintenanceMode.LOCAL_ONLY),
+            pendingClusters = 1,
+        )
+        var runCount: Int = 0
+            private set
+
+        override suspend fun status(): MemoryMaintenanceStatus = nextStatus
+
+        override suspend fun savePreferences(preferences: MemoryMaintenancePreferences): MemoryMaintenanceStatus {
+            nextStatus = nextStatus.copy(preferences = preferences)
+            return nextStatus
+        }
+
+        override suspend fun runNow(): MemoryMaintenanceStatus {
+            runCount += 1
+            return nextStatus
+        }
     }
 
     private class ReplacementWriter(private val scope: MemoryScope) : MemoryWriter {

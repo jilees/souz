@@ -35,7 +35,6 @@ class DesktopConversationMemoryRuntimeTest {
 
         assertEquals("chat-42", inputSlot.captured.context.conversationId?.value)
         assertEquals("chat-42", inputSlot.captured.context.sessionId?.value)
-        assertEquals(MemorySurface.DESKTOP, inputSlot.captured.context.surface)
         assertEquals(
             listOf("global", "session"),
             inputSlot.captured.scopes.map { it.type },

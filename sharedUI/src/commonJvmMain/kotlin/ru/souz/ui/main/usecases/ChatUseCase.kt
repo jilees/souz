@@ -111,7 +111,6 @@ class ChatUseCase internal constructor(
                 response = completedResponse,
                 onResult = onResult,
             )
-            response.captureCompletedTurn()
         } catch (e: CancellationException) {
             session.requestStatus = ChatRequestStatus.CANCELLED
             session.requestErrorType = requestErrorType(e)
@@ -197,11 +196,12 @@ class ChatUseCase internal constructor(
         agentFacade.setContextSize(size)
     }
 
-    fun onCleared() {
-        closeCurrentConversation(ChatConversationCloseReason.VIEW_MODEL_CLEARED)
+    fun onCleared(): String? {
+        val conversationId = closeCurrentConversation(ChatConversationCloseReason.VIEW_MODEL_CLEARED)
         killTaskSideEffectJobs()
         cancelActiveJob()
         toolModifyReviewUseCase.clearPendingReviewBlocking(discardBrokerState = true)
+        return conversationId
     }
 
     private fun subscribeOnTaskSideEffects(scope: CoroutineScope, msg: ChatMessage): Job {

@@ -19,6 +19,7 @@ import ru.souz.ambient.PcmAudioFrameSource
 import ru.souz.ambient.selectAmbientLocalModel
 import ru.souz.paths.SouzPaths
 import ru.souz.agent.agentDiModule
+import ru.souz.agent.AgentFacade
 import ru.souz.agent.spi.AgentDesktopInfoRepository
 import ru.souz.agent.spi.AgentTelemetry
 import ru.souz.agent.spi.AgentToolCatalog
@@ -111,14 +112,18 @@ import ru.souz.skills.registry.SkillStorageScope
 import ru.souz.tool.skills.ToolRunSkillCommand
 import ru.souz.memory.ConversationMemoryRuntime
 import ru.souz.memory.DesktopConversationMemoryRuntime
+import ru.souz.memory.DesktopMemoryMaintenanceBackgroundRunner
 import ru.souz.memory.DesktopMemoryContextProvider
 import ru.souz.memory.DesktopMemoryMaintenanceController
 import ru.souz.memory.DesktopMemoryOwnerProvider
 import ru.souz.memory.EmbeddingClient
 import ru.souz.memory.LlmEmbeddingClient
+import ru.souz.memory.LlmMemoryConsolidator
 import ru.souz.memory.LlmMemoryWriter
 import ru.souz.memory.MemoryCaptureService
+import ru.souz.memory.MemoryConsolidator
 import ru.souz.memory.MemoryMaintenanceController
+import ru.souz.memory.MemoryMaintenanceWorker
 import ru.souz.memory.MemoryOwnerProvider
 import ru.souz.memory.MemoryRepository
 import ru.souz.memory.MemoryService
@@ -178,6 +183,7 @@ val mainDiModule = DI.Module(DiTags.MODULE_MAIN) {
     }
     bindSingleton<EmbeddingClient> { LlmEmbeddingClient(instance(), instance()) }
     bindSingleton<MemoryWriter> { LlmMemoryWriter(instance(), instance()) }
+    bindSingleton<MemoryConsolidator> { LlmMemoryConsolidator(instance<LocalChatAPI>(), instance()) }
     bindSingleton { MemoryService(instance(), instance()) }
     bindSingleton { MemoryCaptureService(instance(), instance()) }
     bindSingleton<MemoryConversationCleanup>(overrides = true) {
@@ -187,7 +193,23 @@ val mainDiModule = DI.Module(DiTags.MODULE_MAIN) {
         )
     }
     bindSingleton<MemoryMaintenanceController> {
-        DesktopMemoryMaintenanceController(instance<SouzPaths>().stateRoot.resolve("memory.db"))
+        val dbPath = instance<SouzPaths>().stateRoot.resolve("memory.db")
+        DesktopMemoryMaintenanceController(
+            dbPath = dbPath,
+            worker = MemoryMaintenanceWorker(
+                dbPath = dbPath,
+                consolidator = instance(),
+                embeddingModel = instance<EmbeddingClient>().model,
+            ),
+        )
+    }
+    bindSingleton {
+        val agentFacade = instance<AgentFacade>()
+        DesktopMemoryMaintenanceBackgroundRunner(
+            controller = instance(),
+            scope = instance(),
+            isAppBusy = { agentFacade.isExecuting.value },
+        )
     }
     bindSingleton<ConversationMemoryRuntime> {
         DesktopConversationMemoryRuntime(

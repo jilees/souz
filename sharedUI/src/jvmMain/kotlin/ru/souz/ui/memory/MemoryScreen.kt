@@ -65,6 +65,7 @@ import org.jetbrains.compose.resources.stringResource
 import org.kodein.di.compose.localDI
 import ru.souz.memory.MemoryMaintenanceBlockReason
 import ru.souz.memory.MemoryMaintenanceMode
+import ru.souz.memory.toSupportedMaintenanceMode
 import ru.souz.ui.common.DraggableWindowArea
 import ru.souz.ui.common.LiquidGlassPreset
 import ru.souz.ui.common.RealLiquidGlassCard
@@ -73,13 +74,10 @@ import souz.sharedui.generated.resources.button_close
 import souz.sharedui.generated.resources.memory_create
 import souz.sharedui.generated.resources.memory_dreamer_attempted
 import souz.sharedui.generated.resources.memory_dreamer_block_actions
-import souz.sharedui.generated.resources.memory_dreamer_block_budget
 import souz.sharedui.generated.resources.memory_dreamer_block_disabled
-import souz.sharedui.generated.resources.memory_dreamer_block_model
 import souz.sharedui.generated.resources.memory_dreamer_block_pending
 import souz.sharedui.generated.resources.memory_dreamer_completed
 import souz.sharedui.generated.resources.memory_dreamer_error
-import souz.sharedui.generated.resources.memory_dreamer_mode_cloud
 import souz.sharedui.generated.resources.memory_dreamer_mode_local
 import souz.sharedui.generated.resources.memory_dreamer_mode_off
 import souz.sharedui.generated.resources.memory_dreamer_pending_blocked
@@ -478,6 +476,7 @@ private fun MemoryModeSegments(
     selected: MemoryMaintenanceMode,
     onSelected: (MemoryMaintenanceMode) -> Unit,
 ) {
+    val normalizedSelected = selected.toSupportedMaintenanceMode()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -489,9 +488,8 @@ private fun MemoryModeSegments(
         listOf(
             MemoryMaintenanceMode.OFF to stringResource(Res.string.memory_dreamer_mode_off),
             MemoryMaintenanceMode.LOCAL_ONLY to stringResource(Res.string.memory_dreamer_mode_local),
-            MemoryMaintenanceMode.LOCAL_THEN_CLOUD to stringResource(Res.string.memory_dreamer_mode_cloud),
         ).forEach { (mode, label) ->
-            val active = selected == mode
+            val active = normalizedSelected == mode
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -549,7 +547,7 @@ private fun dreamerStatusText(state: MemoryMaintenanceUiState): String {
 private fun dreamerModeLabel(mode: MemoryMaintenanceMode): String = when (mode) {
     MemoryMaintenanceMode.OFF -> stringResource(Res.string.memory_dreamer_mode_off)
     MemoryMaintenanceMode.LOCAL_ONLY -> stringResource(Res.string.memory_dreamer_mode_local)
-    MemoryMaintenanceMode.LOCAL_THEN_CLOUD -> stringResource(Res.string.memory_dreamer_mode_cloud)
+    MemoryMaintenanceMode.LOCAL_THEN_CLOUD -> stringResource(Res.string.memory_dreamer_mode_local)
 }
 
 private fun dreamerDotColor(state: MemoryMaintenanceUiState) = when {
@@ -562,13 +560,6 @@ private fun dreamerDotColor(state: MemoryMaintenanceUiState) = when {
 private fun dreamerBlockReasonLabel(reason: MemoryMaintenanceBlockReason): String =
     when (reason) {
         MemoryMaintenanceBlockReason.DREAMER_DISABLED -> stringResource(Res.string.memory_dreamer_block_disabled)
-        MemoryMaintenanceBlockReason.LOCAL_MODEL_UNAVAILABLE,
-        MemoryMaintenanceBlockReason.CLOUD_MODEL_UNAVAILABLE -> stringResource(Res.string.memory_dreamer_block_model)
-        MemoryMaintenanceBlockReason.DAILY_TOKEN_LIMIT,
-        MemoryMaintenanceBlockReason.DAILY_CALL_LIMIT,
-        MemoryMaintenanceBlockReason.PER_RUN_TOKEN_LIMIT,
-        MemoryMaintenanceBlockReason.MAX_CALLS_PER_RUN,
-        MemoryMaintenanceBlockReason.MAX_CLUSTERS_PER_RUN -> stringResource(Res.string.memory_dreamer_block_budget)
         MemoryMaintenanceBlockReason.NO_PENDING_CLUSTERS -> stringResource(Res.string.memory_dreamer_block_pending)
         MemoryMaintenanceBlockReason.NO_DETERMINISTIC_ACTIONS -> stringResource(Res.string.memory_dreamer_block_actions)
     }

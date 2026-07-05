@@ -272,7 +272,7 @@ fun backendDiModule(
             toolsFilter = instance(),
             skillCommandTool = instance(tag = SkillToolBindingTags.COMMAND_TOOL),
             skillRegistryRepository = instance(),
-            captureScope = instance<BackendApplicationScope>(),
+            agentBackgroundScope = instance<BackendApplicationScope>(),
         )
     }
     bindSingleton {

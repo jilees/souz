@@ -19,7 +19,6 @@ class MemoryResourceFormatTest {
                 "memory_dreamer_attempted",
                 "memory_dreamer_completed",
                 "memory_dreamer_error",
-                "memory_dreamer_blocked",
             ).forEach { name ->
                 val value = Regex("""<string name="$name">([^<]+)</string>""")
                     .find(text)

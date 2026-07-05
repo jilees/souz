@@ -12,6 +12,7 @@ import ru.souz.memory.MemoryMaintenanceMode
 import ru.souz.memory.NoopMemoryMaintenanceController
 import ru.souz.memory.MemoryOwnerProvider
 import ru.souz.memory.MemoryService
+import ru.souz.memory.toSupportedMaintenanceMode
 import ru.souz.memory.normalizeCanonicalKey
 import ru.souz.ui.BaseViewModel
 
@@ -46,13 +47,7 @@ class MemoryViewModel(
             MemoryAction.CancelConfirmAction -> setState { copy(confirm = null) }
             MemoryAction.CloseDialog -> setState { copy(editor = null) }
             MemoryAction.ClearError -> setState { copy(error = null) }
-            is MemoryAction.SetDreamerEnabled -> setDreamerEnabled(event.enabled)
             is MemoryAction.SelectDreamerMode -> selectDreamerMode(event.mode)
-            is MemoryAction.SetDailyTokenLimit -> setMaintenanceInput { copy(dailyCloudTokenLimitInput = event.value) }
-            is MemoryAction.SetDailyCallLimit -> setMaintenanceInput { copy(maxCloudCallsPerDayInput = event.value) }
-            is MemoryAction.SetMaxTokensPerRun -> setMaintenanceInput { copy(maxTokensPerRunInput = event.value) }
-            is MemoryAction.SetMaxClustersPerRun -> setMaintenanceInput { copy(maxClustersPerRunInput = event.value) }
-            is MemoryAction.SetRunWhenIdle -> saveMaintenance(currentState.maintenance.copy(runWhenIdle = event.enabled))
             MemoryAction.RunDreamerNow -> runDreamerNow()
         }
     }
@@ -254,43 +249,23 @@ class MemoryViewModel(
         else -> null
     }
 
-    private suspend fun setDreamerEnabled(enabled: Boolean) {
-        val current = currentState.maintenance
-        val nextMode = if (enabled) {
-            current.lastEnabledMode.takeIf { it != MemoryMaintenanceMode.OFF } ?: MemoryMaintenanceMode.LOCAL_ONLY
-        } else {
-            MemoryMaintenanceMode.OFF
-        }
-        saveMaintenance(current.copy(mode = nextMode))
-    }
-
     private suspend fun selectDreamerMode(mode: MemoryMaintenanceMode) {
-        val normalized = when (mode) {
-            MemoryMaintenanceMode.OFF -> MemoryMaintenanceMode.OFF
-            MemoryMaintenanceMode.LOCAL_ONLY,
-            MemoryMaintenanceMode.LOCAL_THEN_CLOUD -> MemoryMaintenanceMode.LOCAL_ONLY
-        }
+        val normalized = mode.toSupportedMaintenanceMode()
+        val current = currentState.maintenance
         saveMaintenance(
-            currentState.maintenance.copy(
-                mode = normalized,
-                lastEnabledMode = normalized.takeIf { it != MemoryMaintenanceMode.OFF }
-                    ?: currentState.maintenance.lastEnabledMode,
+            current.copy(
+                preferences = current.preferences.copy(
+                    mode = normalized,
+                    lastEnabledMode = normalized.takeIf { it != MemoryMaintenanceMode.OFF }
+                        ?: current.lastEnabledMode,
+                ),
             )
         )
     }
 
-    private suspend fun setMaintenanceInput(update: MemoryMaintenanceUiState.() -> MemoryMaintenanceUiState) {
-        setState { copy(maintenance = maintenance.update().copy(fieldError = null)) }
-    }
-
     private suspend fun saveMaintenance(next: MemoryMaintenanceUiState) {
-        val preferences = next.toPreferences()
-        if (preferences == null) {
-            setState { copy(maintenance = next.copy(fieldError = "Invalid Dreamer limits")) }
-            return
-        }
         catchingNonCancellation {
-            maintenanceController.savePreferences(preferences)
+            maintenanceController.savePreferences(next.toPreferences())
         }.onSuccess { status ->
             setState { copy(maintenance = status.toUiState()) }
         }.onFailure { error ->
@@ -300,16 +275,11 @@ class MemoryViewModel(
 
     private suspend fun runDreamerNow() {
         if (!currentState.maintenance.canRunNow) return
-        val preferences = currentState.maintenance.toPreferences()
-        if (preferences == null) {
-            setState { copy(maintenance = maintenance.copy(fieldError = "Invalid Dreamer limits")) }
-            return
-        }
         setState { copy(maintenance = maintenance.copy(isRunningNow = true)) }
         catchingNonCancellation(
             onCancellation = { setState { copy(maintenance = maintenance.copy(isRunningNow = false)) } }
         ) {
-            maintenanceController.savePreferences(preferences)
+            maintenanceController.savePreferences(currentState.maintenance.toPreferences())
             maintenanceController.runNow()
         }.onSuccess { status ->
             setState { copy(maintenance = status.toUiState(isRunningNow = false)) }

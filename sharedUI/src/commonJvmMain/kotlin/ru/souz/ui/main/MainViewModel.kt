@@ -788,7 +788,12 @@ class MainViewModel(
         super.onCleared()
         localModelPreloadJob?.cancel()
         ambientModelPreloadJob?.cancel()
-        chatUseCase.onCleared()
+        val closedConversationId = chatUseCase.onCleared()
+        if (closedConversationId != null) {
+            appScope.launch {
+                chatUseCase.cleanupConversationMemory(closedConversationId)
+            }
+        }
         permissionsUseCase.onCleared()
     }
 }

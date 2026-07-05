@@ -20,14 +20,8 @@ value class ConversationId(val value: String)
 @JvmInline
 value class ProjectId(val value: String)
 
-enum class MemorySurface {
-    DESKTOP,
-    BACKEND,
-}
-
 data class MemoryContext(
     val ownerId: MemoryOwnerId,
-    val surface: MemorySurface,
     val conversationId: ConversationId?,
     val sessionId: MemorySessionId?,
     val projectId: ProjectId?,
@@ -35,7 +29,6 @@ data class MemoryContext(
 
 fun legacyMemoryContext(): MemoryContext = MemoryContext(
     ownerId = MemoryOwnerId(LEGACY_OWNER_ID),
-    surface = MemorySurface.DESKTOP,
     conversationId = null,
     sessionId = null,
     projectId = null,
@@ -71,14 +64,6 @@ data class MemoryPromptFact(
     val score: Float,
 )
 
-/**
- * Rendered memory block plus referenced fact metadata for tracing and UI.
- */
-data class MemoryPromptAugmentationResult(
-    val renderedBlock: String,
-    val facts: List<MemoryPromptFact> = emptyList(),
-)
-
 data class MemoryRetrievalRequest(
     val context: MemoryContext,
     val query: String,
@@ -106,19 +91,7 @@ data class MemoryRetrievalResult(
 interface ConversationMemoryRuntime {
     suspend fun retrieveMemory(
         request: MemoryRetrievalRequest,
-    ): MemoryRetrievalResult {
-        val legacy = retrieveMemory(request.query, request.context.conversationId?.value)
-        return MemoryRetrievalResult(
-            renderedPromptBlock = legacy.renderedBlock,
-            facts = legacy.facts,
-        )
-    }
-
-    @Deprecated("Use typed MemoryRetrievalRequest")
-    suspend fun retrieveMemory(
-        userMessage: String,
-        conversationId: String?,
-    ): MemoryPromptAugmentationResult = MemoryPromptAugmentationResult(renderedBlock = "")
+    ): MemoryRetrievalResult = MemoryRetrievalResult(renderedPromptBlock = null)
 
     suspend fun captureCompletedTurn(input: CompletedTurnMemoryInput)
 }
@@ -127,8 +100,5 @@ interface ConversationMemoryRuntime {
  * No-op runtime used when memory integration is disabled.
  */
 object NoopConversationMemoryRuntime : ConversationMemoryRuntime {
-    override suspend fun retrieveMemory(request: MemoryRetrievalRequest): MemoryRetrievalResult =
-        MemoryRetrievalResult(renderedPromptBlock = null)
-
     override suspend fun captureCompletedTurn(input: CompletedTurnMemoryInput) = Unit
 }

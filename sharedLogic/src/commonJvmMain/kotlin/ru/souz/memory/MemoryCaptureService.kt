@@ -1,8 +1,10 @@
 package ru.souz.memory
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class MemoryCaptureService(
     private val memoryService: MemoryService,
@@ -26,7 +28,7 @@ class MemoryCaptureService(
         val isExplicitPositive = intent == ExplicitMemoryIntent.REMEMBER_SIGNAL
         val candidates = extractCandidates(input, isExplicitPositive)
         val validCandidates = candidates.filter { candidate -> isValidCandidate(candidate, isExplicitPositive) }
-        val allowedScopes = (input.scopes + input.context.allowedRetrievalScopes(includeChat = input.context.surface == MemorySurface.BACKEND))
+        val allowedScopes = (input.scopes + input.context.allowedRetrievalScopes())
             .map { it.normalized() }
             .toSet()
         val processedCandidates = validCandidates
@@ -40,20 +42,23 @@ class MemoryCaptureService(
                     null
                 }
             }
-            .distinctBy { (candidate, _) ->
-                normalizeCanonicalKey(candidate.canonicalKey ?: candidate.slotKey)
+            .distinctBy { (candidate, targetScope) ->
+                val dedupeKey = normalizeCanonicalKey(candidate.canonicalKey ?: candidate.slotKey)
                     ?: stableMemoryContentHash(candidate.title, candidate.body, candidate.kind, null)
+                targetScope to dedupeKey
             }
         if (processedCandidates.isEmpty()) return@withLock emptyList()
 
-        val redactedCombinedText = processedCandidates
-            .joinToString("\n---\n") { MemorySanitizer.redact(it.first.evidenceText) }
-            .trim()
-
-        val sourceEventId = memoryService.saveRedactedSourceEvent(input, redactedCombinedText)
+        val created = mutableListOf<MemoryFact>()
+        val sourceEventIds = mutableListOf<String>()
         try {
-            processedCandidates.mapNotNull { (candidate, targetScope) ->
-                memoryService.tryCreateCapturedFact(
+            processedCandidates.forEach { (candidate, targetScope) ->
+                val sourceEventId = memoryService.saveRedactedSourceEvent(
+                    input = input,
+                    redactedText = MemorySanitizer.redact(candidate.evidenceText).trim(),
+                )
+                sourceEventIds += sourceEventId
+                val fact = memoryService.tryCreateCapturedFact(
                     CreateCapturedFactInput(
                         ownerId = input.context.ownerId,
                         scope = targetScope,
@@ -67,22 +72,33 @@ class MemoryCaptureService(
                         sourceEventId = sourceEventId,
                     )
                 )
-            }.also { created ->
-                if (created.isEmpty()) {
-                    memoryService.deleteSourceEventIfUnused(sourceEventId)
+                if (fact != null) {
+                    created += fact
+                } else {
+                    cleanupSourceEvent(sourceEventId)
                 }
             }
+            created
         } catch (error: CancellationException) {
+            cleanupSourceEvents(sourceEventIds)
             throw error
         } catch (error: Exception) {
-            try {
-                memoryService.deleteSourceEventIfUnused(sourceEventId)
-            } catch (cleanupCancellation: CancellationException) {
-                throw cleanupCancellation
-            } catch (_: Exception) {
-                // Best-effort cleanup; keep the original capture failure visible.
-            }
+            cleanupSourceEvents(sourceEventIds)
             throw error
+        }
+    }
+
+    private suspend fun cleanupSourceEvents(sourceEventIds: List<String>) {
+        sourceEventIds.distinct().forEach { sourceEventId -> cleanupSourceEvent(sourceEventId) }
+    }
+
+    private suspend fun cleanupSourceEvent(sourceEventId: String) {
+        try {
+            withContext(NonCancellable) {
+                memoryService.deleteSourceEventIfUnused(sourceEventId)
+            }
+        } catch (_: Exception) {
+            // Best-effort cleanup; keep the original capture result or failure visible.
         }
     }
 

@@ -3,6 +3,7 @@
 package ru.souz.ui.main.usecases
 
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
@@ -29,6 +30,7 @@ import ru.souz.llms.TokenLogging
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.memory.MemoryOwnerId
 import ru.souz.memory.MemoryOwnerProvider
+import ru.souz.memory.MemoryScope
 import ru.souz.memory.MemoryService
 import ru.souz.service.observability.ChatConversationCloseReason
 import ru.souz.service.observability.ChatConversationMetrics
@@ -78,6 +80,31 @@ class ChatUseCaseTest {
 
         assertEquals("chat-42", failures.single().first)
         assertEquals("sql failed", failures.single().second.message)
+    }
+
+    @Test
+    fun `conversation cleanup closes and deletes session plus legacy chat scopes`() = runTest {
+        val owner = MemoryOwnerId("desktop-owner")
+        val closedOwners = mutableListOf<MemoryOwnerId>()
+        val closedScopes = mutableListOf<MemoryScope>()
+        val deletedOwners = mutableListOf<MemoryOwnerId>()
+        val deletedScopes = mutableListOf<MemoryScope>()
+        val service = mockk<MemoryService>()
+        coEvery { service.closeScopeForCapture(capture(closedOwners), capture(closedScopes)) } returns Unit
+        coEvery { service.deleteFactsByScope(capture(deletedOwners), capture(deletedScopes)) } returns Unit
+        val cleanup = MemoryServiceConversationCleanup(
+            memoryService = service,
+            ownerProvider = MemoryOwnerProvider { owner },
+        )
+
+        cleanup.cleanupConversation("chat-42")
+
+        assertEquals(listOf(owner, owner), closedOwners)
+        assertEquals(listOf(MemoryScope("session", "chat-42"), MemoryScope("chat", "chat-42")), closedScopes)
+        assertEquals(listOf(owner, owner), deletedOwners)
+        assertEquals(listOf(MemoryScope("session", "chat-42"), MemoryScope("chat", "chat-42")), deletedScopes)
+        coVerify(exactly = 2) { service.closeScopeForCapture(any(), any()) }
+        coVerify(exactly = 2) { service.deleteFactsByScope(any(), any()) }
     }
 
     @Test
@@ -255,52 +282,6 @@ class ChatUseCaseTest {
     }
 
     @Test
-    fun `fresh completed response invokes memory capture callback after stale check`() = runTest {
-        var captureCount = 0
-        val useCase = createExecutableUseCase(captureCompletedTurn = { captureCount += 1 })
-
-        useCase.sendChatMessage(
-            scope = backgroundScope,
-            isVoice = false,
-            chatMessage = "hello",
-            requestSource = ChatRequestSource.CHAT_UI,
-        )
-        advanceUntilIdle()
-
-        assertEquals(1, captureCount)
-    }
-
-    @Test
-    fun `stale completed response does not invoke memory capture callback`() = runTest {
-        var captureCount = 0
-        val executeStarted = CompletableDeferred<Unit>()
-        val executeResult = CompletableDeferred<String>()
-        val useCase = createExecutableUseCase(
-            captureCompletedTurn = { captureCount += 1 },
-            executeAnswer = {
-                executeStarted.complete(Unit)
-                executeResult.await()
-            },
-        )
-
-        backgroundScope.launch {
-            useCase.sendChatMessage(
-                scope = backgroundScope,
-                isVoice = false,
-                chatMessage = "hello",
-                requestSource = ChatRequestSource.CHAT_UI,
-            )
-        }
-        executeStarted.await()
-        val abortJob = backgroundScope.launch { useCase.abortActiveRequest() }
-        executeResult.complete("response")
-        advanceUntilIdle()
-        abortJob.join()
-
-        assertEquals(0, captureCount)
-    }
-
-    @Test
     fun `abort active request does not wait for hanging agent execution`() = runTest {
         val executeStarted = CompletableDeferred<Unit>()
         val executeResult = CompletableDeferred<String>()
@@ -399,7 +380,6 @@ class ChatUseCaseTest {
     private fun createExecutableUseCase(
         cleanup: MemoryConversationCleanup = NoopMemoryConversationCleanup,
         executeAnswer: suspend () -> String = { "response" },
-        captureCompletedTurn: () -> Unit = {},
     ): ChatUseCase {
         val agentFacade = mockk<AgentFacade>(relaxed = true)
         every { agentFacade.sideEffects } returns MutableSharedFlow<AgentSideEffect>()
@@ -421,7 +401,6 @@ class ChatUseCaseTest {
             AgentExecutionResult(
                 output = executeAnswer(),
                 context = agentFacade.currentContext.value,
-                captureCompletedTurn = captureCompletedTurn,
             )
         }
 

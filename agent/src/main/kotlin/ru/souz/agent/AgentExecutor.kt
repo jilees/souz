@@ -13,14 +13,12 @@ import ru.souz.memory.ConversationMemoryRuntime
 import ru.souz.memory.MemoryContext
 import ru.souz.memory.MemoryOwnerId
 import ru.souz.memory.MemorySessionId
-import ru.souz.memory.MemorySurface
 import ru.souz.memory.NoopConversationMemoryRuntime
 
 class AgentExecutor internal constructor(
     private val agentProvider: (AgentId) -> TraceableAgent,
     private val memoryRuntime: ConversationMemoryRuntime = NoopConversationMemoryRuntime,
     private val captureScope: CoroutineScope,
-    private val memorySurface: MemorySurface = MemorySurface.DESKTOP,
     val availableAgents: List<AgentId> = listOf(AgentId.GRAPH),
 ) {
     private val logger = LoggerFactory.getLogger(AgentExecutor::class.java)
@@ -68,13 +66,13 @@ class AgentExecutor internal constructor(
         userMessage: String,
         assistantMessage: String,
     ) {
+        if (memoryRuntime === NoopConversationMemoryRuntime) return
         captureScope.launch {
             try {
                 memoryRuntime.captureCompletedTurn(
                     CompletedTurnMemoryInput(
                         context = MemoryContext(
                             ownerId = MemoryOwnerId(ctx.toolInvocationMeta.userId),
-                            surface = memorySurface,
                             conversationId = ctx.toolInvocationMeta.conversationId?.let(::ConversationId),
                             sessionId = ctx.toolInvocationMeta.conversationId?.let(::MemorySessionId),
                             projectId = null,

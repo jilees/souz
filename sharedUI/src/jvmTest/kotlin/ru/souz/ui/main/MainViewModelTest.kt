@@ -1234,6 +1234,36 @@ class MainViewModelTest {
     }
 
     @Test
+    fun `view model cleared cleans current conversation memory`() = runTest(mainDispatcher) {
+        val cleanup = RecordingMemoryConversationCleanup()
+        val finishedConversations = mutableListOf<Triple<String, ChatConversationMetrics, ChatConversationCloseReason>>()
+        val harness = createHarness(
+            memoryConversationCleanup = cleanup,
+            conversationFinishedEvents = finishedConversations,
+        )
+
+        try {
+            val viewModel = harness.viewModel
+            advanceUntilIdle()
+
+            viewModel.handleEvent(MainEvent.SendChatMessage("remember this only for this chat"))
+            awaitState(viewModel) { state ->
+                !state.isProcessing && state.chatMessages.any { it.text == "stub response" }
+            }
+
+            harness.clear()
+            advanceUntilIdle()
+
+            assertEquals(1, cleanup.cleanedConversationIds.size)
+            assertTrue(cleanup.cleanedConversationIds.single().isNotBlank())
+            assertEquals(cleanup.cleanedConversationIds.single(), finishedConversations.single().first)
+            assertEquals(ChatConversationCloseReason.VIEW_MODEL_CLEARED, finishedConversations.single().third)
+        } finally {
+            harness.clear()
+        }
+    }
+
+    @Test
     fun `confirmed new conversation resets ui before memory cleanup completes`() = runTest(mainDispatcher) {
         val cleanup = BlockingMemoryConversationCleanup()
         val harness = createHarness(memoryConversationCleanup = cleanup)
@@ -1266,15 +1296,13 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `confirmed new conversation rejects late response and memory capture`() = runTest(mainDispatcher) {
+    fun `confirmed new conversation rejects late response`() = runTest(mainDispatcher) {
         val response = CompletableDeferred<String>()
-        var captureCalls = 0
         val cleanup = RecordingMemoryConversationCleanup()
         val harness = createHarness(
             executeBehavior = { response.await() },
             onCancelActiveJob = { /* Simulate non-cooperative agent completion. */ },
             memoryConversationCleanup = cleanup,
-            captureCompletedTurn = { captureCalls += 1 },
         )
 
         try {
@@ -1293,7 +1321,6 @@ class MainViewModelTest {
             advanceUntilIdle()
 
             assertFalse(viewModel.uiState.value.chatMessages.any { it.text == "late answer" })
-            assertEquals(0, captureCalls)
             assertEquals(1, cleanup.cleanedConversationIds.size)
         } finally {
             response.completeExceptionally(CancellationException("cleanup"))
@@ -1302,15 +1329,13 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `clear context rejects late response and memory capture`() = runTest(mainDispatcher) {
+    fun `clear context rejects late response`() = runTest(mainDispatcher) {
         val response = CompletableDeferred<String>()
-        var captureCalls = 0
         val cleanup = RecordingMemoryConversationCleanup()
         val harness = createHarness(
             executeBehavior = { response.await() },
             onCancelActiveJob = { /* Simulate non-cooperative agent completion. */ },
             memoryConversationCleanup = cleanup,
-            captureCompletedTurn = { captureCalls += 1 },
         )
 
         try {
@@ -1327,7 +1352,6 @@ class MainViewModelTest {
             advanceUntilIdle()
 
             assertFalse(viewModel.uiState.value.chatMessages.any { it.text == "late answer" })
-            assertEquals(0, captureCalls)
             assertEquals(1, cleanup.cleanedConversationIds.size)
         } finally {
             response.completeExceptionally(CancellationException("cleanup"))
@@ -1547,7 +1571,6 @@ class MainViewModelTest {
             LLMResponse.RecognizeResponse()
         },
         memoryConversationCleanup: MemoryConversationCleanup = NoopMemoryConversationCleanup,
-        captureCompletedTurn: () -> Unit = {},
         conversationFinishedEvents: MutableList<Triple<String, ChatConversationMetrics, ChatConversationCloseReason>>? = null,
     ): TestHarness {
         val agentFacade = mockk<AgentFacade>(relaxed = true)
@@ -1559,7 +1582,6 @@ class MainViewModelTest {
             AgentExecutionResult(
                 output = executeBehavior.invoke(firstArg()),
                 context = agentFacade.currentContext.value,
-                captureCompletedTurn = captureCompletedTurn,
             )
         }
         every { agentFacade.activeAgentId } returns MutableStateFlow(ru.souz.agent.AgentId.GRAPH)

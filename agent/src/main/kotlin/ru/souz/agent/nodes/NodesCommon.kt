@@ -26,7 +26,6 @@ import ru.souz.memory.MemoryOwnerId
 import ru.souz.memory.MemoryPromptFact
 import ru.souz.memory.MemoryRetrievalRequest
 import ru.souz.memory.MemorySessionId
-import ru.souz.memory.MemorySurface
 import ru.souz.memory.NoopConversationMemoryRuntime
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -220,7 +219,6 @@ internal class NodesCommon(
                 MemoryRetrievalRequest(
                     context = MemoryContext(
                         ownerId = MemoryOwnerId(meta.userId),
-                        surface = MemorySurface.DESKTOP,
                         conversationId = meta.conversationId?.let(::ConversationId),
                         sessionId = meta.conversationId?.let(::MemorySessionId),
                         projectId = null,

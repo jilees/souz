@@ -3,14 +3,15 @@
 package ru.souz.agent
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
-import ru.souz.agent.runtime.AgentRuntimeEvent
-import ru.souz.agent.runtime.AgentRuntimeEventSink
+import kotlin.coroutines.CoroutineContext
 import ru.souz.agent.state.AgentContext
 import ru.souz.agent.state.AgentSettings
 import ru.souz.llms.LLMMessageRole
@@ -19,9 +20,7 @@ import ru.souz.llms.LocalUserId
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.memory.CompletedTurnMemoryInput
 import ru.souz.memory.ConversationMemoryRuntime
-import ru.souz.memory.MemorySurface
-import ru.souz.memory.MemoryPromptFact
-import ru.souz.memory.MemoryPromptAugmentationResult
+import ru.souz.memory.NoopConversationMemoryRuntime
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -30,9 +29,7 @@ import kotlin.test.assertTrue
 class AgentExecutorMemoryTest {
     @Test
     fun `agent executor does not modify system prompt`() = runTest {
-        val memoryRuntime = RecordingMemoryRuntime(
-            renderedBlock = "Relevant memory:\n- Prefer Kotlin."
-        )
+        val memoryRuntime = RecordingMemoryRuntime()
         val agent = CapturingAgent(output = "assistant response")
 
         val result = executor(agent, memoryRuntime).execute(
@@ -75,7 +72,6 @@ class AgentExecutorMemoryTest {
         assertEquals("conversation-1", captured.conversationId)
         assertEquals("conversation-1", captured.context.conversationId?.value)
         assertEquals("conversation-1", captured.context.sessionId?.value)
-        assertEquals(MemorySurface.DESKTOP, captured.context.surface)
         assertEquals(LocalUserId.default(), captured.context.ownerId.value)
         assertEquals("user-message-1", captured.userMessageId)
         assertEquals("assistant-message-1", captured.assistantMessageId)
@@ -88,10 +84,10 @@ class AgentExecutorMemoryTest {
     }
 
     @Test
-    fun `capture uses configured memory surface`() = runTest {
+    fun `capture uses runtime owner and conversation scope`() = runTest {
         val memoryRuntime = RecordingMemoryRuntime()
 
-        val result = executor(memoryRuntime = memoryRuntime, memorySurface = MemorySurface.BACKEND).execute(
+        val result = executor(memoryRuntime = memoryRuntime).execute(
             agentId = AgentId.GRAPH,
             context = baseContext(
                 toolInvocationMeta = ToolInvocationMeta(
@@ -108,7 +104,6 @@ class AgentExecutorMemoryTest {
         runCurrent()
 
         val captured = withTimeout(1_000) { memoryRuntime.captureStarted.await() }
-        assertEquals(MemorySurface.BACKEND, captured.context.surface)
         assertEquals("backend-user", captured.context.ownerId.value)
         assertEquals("chat-42", captured.context.conversationId?.value)
         assertEquals("chat-42", captured.context.sessionId?.value)
@@ -130,15 +125,32 @@ class AgentExecutorMemoryTest {
         assertEquals(1, memoryRuntime.capturedTurns.size)
     }
 
+    @Test
+    fun `noop memory runtime does not launch capture job`() = runTest {
+        val executor = AgentExecutor(
+            agentProvider = { CapturingAgent(output = "assistant response") },
+            memoryRuntime = NoopConversationMemoryRuntime,
+            captureScope = CoroutineScope(ThrowingDispatcher()),
+        )
+
+        val result = executor.execute(
+            agentId = AgentId.GRAPH,
+            context = baseContext(),
+            input = "hello",
+        )
+
+        result.captureCompletedTurn()
+
+        assertEquals("assistant response", result.output)
+    }
+
     private fun TestScope.executor(
         agent: CapturingAgent = CapturingAgent(output = "assistant response"),
         memoryRuntime: RecordingMemoryRuntime,
-        memorySurface: MemorySurface = MemorySurface.DESKTOP,
     ): AgentExecutor = AgentExecutor(
         agentProvider = { agent },
         memoryRuntime = memoryRuntime,
         captureScope = backgroundScope,
-        memorySurface = memorySurface,
     )
 
     private fun baseContext(
@@ -186,30 +198,13 @@ class AgentExecutorMemoryTest {
     }
 
     private class RecordingMemoryRuntime(
-        private val renderedBlock: String = "",
-        private val retrieveFailure: Throwable? = null,
         private val captureFailure: Throwable? = null,
         private val blockCapture: Boolean = false,
-        private val onRetrieve: () -> Unit = {},
     ) : ConversationMemoryRuntime {
         val capturedTurns = mutableListOf<CompletedTurnMemoryInput>()
         val captureStarted = CompletableDeferred<CompletedTurnMemoryInput>()
         val releaseCapture = CompletableDeferred<Unit>()
         val captureFinished = CompletableDeferred<Unit>()
-
-        override suspend fun retrieveMemory(
-            userMessage: String,
-            conversationId: String?,
-        ): MemoryPromptAugmentationResult {
-            onRetrieve()
-            retrieveFailure?.let { throw it }
-            val facts = if (renderedBlock.isNotBlank()) {
-                listOf(MemoryPromptFact("fact-1", "user", 0.9f))
-            } else {
-                emptyList()
-            }
-            return MemoryPromptAugmentationResult(renderedBlock, facts)
-        }
 
         override suspend fun captureCompletedTurn(input: CompletedTurnMemoryInput) {
             capturedTurns += input
@@ -220,11 +215,9 @@ class AgentExecutorMemoryTest {
         }
     }
 
-    private class CollectingEventSink(
-        private val events: MutableList<AgentRuntimeEvent>,
-    ) : AgentRuntimeEventSink {
-        override suspend fun emit(event: AgentRuntimeEvent) {
-            events += event
+    private class ThrowingDispatcher : CoroutineDispatcher() {
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            error("No-op memory capture should not dispatch")
         }
     }
 }

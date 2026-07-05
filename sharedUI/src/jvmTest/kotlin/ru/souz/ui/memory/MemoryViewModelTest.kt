@@ -336,15 +336,14 @@ class MemoryViewModelTest {
     }
 
     @Test
-    fun `dreamer run now saves valid edited limits before running`() = runTest(dispatcher) {
+    fun `dreamer run now preserves loaded max clusters before running`() = runTest(dispatcher) {
         val service = mockk<MemoryService>()
         coEvery { service.listFacts(any()) } returns emptyList()
         val controller = FakeMaintenanceController(
             initialStatus = MemoryMaintenanceStatus(
                 preferences = MemoryMaintenancePreferences(
                     mode = MemoryMaintenanceMode.LOCAL_ONLY,
-                    dailyCloudTokenLimit = 100,
-                    maxCloudCallsPerDay = 2,
+                    maxClustersPerRun = 4,
                 ),
                 pendingClusters = 1,
                 blockedReason = null,
@@ -354,14 +353,10 @@ class MemoryViewModelTest {
         val viewModel = createViewModel(service, controller)
         viewModel.onAction(MemoryAction.Load)
         advanceUntilIdle()
-        viewModel.onAction(MemoryAction.SetDailyTokenLimit("250"))
-        viewModel.onAction(MemoryAction.SetDailyCallLimit("4"))
-        advanceUntilIdle()
         viewModel.onAction(MemoryAction.RunDreamerNow)
         advanceUntilIdle()
 
-        assertEquals(250, controller.savedPreferences?.dailyCloudTokenLimit)
-        assertEquals(4, controller.savedPreferences?.maxCloudCallsPerDay)
+        assertEquals(4, controller.savedPreferences?.maxClustersPerRun)
         assertEquals(1, controller.runNowCount)
     }
 
@@ -413,16 +408,14 @@ class MemoryViewModelTest {
     }
 
     @Test
-    fun `dreamer settings preserve hidden advanced limits`() = runTest(dispatcher) {
+    fun `dreamer settings preserve max clusters limit`() = runTest(dispatcher) {
         val service = mockk<MemoryService>()
         coEvery { service.listFacts(any()) } returns emptyList()
         val controller = FakeMaintenanceController(
             initialStatus = MemoryMaintenanceStatus(
                 preferences = MemoryMaintenancePreferences(
                     mode = MemoryMaintenanceMode.OFF,
-                    maxLlmCallsPerRun = 7,
-                    maxFactsPerCluster = 23,
-                    maxEvidenceExcerptsPerCluster = 5,
+                    maxClustersPerRun = 4,
                 ),
                 blockedReason = MemoryMaintenanceBlockReason.DREAMER_DISABLED,
             )
@@ -431,12 +424,10 @@ class MemoryViewModelTest {
         val viewModel = createViewModel(service, controller)
         viewModel.onAction(MemoryAction.Load)
         advanceUntilIdle()
-        viewModel.onAction(MemoryAction.SetDreamerEnabled(true))
+        viewModel.onAction(MemoryAction.SelectDreamerMode(MemoryMaintenanceMode.LOCAL_ONLY))
         advanceUntilIdle()
 
-        assertEquals(7, controller.savedPreferences?.maxLlmCallsPerRun)
-        assertEquals(23, controller.savedPreferences?.maxFactsPerCluster)
-        assertEquals(5, controller.savedPreferences?.maxEvidenceExcerptsPerCluster)
+        assertEquals(4, controller.savedPreferences?.maxClustersPerRun)
     }
 
     @Test
@@ -475,24 +466,6 @@ class MemoryViewModelTest {
 
         assertEquals(MemoryMaintenanceMode.LOCAL_ONLY, viewModel.uiState.value.maintenance.mode)
         assertEquals(MemoryMaintenanceMode.LOCAL_ONLY, viewModel.uiState.value.maintenance.lastEnabledMode)
-    }
-
-    @Test
-    fun `invalid dreamer limits are rejected before saving preferences`() = runTest(dispatcher) {
-        val service = mockk<MemoryService>()
-        coEvery { service.listFacts(any()) } returns emptyList()
-        val controller = FakeMaintenanceController()
-
-        val viewModel = createViewModel(service, controller)
-        viewModel.onAction(MemoryAction.Load)
-        advanceUntilIdle()
-        viewModel.onAction(MemoryAction.SetMaxTokensPerRun("oops"))
-        advanceUntilIdle()
-        viewModel.onAction(MemoryAction.SelectDreamerMode(MemoryMaintenanceMode.LOCAL_ONLY))
-        advanceUntilIdle()
-
-        assertEquals("Invalid Dreamer limits", viewModel.uiState.value.maintenance.fieldError)
-        assertNull(controller.savedPreferences)
     }
 
     @Test

@@ -81,7 +81,7 @@ private fun runtimeTurnRunner(failure: Throwable): BackendConversationRuntimeTur
             logObjectMapper = jacksonObjectMapper(),
             systemPrompt = "backend test prompt",
             skillRegistryRepository = TestSkillRegistryRepository,
-            captureScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+            agentBackgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         )
     )
 }

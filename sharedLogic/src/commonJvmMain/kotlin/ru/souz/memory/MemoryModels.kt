@@ -1,5 +1,6 @@
 package ru.souz.memory
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.text.Normalizer
@@ -37,21 +38,38 @@ val MemoryScope.Companion.Global: MemoryScope
     get() = globalMemoryScope()
 
 fun MemoryScope.normalized(): MemoryScope {
-    val cleanType = type.trim()
+    val cleanType = type.trim().lowercase(Locale.ROOT)
     val cleanId = id.trim()
-    val normalizedId = cleanId.removePrefix("$cleanType:")
+    val typePrefix = "$cleanType:"
+    val normalizedId = if (
+        cleanType.isNotBlank() &&
+        cleanId.length >= typePrefix.length &&
+        cleanId.substring(0, typePrefix.length).equals(typePrefix, ignoreCase = true)
+    ) {
+        cleanId.drop(typePrefix.length)
+    } else {
+        cleanId
+    }
     return MemoryScope(cleanType, normalizedId.ifBlank { cleanId })
 }
 
 fun MemoryScope.compatibilityScopes(): List<MemoryScope> {
     val normalized = normalized()
-    val legacyId = "${normalized.type}:${normalized.id}"
-    return buildList {
-        add(normalized)
-        if (legacyId != normalized.id) {
-            add(MemoryScope(normalized.type, legacyId))
-        }
+    val compatibleTypes = when (normalized.type) {
+        "chat" -> listOf("chat", "thread")
+        "thread" -> listOf("thread", "chat")
+        else -> listOf(normalized.type)
     }
+    return buildList {
+        compatibleTypes.forEach { type ->
+            val scope = MemoryScope(type, normalized.id)
+            val legacyId = "$type:${normalized.id}"
+            add(scope)
+            if (type.isNotBlank() && legacyId != scope.id) {
+                add(MemoryScope(type, legacyId))
+            }
+        }
+    }.distinct()
 }
 
 fun MemoryScope.toRequestedMemoryScope(): RequestedMemoryScope? = when (normalized().type.lowercase(Locale.ROOT)) {
@@ -102,18 +120,30 @@ enum class MemoryMaintenanceMode {
     LOCAL_THEN_CLOUD,
 }
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class MemoryMaintenancePreferences(
     val mode: MemoryMaintenanceMode = MemoryMaintenanceMode.OFF,
     val lastEnabledMode: MemoryMaintenanceMode = MemoryMaintenanceMode.LOCAL_ONLY,
-    val dailyCloudTokenLimit: Int = 0,
-    val maxCloudCallsPerDay: Int = 0,
-    val maxTokensPerRun: Int = 2_000,
     val maxClustersPerRun: Int = 10,
-    val maxLlmCallsPerRun: Int = 3,
-    val maxFactsPerCluster: Int = 12,
-    val maxEvidenceExcerptsPerCluster: Int = 16,
-    val runWhenIdle: Boolean = true,
 )
+
+fun MemoryMaintenanceMode.toSupportedMaintenanceMode(): MemoryMaintenanceMode = when (this) {
+    MemoryMaintenanceMode.OFF -> MemoryMaintenanceMode.OFF
+    MemoryMaintenanceMode.LOCAL_ONLY,
+    MemoryMaintenanceMode.LOCAL_THEN_CLOUD -> MemoryMaintenanceMode.LOCAL_ONLY
+}
+
+fun MemoryMaintenancePreferences.normalizedForSupportedMaintenance(): MemoryMaintenancePreferences {
+    val normalizedMode = mode.toSupportedMaintenanceMode()
+    val normalizedLastEnabledMode = lastEnabledMode.toSupportedMaintenanceMode()
+        .takeIf { it != MemoryMaintenanceMode.OFF }
+        ?: MemoryMaintenanceMode.LOCAL_ONLY
+    return copy(
+        mode = normalizedMode,
+        lastEnabledMode = normalizedLastEnabledMode,
+        maxClustersPerRun = maxClustersPerRun.coerceIn(1, 1_000),
+    )
+}
 
 enum class MemoryOperationType {
     CAPTURE,
@@ -356,13 +386,10 @@ fun normalizeCanonicalKey(raw: String?): String? {
     }
 }
 
-fun MemoryContext.allowedRetrievalScopes(includeChat: Boolean = surface == MemorySurface.BACKEND): List<MemoryScope> = buildList {
+fun MemoryContext.allowedRetrievalScopes(): List<MemoryScope> = buildList {
     add(globalMemoryScope())
     projectId?.let { add(MemoryScope.project(it)) }
     sessionId?.let { add(MemoryScope.session(it)) }
-    if (includeChat) {
-        conversationId?.let { add(MemoryScope.chat(it)) }
-    }
 }
 
 fun MemoryContext.resolveRequestedScope(
@@ -371,11 +398,7 @@ fun MemoryContext.resolveRequestedScope(
 ): MemoryScope? = when (requestedScope ?: defaultRequestedScope(kind)) {
     RequestedMemoryScope.GLOBAL -> globalMemoryScope()
     RequestedMemoryScope.PROJECT -> projectId?.let { MemoryScope.project(it) }
-    RequestedMemoryScope.CHAT -> if (surface == MemorySurface.BACKEND) {
-        conversationId?.let { MemoryScope.chat(it) }
-    } else {
-        null
-    }
+    RequestedMemoryScope.CHAT -> null
     RequestedMemoryScope.SESSION -> sessionId?.let { MemoryScope.session(it) }
 }
 
@@ -506,12 +529,15 @@ fun renderMemoryPrompt(hits: List<MemoryFactSearchHit>): String {
             append("- [")
             append(fact.kind.name.lowercase())
             append("] ")
-            append(fact.title.trim())
+            append(fact.title.memoryPromptLine())
             if (fact.body.isNotBlank()) {
                 append(": ")
-                append(fact.body.trim().replace("\r", " ").replace("\n", " "))
+                append(fact.body.memoryPromptLine())
             }
             appendLine()
         }
     }.trim()
 }
+
+private fun String.memoryPromptLine(): String =
+    trim().replace('\r', ' ').replace('\n', ' ')

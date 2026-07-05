@@ -71,9 +71,7 @@ class LlmMemoryWriter(
         appendLine("Available semantic scopes:")
         appendLine("- GLOBAL")
         if (context.projectId != null) appendLine("- PROJECT")
-        if (context.surface == MemorySurface.BACKEND && context.conversationId != null) appendLine("- CHAT")
         if (context.sessionId != null) appendLine("- SESSION")
-        appendLine("Surface: ${context.surface}")
         appendLine()
         appendLine("User message:")
         appendLine(MemorySanitizer.redact(input.userMessage.trim()))
@@ -112,7 +110,6 @@ class LlmMemoryWriter(
             ?: when (lowercase()) {
                 "global" -> RequestedMemoryScope.GLOBAL
                 "project" -> RequestedMemoryScope.PROJECT
-                "chat", "thread" -> RequestedMemoryScope.CHAT
                 "session" -> RequestedMemoryScope.SESSION
                 else -> null
             }
@@ -146,14 +143,14 @@ Each item:
   "kind": "PREFERENCE|PROCEDURE|PROJECT_RULE|PROJECT_DECISION|SEMANTIC|EPISODE_NOTE",
   "title": "...",
   "body": "...",
-  "requestedScope": "GLOBAL|PROJECT|CHAT|SESSION",
+  "requestedScope": "GLOBAL|PROJECT|SESSION",
   "canonicalKey": "controlled.semantic.key.or_null",
   "confidence": 0.0,
   "importance": 0.0,
   "evidenceText": "short exact quote or close excerpt from the turn"
 }
 
-Never return owner IDs or concrete project/chat/session IDs.
+Never return owner IDs or concrete project/session IDs.
 Use assistant text only as context; evidenceText must come from user text.
 Use canonicalKey only for stable namespaces such as user.preference.response_language or project.rule.test_command.
 If there is no durable memory, return [].

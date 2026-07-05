@@ -2,6 +2,8 @@ package ru.souz.memory
 
 import java.time.Instant
 
+private const val DELETE_FACTS_BY_SCOPE_PAGE_SIZE = 1_000
+
 interface MemoryRepository {
     suspend fun insertSourceEvent(input: NewMemorySourceEvent): String
 
@@ -30,14 +32,25 @@ interface MemoryRepository {
     suspend fun deleteFact(factId: String)
 
     suspend fun deleteFactsByScope(ownerId: MemoryOwnerId, scope: MemoryScope) {
-        listFacts(
-            MemoryFactFilter(
-                ownerId = ownerId,
-                scope = scope.normalized(),
-                statuses = setOf(MemoryFactStatus.ACTIVE, MemoryFactStatus.RETIRED),
-                limit = 1_000,
-            )
-        ).forEach { fact -> deleteFact(fact.id) }
+        val deletedIds = mutableSetOf<String>()
+        scope.compatibilityScopes().forEach { candidateScope ->
+            while (true) {
+                val page = listFacts(
+                    MemoryFactFilter(
+                        ownerId = ownerId,
+                        scope = candidateScope,
+                        statuses = setOf(MemoryFactStatus.ACTIVE, MemoryFactStatus.RETIRED),
+                        limit = DELETE_FACTS_BY_SCOPE_PAGE_SIZE,
+                    )
+                )
+
+                val factsToDelete = page.filter { fact -> deletedIds.add(fact.id) }
+                if (factsToDelete.isEmpty()) break
+
+                factsToDelete.forEach { fact -> deleteFact(fact.id) }
+                if (page.size < DELETE_FACTS_BY_SCOPE_PAGE_SIZE) break
+            }
+        }
     }
 
     suspend fun deleteSourceEventIfUnused(sourceEventId: String)

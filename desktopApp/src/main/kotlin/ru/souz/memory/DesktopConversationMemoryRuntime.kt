@@ -30,7 +30,6 @@ class DesktopMemoryContextProvider(
 ) {
     fun current(conversationId: String?): MemoryContext = MemoryContext(
         ownerId = ownerProvider.currentOwnerId(),
-        surface = MemorySurface.DESKTOP,
         conversationId = conversationId?.let(::ConversationId),
         sessionId = conversationId?.let(::MemorySessionId),
         projectId = projectContextProvider.currentProjectId(),
@@ -46,7 +45,7 @@ class DesktopConversationMemoryRuntime(
         val context = contextProvider.current(request.context.conversationId?.value)
         return memoryService.retrieveMemory(
             request.copy(context = context),
-            overrideScopes = context.allowedRetrievalScopes(includeChat = false),
+            overrideScopes = context.allowedRetrievalScopes(),
         )
     }
 
@@ -55,7 +54,7 @@ class DesktopConversationMemoryRuntime(
         captureService.captureAfterTurn(
             MemoryCaptureInput(
                 context = context,
-                scopes = context.allowedRetrievalScopes(includeChat = false),
+                scopes = context.allowedRetrievalScopes(),
                 userMessage = input.userMessage,
                 assistantMessage = input.assistantMessage,
                 conversationId = input.conversationId,

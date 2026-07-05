@@ -1,6 +1,8 @@
 package ru.souz.memory
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import ru.souz.llms.EmbeddingInputKind
 import ru.souz.llms.LLMChatAPI
 import ru.souz.llms.LLMRequest
@@ -61,6 +63,8 @@ class MemoryService(
         val scope = input.scope.normalized()
         val cleanTitle = MemorySanitizer.redact(input.title.trim())
         val cleanBody = MemorySanitizer.redact(input.body.trim())
+        val canonicalKey = controlledCanonicalKey(input.canonicalKey)
+        val existing = canonicalKey?.let { repo.findActiveFactByCanonicalKey(input.ownerId, scope, it) }
         val sourceEventId = repo.insertSourceEvent(
             NewMemorySourceEvent(
                 ownerId = input.ownerId,
@@ -87,14 +91,14 @@ class MemoryService(
                     kind = input.kind,
                     title = cleanTitle,
                     body = cleanBody,
-                    canonicalKey = controlledCanonicalKey(input.canonicalKey),
+                    canonicalKey = canonicalKey,
                     status = MemoryFactStatus.ACTIVE,
                     retention = retentionForScope(scope),
                     confidence = input.confidence,
                     importance = input.importance,
                     pinned = input.pinned,
                     createdBy = "user",
-                    supersedesFactId = null,
+                    supersedesFactId = existing?.id,
                 ),
                 evidence = listOf(
                     MemoryEvidenceRef(
@@ -180,7 +184,15 @@ class MemoryService(
     ): MemoryFact {
         val normalizedPatch = patch.copy(scope = patch.scope?.normalized())
         val existing = repo.getFact(factId) ?: error("Memory fact not found: $factId")
-        val updated = existing.applyPatch(normalizedPatch)
+        val patched = existing.applyPatch(normalizedPatch)
+        val replaced = if (patched.status == MemoryFactStatus.ACTIVE) {
+            patched.canonicalKey
+                ?.let { repo.findActiveFactByCanonicalKey(patched.ownerId, patched.scope, it) }
+                ?.takeUnless { it.id == patched.id }
+        } else {
+            null
+        }
+        val updated = replaced?.let { patched.copy(supersedesFactId = it.id) } ?: patched
         val saved = repo.updateFact(
             fact = updated,
             expectedUpdatedAt = existing.updatedAt,
@@ -283,6 +295,7 @@ class MemoryService(
         val scopes = (overrideScopes ?: context.allowedRetrievalScopes())
             .flatMap(MemoryScope::compatibilityScopes)
             .distinct()
+        val normalizedScopes = scopes.map(MemoryScope::normalized).toSet()
         val limit = maxFacts.coerceIn(1, 32)
         val tokenBudget = maxPromptTokens.coerceAtLeast(80)
         if (scopes.isEmpty()) return MemorySelection(emptyList(), MemoryRetrievalTrace())
@@ -307,7 +320,7 @@ class MemoryService(
         val selected = fused
             .asSequence()
             .filter { it.fact.status == MemoryFactStatus.ACTIVE && it.fact.validity != MemoryFactValidity.CONTRADICTED }
-            .filter { it.fact.retention != MemoryRetention.SESSION_LIFETIME || it.fact.scope in scopes.map { scope -> scope.normalized() } }
+            .filter { it.fact.retention != MemoryRetention.SESSION_LIFETIME || it.fact.scope.normalized() in normalizedScopes }
             .sortedWith(compareByDescending<FusedCandidate> { heuristicScore(it, context) }.thenByDescending { it.fact.updatedAt })
             .distinctBy { it.fact.canonicalKey ?: it.fact.contentHash }
             .takeForPrompt(limit, tokenBudget)
@@ -350,8 +363,8 @@ class MemoryService(
             patch.slotKey != null -> controlledCanonicalKey(patch.slotKey)
             else -> canonicalKey
         }
-        val nextTitle = patch.title?.trim()?.ifBlank { title } ?: title
-        val nextBody = patch.body?.trim()?.ifBlank { body } ?: body
+        val nextTitle = patch.title?.trim()?.ifBlank { title }?.let(MemorySanitizer::redact) ?: title
+        val nextBody = patch.body?.trim()?.ifBlank { body }?.let(MemorySanitizer::redact) ?: body
         val nextKind = patch.kind ?: kind
         val nextScope = patch.scope ?: scope
         return copy(
@@ -399,7 +412,7 @@ class MemoryService(
         text: String,
         hardDelete: Boolean = false,
     ): Int {
-        val scopes = context.allowedRetrievalScopes(includeChat = context.surface == MemorySurface.BACKEND)
+        val scopes = context.allowedRetrievalScopes()
         val query = text.removeForgetMarkers()
         val match = confidentForgetMatch(context.ownerId, scopes, query) ?: return 0
         if (hardDelete) {
@@ -596,16 +609,21 @@ class MemoryService(
     private suspend fun <T> withSourceEventCleanup(sourceEventId: String, block: suspend () -> T): T = try {
         block()
     } catch (error: CancellationException) {
+        cleanupSourceEvent(sourceEventId)
         throw error
     } catch (error: Exception) {
+        cleanupSourceEvent(sourceEventId)
+        throw error
+    }
+
+    private suspend fun cleanupSourceEvent(sourceEventId: String) {
         try {
-            repo.deleteSourceEventIfUnused(sourceEventId)
-        } catch (cleanupCancellation: CancellationException) {
-            throw cleanupCancellation
+            withContext(NonCancellable) {
+                repo.deleteSourceEventIfUnused(sourceEventId)
+            }
         } catch (_: Exception) {
             // Best-effort cleanup; keep the original write failure visible.
         }
-        throw error
     }
 
     private fun NewMemoryFact.embeddingText(): String = embeddingText(title, body, kind, scope)
