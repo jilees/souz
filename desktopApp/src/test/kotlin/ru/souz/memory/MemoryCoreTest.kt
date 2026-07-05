@@ -268,6 +268,7 @@ class MemoryCoreTest {
                     body = "User wants to work at Anthropic.",
                     scope = MemoryScope("global", "global:global"),
                     slotKey = "user.preference.career.goal.anthropic",
+                    requestedScope = null,
                     confidence = 0.95f,
                     evidenceText = "My primary career goal is Anthropic.",
                 )
@@ -275,7 +276,7 @@ class MemoryCoreTest {
         )
 
         val created = fixture.capture(
-            userMessage = "Запомни: моя главная карьерная цель - Anthropic",
+            userMessage = "My primary career goal is Anthropic.",
         ).single()
 
         assertEquals(globalScope(), created.scope)
@@ -1447,6 +1448,7 @@ class MemoryCoreTest {
         body: String,
         scope: MemoryScope? = null,
         slotKey: String? = null,
+        requestedScope: RequestedMemoryScope? = scope?.toRequestedMemoryScope(),
         confidence: Float = 0.9f,
         evidenceText: String = body,
     ): MemoryFactCandidate =
@@ -1457,6 +1459,7 @@ class MemoryCoreTest {
             body = body,
             scope = scope,
             slotKey = slotKey,
+            requestedScope = requestedScope,
             confidence = confidence,
             evidenceText = evidenceText,
         )

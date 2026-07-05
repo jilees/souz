@@ -89,6 +89,8 @@ private fun String.removeExplicitRememberMarkers(): String {
         "remember",
         "from now on",
         "с этого момента",
+        "не забудь, что",
+        "не забудь",
         "запомни, что",
         "запомни",
         "запиши",
