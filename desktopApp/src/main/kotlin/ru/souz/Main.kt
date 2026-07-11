@@ -50,6 +50,7 @@ fun main() {
             val mcpClientManager: McpClientManager by di.instance()
             val telegramBotController: ru.souz.service.telegram.TelegramBotController by di.instance()
             val localLlamaRuntime: LocalLlamaRuntime by di.instance()
+            val memoryMaintenanceBackgroundRunner: ru.souz.memory.DesktopMemoryMaintenanceBackgroundRunner by di.instance()
             val log: DesktopStructuredLogger by di.instance()
             val appScope: kotlinx.coroutines.CoroutineScope by di.instance()
             val closeServices: () -> Unit = remember(
@@ -80,11 +81,13 @@ fun main() {
 
             DisposableEffect(Unit) {
                 telegramBotController.start()
+                val memoryMaintenanceJob = memoryMaintenanceBackgroundRunner.start()
                 log.appOpened()
                 val shutdownHook = Thread(Runnable { closeServices() }, "souz-shutdown-hook")
                 Runtime.getRuntime().addShutdownHook(shutdownHook)
 
                 onDispose {
+                    memoryMaintenanceJob.cancel()
                     runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
                         .onFailure { error ->
                             if (error !is IllegalStateException) {

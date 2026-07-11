@@ -19,6 +19,7 @@ import ru.souz.ambient.PcmAudioFrameSource
 import ru.souz.ambient.selectAmbientLocalModel
 import ru.souz.paths.SouzPaths
 import ru.souz.agent.agentDiModule
+import ru.souz.agent.AgentFacade
 import ru.souz.agent.spi.AgentDesktopInfoRepository
 import ru.souz.agent.spi.AgentTelemetry
 import ru.souz.agent.spi.AgentToolCatalog
@@ -42,6 +43,9 @@ import ru.souz.llms.LlmBuildProfile
 import ru.souz.llms.LLMToolSetup
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.local.LocalChatAPI
+import ru.souz.llms.local.LocalModelProfiles
+import ru.souz.llms.local.LocalModelStore
+import ru.souz.llms.local.LocalProviderAvailability
 import ru.souz.service.keys.Keys
 import ru.souz.llms.tunnel.AiTunnelVoiceAPI
 import ru.souz.llms.openai.OpenAIVoiceAPI
@@ -75,6 +79,8 @@ import ru.souz.tool.notes.*
 import ru.souz.tool.textReplace.*
 import ru.souz.tool.math.ToolCalculator
 import ru.souz.ui.main.usecases.FinderPathExtractor
+import ru.souz.ui.main.usecases.MemoryConversationCleanup
+import ru.souz.ui.main.usecases.MemoryServiceConversationCleanup
 import ru.souz.ui.common.usecases.ApiKeyAvailabilityUseCase
 import ru.souz.service.speech.AiTunnelSpeechRecognitionProvider
 import ru.souz.service.speech.LiveSpeechTranscriptionProvider
@@ -109,10 +115,19 @@ import ru.souz.skills.registry.SkillStorageScope
 import ru.souz.tool.skills.ToolRunSkillCommand
 import ru.souz.memory.ConversationMemoryRuntime
 import ru.souz.memory.DesktopConversationMemoryRuntime
+import ru.souz.memory.DesktopMemoryMaintenanceBackgroundRunner
+import ru.souz.memory.DesktopMemoryContextProvider
+import ru.souz.memory.DesktopMemoryMaintenanceController
+import ru.souz.memory.DesktopMemoryOwnerProvider
 import ru.souz.memory.EmbeddingClient
 import ru.souz.memory.LlmEmbeddingClient
+import ru.souz.memory.LlmMemoryConsolidator
 import ru.souz.memory.LlmMemoryWriter
 import ru.souz.memory.MemoryCaptureService
+import ru.souz.memory.MemoryConsolidator
+import ru.souz.memory.MemoryMaintenanceController
+import ru.souz.memory.MemoryMaintenanceWorker
+import ru.souz.memory.MemoryOwnerProvider
 import ru.souz.memory.MemoryRepository
 import ru.souz.memory.MemoryService
 import ru.souz.memory.MemoryWriter
@@ -162,14 +177,69 @@ val mainDiModule = DI.Module(DiTags.MODULE_MAIN) {
     bindSingleton { VectorDB }
     bindSingleton { LlmBuildProfile(instance(), instance()) }
     bindSingleton { DesktopInfoRepository(instance(), instance(), instance(), instance()) }
+    bindSingleton<MemoryOwnerProvider> { DesktopMemoryOwnerProvider() }
     bindSingleton<MemoryRepository> {
-        SqliteMemoryRepository(instance<SouzPaths>().stateRoot.resolve("memory.db"))
+        SqliteMemoryRepository(
+            dbPath = instance<SouzPaths>().stateRoot.resolve("memory.db"),
+            legacyOwnerMigrationTarget = instance<MemoryOwnerProvider>().currentOwnerId(),
+        )
     }
     bindSingleton<EmbeddingClient> { LlmEmbeddingClient(instance(), instance()) }
     bindSingleton<MemoryWriter> { LlmMemoryWriter(instance(), instance()) }
+    bindSingleton<MemoryConsolidator> {
+        val availability = instance<LocalProviderAvailability>()
+        val modelStore = instance<LocalModelStore>()
+        LlmMemoryConsolidator(instance<LocalChatAPI>(), instance()) {
+            LocalModelProfiles.all
+                .lastOrNull { profile -> profile.gigaModel in availability.availableGigaModels() && modelStore.isPresent(profile) }
+                ?.gigaModel
+                ?.alias
+                ?: availability.defaultGigaModel()?.alias
+                ?: LocalModelProfiles.QWEN3_4B_INSTRUCT_2507.gigaModel.alias
+        }
+    }
     bindSingleton { MemoryService(instance(), instance()) }
     bindSingleton { MemoryCaptureService(instance(), instance()) }
-    bindSingleton<ConversationMemoryRuntime> { DesktopConversationMemoryRuntime(instance(), instance()) }
+    bindSingleton<MemoryConversationCleanup>(overrides = true) {
+        MemoryServiceConversationCleanup(
+            memoryService = instance(),
+            ownerProvider = instance(),
+        )
+    }
+    bindSingleton<MemoryMaintenanceController> {
+        val dbPath = instance<SouzPaths>().stateRoot.resolve("memory.db")
+        val availability = instance<LocalProviderAvailability>()
+        val modelStore = instance<LocalModelStore>()
+        DesktopMemoryMaintenanceController(
+            dbPath = dbPath,
+            worker = MemoryMaintenanceWorker(
+                dbPath = dbPath,
+                consolidator = instance(),
+                embeddingModel = instance<EmbeddingClient>().model,
+            ),
+            availableModels = {
+                val available = availability.availableGigaModels().toSet()
+                LocalModelProfiles.all
+                    .filter { profile -> profile.gigaModel in available && modelStore.isPresent(profile) }
+                    .map { it.gigaModel }
+            },
+        )
+    }
+    bindSingleton {
+        val agentFacade = instance<AgentFacade>()
+        DesktopMemoryMaintenanceBackgroundRunner(
+            controller = instance(),
+            scope = instance(),
+            isAppBusy = { agentFacade.isExecuting.value },
+        )
+    }
+    bindSingleton<ConversationMemoryRuntime> {
+        DesktopConversationMemoryRuntime(
+            memoryService = instance(),
+            captureService = instance(),
+            contextProvider = DesktopMemoryContextProvider(ownerProvider = instance()),
+        )
+    }
     bindSingleton<AgentDesktopInfoRepository> { instance<DesktopInfoRepository>() }
     bindSingleton<BackgroundIndexRefresher>(overrides = true) { instance<DesktopInfoRepository>() }
     bindSingleton<ToolAvailabilityPolicy> { DesktopToolAvailabilityPolicy(instance()) }

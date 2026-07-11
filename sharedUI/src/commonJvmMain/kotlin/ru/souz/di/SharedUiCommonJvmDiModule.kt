@@ -54,9 +54,11 @@ import ru.souz.ui.main.usecases.DroppedFilePathExtractor
 import ru.souz.ui.main.usecases.FinderPathExtractor
 import ru.souz.ui.main.usecases.NoopVoiceInputController
 import ru.souz.ui.main.usecases.NoopDroppedFilePathExtractor
+import ru.souz.ui.main.usecases.NoopMemoryConversationCleanup
 import ru.souz.ui.main.usecases.NoopPathPicker
 import ru.souz.ui.main.usecases.PathPicker
 import ru.souz.ui.main.mainViewModelDiScope
+import ru.souz.ui.main.usecases.MemoryConversationCleanup
 import ru.souz.ui.main.usecases.PermissionsUseCase
 import ru.souz.ui.main.usecases.SpeechUseCase
 import ru.souz.ui.main.usecases.ToolModifyReviewUseCase
@@ -91,6 +93,7 @@ fun sharedUiCommonJvmDiModule(): DI.Module = DI.Module("sharedUiCommonJvm") {
     bindSingleton<AmbientBlockAnalyzer> { NoopAmbientBlockAnalyzer }
     bindSingleton { SemanticBlockBuilder() }
     bindSingleton<Set<SelectionApprovalSource>> { emptySet() }
+    bindSingleton<MemoryConversationCleanup> { NoopMemoryConversationCleanup }
     bindSingleton { ApiKeyAvailabilityUseCase(instance()) }
     bindSingleton { FinderPathExtractor(instance(), instance()) }
 }
@@ -110,6 +113,9 @@ fun sharedUiMainViewModelUseCasesDiModule(): DI.Module = DI.Module("sharedUiMain
             attachmentMetadataProvider = instance(),
         )
     }
+    bind<ChatObservabilityTracker>() with scoped(mainViewModelDiScope).singleton {
+        ChatObservabilityTracker(log = instance())
+    }
     bind<ChatUseCase>() with scoped(mainViewModelDiScope).singleton {
         ChatUseCase(
             agentFacade = instance(),
@@ -118,9 +124,10 @@ fun sharedUiMainViewModelUseCasesDiModule(): DI.Module = DI.Module("sharedUiMain
             finderPathExtractor = instance(),
             chatAttachmentsUseCase = instance(),
             toolModifyReviewUseCase = instance(),
-            observabilityTracker = ChatObservabilityTracker(log = instance()),
+            observabilityTracker = instance(),
             log = instance(),
             tokenLogging = instance(),
+            memoryConversationCleanup = instance(),
             ioDispatcher = context.ioDispatcher,
         )
     }

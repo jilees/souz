@@ -531,8 +531,8 @@ class MainViewModel(
     }
 
     private suspend fun startNewConversation() {
-        chatUseCase.finishCurrentConversation(ChatConversationCloseReason.NEW_CONVERSATION)
         chatUseCase.clearConversationContext()
+        finishCurrentConversationAndCleanupMemory(ChatConversationCloseReason.NEW_CONVERSATION)
 
         setStateAndRefreshChatSearch {
             copy(
@@ -713,8 +713,8 @@ class MainViewModel(
 
     private suspend fun clearContext() {
         val lastKnownAgentContext: AgentContext<String>? = chatUseCase.snapshotContext()
-        chatUseCase.finishCurrentConversation(ChatConversationCloseReason.CLEAR_CONTEXT)
         chatUseCase.clearConversationContext()
+        finishCurrentConversationAndCleanupMemory(ChatConversationCloseReason.CLEAR_CONTEXT)
 
         when (currentState.userExpectCloseOnX) {
             false -> {
@@ -763,6 +763,16 @@ class MainViewModel(
         }
     }
 
+    private suspend fun finishCurrentConversationAndCleanupMemory(reason: ChatConversationCloseReason): String? {
+        val conversationId = chatUseCase.finishCurrentConversation(reason)
+        if (conversationId != null) {
+            viewModelScope.launch {
+                chatUseCase.cleanupConversationMemory(conversationId)
+            }
+        }
+        return conversationId
+    }
+
     override fun onCleared() {
         val pendingToolPermissionRequestId = currentState.toolPermissionDialog?.requestId
         val pendingSelectionSourceId = currentState.selectionDialog?.sourceId
@@ -778,7 +788,12 @@ class MainViewModel(
         super.onCleared()
         localModelPreloadJob?.cancel()
         ambientModelPreloadJob?.cancel()
-        chatUseCase.onCleared()
+        val closedConversationId = chatUseCase.onCleared()
+        if (closedConversationId != null) {
+            appScope.launch {
+                chatUseCase.cleanupConversationMemory(closedConversationId)
+            }
+        }
         permissionsUseCase.onCleared()
     }
 }

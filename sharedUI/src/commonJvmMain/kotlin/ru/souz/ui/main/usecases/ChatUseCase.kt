@@ -15,6 +15,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import ru.souz.agent.AgentFacade
+import ru.souz.agent.AgentExecutionResult
 import ru.souz.agent.AgentSideEffect
 import ru.souz.agent.state.AgentContext
 import ru.souz.db.SettingsProvider
@@ -45,6 +46,7 @@ class ChatUseCase internal constructor(
     private val observabilityTracker: ChatObservabilityTracker,
     private val log: DesktopStructuredLogger,
     private val tokenLogging: TokenLogging,
+    private val memoryConversationCleanup: MemoryConversationCleanup = NoopMemoryConversationCleanup,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val l = LoggerFactory.getLogger(ChatUseCase::class.java)
@@ -100,7 +102,7 @@ class ChatUseCase internal constructor(
             )
 
             val response = executeAgentRequest(session, userText)
-            val completedResponse = buildCompletedResponse(session, response, onResult)
+            val completedResponse = buildCompletedResponse(session, response.output, onResult)
                 ?: return
 
             handleRequestSuccess(
@@ -168,8 +170,16 @@ class ChatUseCase internal constructor(
         agentFacade.clearContext()
     }
 
-    fun finishCurrentConversation(reason: ChatConversationCloseReason) {
-        observabilityTracker.finishCurrentConversation(reason)
+    suspend fun finishCurrentConversation(reason: ChatConversationCloseReason): String? {
+        return closeCurrentConversation(reason)
+    }
+
+    private fun closeCurrentConversation(reason: ChatConversationCloseReason): String? {
+        return observabilityTracker.finishCurrentConversation(reason)
+    }
+
+    suspend fun cleanupConversationMemory(conversationId: String) {
+        memoryConversationCleanup.cleanupConversation(conversationId)
     }
 
     fun setContext(ctx: AgentContext<String>) {
@@ -186,11 +196,12 @@ class ChatUseCase internal constructor(
         agentFacade.setContextSize(size)
     }
 
-    fun onCleared() {
-        finishCurrentConversation(ChatConversationCloseReason.VIEW_MODEL_CLEARED)
+    fun onCleared(): String? {
+        val conversationId = closeCurrentConversation(ChatConversationCloseReason.VIEW_MODEL_CLEARED)
         killTaskSideEffectJobs()
         cancelActiveJob()
         toolModifyReviewUseCase.clearPendingReviewBlocking(discardBrokerState = true)
+        return conversationId
     }
 
     private fun subscribeOnTaskSideEffects(scope: CoroutineScope, msg: ChatMessage): Job {
@@ -341,12 +352,12 @@ class ChatUseCase internal constructor(
     private suspend fun executeAgentRequest(
         session: ChatRequestSession,
         userText: String,
-    ): String = withContext(
+    ): AgentExecutionResult = withContext(
         ioDispatcher +
             session.requestContext.asCoroutineContext() +
             tokenLogging.requestContextElement(session.requestContext.requestId)
     ) {
-        agentFacade.execute(
+        agentFacade.executeForResult(
             input = userText,
             toolInvocationMetaOverride = executionMeta(session),
         )

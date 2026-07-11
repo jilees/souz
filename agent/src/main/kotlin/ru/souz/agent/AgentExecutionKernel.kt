@@ -1,6 +1,7 @@
 package ru.souz.agent
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.CoroutineScope
 import ru.souz.GraphBasedAgent
 import ru.souz.agent.nodes.NodesClassification
 import ru.souz.agent.nodes.NodesCommon
@@ -51,7 +52,7 @@ class AgentExecutionKernelFactory(
     private val localClassifier: UserMessageClassifier,
     private val skillRegistryRepository: SkillRegistryRepository,
     private val memoryRuntime: ConversationMemoryRuntime = NoopConversationMemoryRuntime,
-    private val captureScope: kotlinx.coroutines.CoroutineScope,
+    private val captureScope: CoroutineScope,
 ) {
     fun create(): AgentExecutionKernel {
         val agentToolExecutor = AgentToolExecutor(telemetry)
