@@ -50,6 +50,8 @@ object ConfigStore : ToolsSettingsStore {
         prefs.remove(key)
     }
 
+    fun contains(key: String): Boolean = prefs.get(key, null) != null
+
     inline fun <reified T : Any> get(key: String, default: T): T =
         get<T>(key) ?: default
 

@@ -48,7 +48,17 @@ interface SettingsProvider : AgentSettingsProvider, LlmBuildProfileSettings {
     var mcpServersFile: String?
 }
 
-fun SettingsProvider.hasKey(provider: LlmProvider): Boolean = when (provider) {
+/**
+ * Optional capability for settings stores that can inspect key presence without
+ * loading or decrypting the corresponding secret.
+ */
+interface ProviderKeyPresence {
+    fun hasKey(provider: LlmProvider): Boolean
+    fun hasKey(provider: VoiceRecognitionProvider): Boolean
+}
+
+fun SettingsProvider.hasKey(provider: LlmProvider): Boolean =
+    (this as? ProviderKeyPresence)?.hasKey(provider) ?: when (provider) {
     LlmProvider.GIGA -> !gigaChatKey.isNullOrBlank()
     LlmProvider.QWEN -> !qwenChatKey.isNullOrBlank()
     LlmProvider.AI_TUNNEL -> !aiTunnelKey.isNullOrBlank()
@@ -58,7 +68,8 @@ fun SettingsProvider.hasKey(provider: LlmProvider): Boolean = when (provider) {
     LlmProvider.CODEX -> !codexAccessToken.isNullOrBlank()
 }
 
-fun SettingsProvider.hasKey(provider: VoiceRecognitionProvider): Boolean = when (provider) {
+fun SettingsProvider.hasKey(provider: VoiceRecognitionProvider): Boolean =
+    (this as? ProviderKeyPresence)?.hasKey(provider) ?: when (provider) {
     VoiceRecognitionProvider.SALUTE_SPEECH -> !saluteSpeechKey.isNullOrBlank()
     VoiceRecognitionProvider.AI_TUNNEL -> !aiTunnelKey.isNullOrBlank()
     VoiceRecognitionProvider.OPENAI -> !openaiKey.isNullOrBlank()

@@ -7,19 +7,21 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import ru.souz.agent.AgentId
 import ru.souz.db.SettingsProvider
+import ru.souz.db.ProviderKeyPresence
 import ru.souz.llms.DEFAULT_MAX_TOKENS
 import ru.souz.llms.EmbeddingsModel
 import ru.souz.llms.LLMModel
 import ru.souz.llms.LlmBuildProfile
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.VoiceRecognitionModel
+import ru.souz.llms.VoiceRecognitionProvider
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class AndroidSettingsProvider(context: Context) : SettingsProvider {
+class AndroidSettingsProvider(context: Context) : SettingsProvider, ProviderKeyPresence {
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val secretCodec = AndroidSecretCodec()
@@ -70,6 +72,23 @@ class AndroidSettingsProvider(context: Context) : SettingsProvider {
     override var saluteSpeechKey: String?
         get() = secretString(SALUTE_SPEECH_KEY)
         set(value) = putSecretString(SALUTE_SPEECH_KEY, value)
+
+    override fun hasKey(provider: LlmProvider): Boolean = when (provider) {
+        LlmProvider.GIGA -> prefs.contains(GIGA_CHAT_KEY)
+        LlmProvider.QWEN -> prefs.contains(QWEN_CHAT_KEY)
+        LlmProvider.AI_TUNNEL -> prefs.contains(AI_TUNNEL_KEY)
+        LlmProvider.ANTHROPIC -> prefs.contains(ANTHROPIC_KEY)
+        LlmProvider.OPENAI -> prefs.contains(OPENAI_KEY)
+        LlmProvider.LOCAL -> true
+        LlmProvider.CODEX -> prefs.contains(CODEX_ACCESS_TOKEN)
+    }
+
+    override fun hasKey(provider: VoiceRecognitionProvider): Boolean = when (provider) {
+        VoiceRecognitionProvider.SALUTE_SPEECH -> prefs.contains(SALUTE_SPEECH_KEY)
+        VoiceRecognitionProvider.AI_TUNNEL -> prefs.contains(AI_TUNNEL_KEY)
+        VoiceRecognitionProvider.OPENAI -> prefs.contains(OPENAI_KEY)
+        VoiceRecognitionProvider.LOCAL_MACOS -> true
+    }
 
     override var supportEmail: String?
         get() = string(SUPPORT_EMAIL)
@@ -201,13 +220,8 @@ class AndroidSettingsProvider(context: Context) : SettingsProvider {
         LLMModel.LocalQwen3_4B_Instruct_2507
 
     private fun hasConfiguredAccess(provider: LlmProvider): Boolean = when (provider) {
-        LlmProvider.GIGA -> !gigaChatKey.isNullOrBlank()
-        LlmProvider.QWEN -> !qwenChatKey.isNullOrBlank()
-        LlmProvider.AI_TUNNEL -> !aiTunnelKey.isNullOrBlank()
-        LlmProvider.ANTHROPIC -> !anthropicKey.isNullOrBlank()
-        LlmProvider.OPENAI -> !openaiKey.isNullOrBlank()
         LlmProvider.LOCAL -> false
-        LlmProvider.CODEX -> !codexAccessToken.isNullOrBlank()
+        else -> hasKey(provider)
     }
 
     private fun modelFromAlias(value: String): LLMModel? =
