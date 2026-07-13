@@ -41,6 +41,13 @@ enum class TelegramAuthStepUi {
     ERROR,
 }
 
+sealed interface ApiKeyFieldState {
+    data object StoredHidden : ApiKeyFieldState
+    data object Revealing : ApiKeyFieldState
+    data class Editable(val value: String, val revealed: Boolean) : ApiKeyFieldState
+    data object RevealFailed : ApiKeyFieldState
+}
+
 
 
 enum class SettingsSection(val title: StringResource, val icon: String? = null) {
