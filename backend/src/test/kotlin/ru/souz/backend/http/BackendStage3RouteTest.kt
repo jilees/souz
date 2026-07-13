@@ -62,17 +62,16 @@ import ru.souz.backend.settings.model.UserSettings
 import ru.souz.backend.settings.repository.UserSettingsRepository
 import ru.souz.backend.settings.service.EffectiveSettingsResolver
 import ru.souz.backend.settings.service.UserSettingsService
-import ru.souz.backend.storage.StorageMode
-import ru.souz.backend.storage.memory.MemoryAgentExecutionRepository
-import ru.souz.backend.storage.memory.MemoryAgentEventRepository
-import ru.souz.backend.storage.memory.MemoryAgentStateRepository
-import ru.souz.backend.storage.memory.MemoryChatRepository
-import ru.souz.backend.storage.memory.MemoryOptionRepository
-import ru.souz.backend.storage.memory.MemoryMessageRepository
-import ru.souz.backend.storage.memory.MemoryToolCallRepository
-import ru.souz.backend.storage.memory.MemoryUserRepository
-import ru.souz.backend.storage.memory.MemoryUserProviderKeyRepository
-import ru.souz.backend.storage.memory.MemoryUserSettingsRepository
+import ru.souz.backend.testutil.repository.MemoryAgentExecutionRepository
+import ru.souz.backend.testutil.repository.MemoryAgentEventRepository
+import ru.souz.backend.testutil.repository.MemoryAgentStateRepository
+import ru.souz.backend.testutil.repository.MemoryChatRepository
+import ru.souz.backend.testutil.repository.MemoryOptionRepository
+import ru.souz.backend.testutil.repository.MemoryMessageRepository
+import ru.souz.backend.testutil.repository.MemoryToolCallRepository
+import ru.souz.backend.testutil.repository.MemoryUserRepository
+import ru.souz.backend.testutil.repository.MemoryUserProviderKeyRepository
+import ru.souz.backend.testutil.repository.MemoryUserSettingsRepository
 import ru.souz.llms.EmbeddingsModel
 import ru.souz.llms.LLMChatAPI
 import ru.souz.llms.LLMMessageRole
@@ -1255,7 +1254,6 @@ internal fun routeTestContext(
         effectiveSettingsResolver = effectiveSettingsResolver,
         toolCatalog = toolCatalog,
         featureFlags = featureFlags,
-        storageMode = StorageMode.MEMORY,
         localModelAvailability = unavailableLocalModels(),
         userProviderKeyRepository = userProviderKeyRepository,
     )

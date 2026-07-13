@@ -6,7 +6,6 @@ import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
-import java.nio.file.Files
 import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -20,11 +19,8 @@ import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.bootstrap.BackendBootstrapService
 import ru.souz.backend.keys.model.UserProviderKey
 import ru.souz.backend.settings.service.EffectiveSettingsResolver
-import ru.souz.backend.storage.filesystem.FilesystemPathSegmentCodec
-import ru.souz.backend.storage.filesystem.FilesystemUserProviderKeyRepository
-import ru.souz.backend.storage.filesystem.FilesystemUserSettingsRepository
-import ru.souz.backend.storage.memory.MemoryUserProviderKeyRepository
-import ru.souz.backend.storage.memory.MemoryUserSettingsRepository
+import ru.souz.backend.testutil.repository.MemoryUserProviderKeyRepository
+import ru.souz.backend.testutil.repository.MemoryUserSettingsRepository
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.EmbeddingsModel
 import ru.souz.llms.LLMModel
@@ -35,7 +31,6 @@ import ru.souz.llms.LocalModelAvailability
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.LLMResponse
 import ru.souz.llms.VoiceRecognitionModel
-import ru.souz.backend.storage.StorageMode
 import ru.souz.backend.settings.model.UserSettings
 import ru.souz.tool.FewShotExample
 import ru.souz.tool.InputParamDescription
@@ -134,7 +129,7 @@ class BackendBootstrapRouteTest {
     }
 
     @Test
-    fun `bootstrap response contains user features storage capabilities and settings`() = testApplication {
+    fun `bootstrap response contains user features capabilities and settings`() = testApplication {
         val settingsProvider = FakeSettingsProvider().apply {
             gigaModel = LLMModel.Max
             contextSize = 48_000
@@ -154,7 +149,6 @@ class BackendBootstrapRouteTest {
                         streamingMessages = true,
                         toolEvents = true,
                         options = false,
-                        durableEventReplay = false,
                     ),
                 ),
                 trustedProxyToken = { "proxy-secret" },
@@ -169,7 +163,7 @@ class BackendBootstrapRouteTest {
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("user-123", payload["user"]["id"].asText())
-        assertEquals("memory", payload["storage"]["mode"].asText())
+        assertFalse(payload.has("storage"))
         assertEquals(true, payload["features"]["streamingMessages"].asBoolean())
         assertEquals(true, payload["settings"]["showToolEvents"].asBoolean())
         assertEquals(true, payload["settings"]["streamingMessages"].asBoolean())
@@ -211,7 +205,6 @@ class BackendBootstrapRouteTest {
                         streamingMessages = false,
                         toolEvents = false,
                         options = false,
-                        durableEventReplay = false,
                     ),
                 ),
                 trustedProxyToken = { "proxy-secret" },
@@ -327,7 +320,6 @@ class BackendBootstrapRouteTest {
                         streamingMessages = true,
                         toolEvents = true,
                         options = false,
-                        durableEventReplay = false,
                     ),
                 ),
                 trustedProxyToken = { "proxy-secret" },
@@ -395,7 +387,6 @@ class BackendBootstrapRouteTest {
                         streamingMessages = true,
                         toolEvents = true,
                         options = false,
-                        durableEventReplay = false,
                     ),
                 ),
                 trustedProxyToken = { "proxy-secret" },
@@ -423,66 +414,6 @@ class BackendBootstrapRouteTest {
         assertTrue(payload["capabilities"]["tools"].isArray)
     }
 
-    @Test
-    fun `bootstrap ignores invalid filesystem provider rows instead of failing`() = testApplication {
-        val dataDir = Files.createTempDirectory("bootstrap-invalid-provider-rows")
-        val userId = "user-invalid-provider-rows"
-        val encodedUserId = FilesystemPathSegmentCodec.encode(userId)
-        val userDir = dataDir.resolve("users").resolve(encodedUserId)
-        Files.createDirectories(userDir)
-        Files.writeString(
-            userDir.resolve("provider-keys.json"),
-            """
-            [
-              {
-                "userId": "$userId",
-                "provider": "BROKEN_PROVIDER",
-                "encryptedApiKey": "enc-bad",
-                "keyHint": "...bad",
-                "createdAt": "2026-05-01T10:00:00Z",
-                "updatedAt": "2026-05-01T10:00:00Z"
-              },
-              {
-                "userId": "$userId",
-                "provider": "OPENAI",
-                "encryptedApiKey": "enc-openai",
-                "keyHint": "...4321",
-                "createdAt": "2026-05-01T10:00:00Z",
-                "updatedAt": "2026-05-01T10:00:00Z"
-              }
-            ]
-            """.trimIndent(),
-        )
-        val settingsProvider = FakeSettingsProvider().apply {
-            gigaChatKey = null
-            qwenChatKey = null
-            aiTunnelKey = null
-            anthropicKey = null
-            openaiKey = null
-        }
-        application {
-            backendApplication(
-                selectedModel = { settingsProvider.gigaModel.alias },
-                bootstrapService = filesystemBootstrapService(
-                    dataDir = dataDir,
-                    settingsProvider = settingsProvider,
-                ),
-                trustedProxyToken = { "proxy-secret" },
-            )
-        }
-
-        val response = client.get(BackendHttpRoutes.BOOTSTRAP) {
-            header("X-User-Id", userId)
-            header("X-Souz-Proxy-Auth", "proxy-secret")
-        }
-        val payload = json.readTree(response.bodyAsText())
-        val openAiModel = payload["capabilities"]["models"].first { it["model"].asText() == LLMModel.OpenAIGpt52.alias }
-
-        assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals(true, openAiModel["userManagedKey"].asBoolean())
-        assertFalse(payload["capabilities"]["models"].any { it["provider"].asText() == "broken_provider" })
-    }
-
 }
 
 private fun bootstrapService(
@@ -508,40 +439,9 @@ private fun bootstrapService(
         ),
         toolCatalog = toolCatalog,
         featureFlags = featureFlags,
-        storageMode = StorageMode.MEMORY,
         localModelAvailability = localModelAvailability,
         userProviderKeyRepository = userProviderKeyRepository,
     )
-
-private fun filesystemBootstrapService(
-    dataDir: java.nio.file.Path,
-    settingsProvider: SettingsProvider = FakeSettingsProvider().apply { gigaChatKey = "giga-key" },
-    toolCatalog: AgentToolCatalog = toolCatalog(
-        ToolCategory.FILES to fakeTool("ListFiles"),
-        ToolCategory.CALCULATOR to fakeTool("Calculator"),
-    ),
-    featureFlags: BackendFeatureFlags = BackendFeatureFlags(),
-    localModelAvailability: LocalModelAvailability = unavailableLocalModels(),
-): BackendBootstrapService {
-    val userSettingsRepository = FilesystemUserSettingsRepository(dataDir)
-    val userProviderKeyRepository = FilesystemUserProviderKeyRepository(dataDir)
-    return BackendBootstrapService(
-        settingsProvider = settingsProvider,
-        effectiveSettingsResolver = EffectiveSettingsResolver(
-            baseSettingsProvider = settingsProvider,
-            userSettingsRepository = userSettingsRepository,
-            userProviderKeyRepository = userProviderKeyRepository,
-            featureFlags = featureFlags,
-            toolCatalog = toolCatalog,
-            localModelAvailability = localModelAvailability,
-        ),
-        toolCatalog = toolCatalog,
-        featureFlags = featureFlags,
-        storageMode = StorageMode.FILESYSTEM,
-        localModelAvailability = localModelAvailability,
-        userProviderKeyRepository = userProviderKeyRepository,
-    )
-}
 
 private fun toolCatalog(vararg tools: Pair<ToolCategory, LLMToolSetup>): AgentToolCatalog =
     object : AgentToolCatalog {

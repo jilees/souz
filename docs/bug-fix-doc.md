@@ -42,7 +42,7 @@ userId, chatId, executionId, toolCallId
 - Tool call models/entities
 - BackendAgentRuntimeEventSink call sites
 - Tool-call related tests
-- Postgres/filesystem/in-memory storage code, если он использует ToolCallRepository
+- PostgreSQL storage code, если он использует ToolCallRepository
 ```
 
 ## Требуемое изменение
@@ -213,8 +213,7 @@ V4__stage12_option_rename.sql
 ```text
 - RequestIdentityResolver или ближайший identity boundary
 - UserRepository / UserRegistry
-- Postgres user storage
-- filesystem/in-memory user storage, если есть такие modes
+- PostgreSQL user storage
 - tests for first request by new user
 ```
 
@@ -261,8 +260,7 @@ data class UserRecord(
 - userId не blank;
 - userId length <= 256;
 - no ISO control characters;
-- no path separators if raw value где-то может попасть в filesystem;
-- filesystem storage обязан использовать encoded/safe path segment, не raw userId.
+- userId используется только как параметризованное значение в PostgreSQL queries.
 ```
 
 Пример:
@@ -293,26 +291,6 @@ set last_seen_at =
 returning id, created_at, last_seen_at;
 ```
 
-## Filesystem implementation
-
-Создавать:
-
-```text
-data/users/{encodedUserId}/user.json
-```
-
-Где `{encodedUserId}` — safe encoded segment.
-
-`user.json`:
-
-```json
-{
-  "id": "original-id-from-proxy",
-  "createdAt": "...",
-  "lastSeenAt": "..."
-}
-```
-
 ## Important
 
 Auto-provision должен происходить **до** создания chats/messages/settings/provider keys, чтобы все сущности были привязаны к существующему user namespace.
@@ -338,7 +316,7 @@ Auto-provision должен происходить **до** создания cha
 5. Control chars in X-User-Id rejected.
 6. Invalid proxy token не вызывает ensureUser.
 7. Created chat/message/settings are namespaced under provisioned user.
-8. Filesystem mode uses encoded path segment, not raw userId.
+8. PostgreSQL queries keep users isolated by opaque userId.
 ```
 
 ## Acceptance criteria

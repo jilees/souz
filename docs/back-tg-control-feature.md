@@ -204,8 +204,6 @@ create table telegram_bot_bindings (
 backend/src/main/kotlin/ru/souz/backend/telegram/
   TelegramBotBinding.kt
   TelegramBotBindingRepository.kt
-  MemoryTelegramBotBindingRepository.kt
-  FileTelegramBotBindingRepository.kt
   PostgresTelegramBotBindingRepository.kt
   TelegramBotBindingService.kt
   TelegramBotPollingService.kt
@@ -213,7 +211,7 @@ backend/src/main/kotlin/ru/souz/backend/telegram/
   TelegramRoutes.kt
 ```
 
-Если в проекте уже есть общий паттерн `memory/filesystem/postgres`, сделать реализации repository в том же стиле. Backend уже заявлен как поддерживающий memory/filesystem/Postgres storage. ([GitHub][1])
+Backend repository хранится в PostgreSQL; для binding нужна только PostgreSQL-реализация. Файловое хранение skill bundles относится к отдельной подсистеме.
 
 ---
 

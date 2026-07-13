@@ -5,7 +5,7 @@ The `:backend` module is a JVM HTTP server build for Souz without Compose UI sta
 ## Routes
 
 - `GET /health` returns process and selected-model status.
-- `GET /v1/bootstrap` returns backend features, storage mode, server-visible models/tools, and effective settings for the trusted user, including public `interfaceLanguage`, `requestTimeoutMillis`, and `useFewShotExamples`.
+- `GET /v1/bootstrap` returns backend features, server-visible models/tools, and effective settings for the trusted user, including public `interfaceLanguage`, `requestTimeoutMillis`, and `useFewShotExamples`.
 - `GET /v1/onboarding/state` returns first-run onboarding requirements, current effective settings, and model-access hints for the trusted user.
 - `POST /v1/onboarding/complete` persists first-run preferences, optionally accepts `interfaceLanguage`, `requestTimeoutMillis`, and `useFewShotExamples`, and marks onboarding as completed for the trusted user.
 - `GET /v1/me/settings` and `PATCH /v1/me/settings` read and persist public user settings without changing the `{ settings: ... }` envelope shape.
@@ -38,10 +38,8 @@ The `:backend` module is a JVM HTTP server build for Souz without Compose UI sta
 
 ## Storage
 
-- Storage modes: `memory`, `filesystem`, `postgres`.
-- `memory` uses bounded in-process repositories to reduce accidental OOM risk.
-- `filesystem` stores per-user data under `SOUZ_BACKEND_DATA_DIR` / `souz.backend.dataDir` using URL-safe user path segments and append-only logs for messages, executions, options, events, and tool calls; Telegram bot bindings live beside the chat as `telegram-bot.json` with encrypted token payload plus linked Telegram-user metadata.
-- `postgres` uses JDBC + HikariCP + Flyway, allocates message/event sequence numbers per chat, enforces one active execution per chat, persists durable replay only when `SOUZ_FEATURE_DURABLE_EVENT_REPLAY=true`, uses optimistic locking on `agent_conversation_state`, keeps Telegram binding token hashes unique, and stores per-binding poller lease ownership in `telegram_bot_bindings` for multi-instance polling safety.
+- PostgreSQL is the only backend repository storage. It uses JDBC + HikariCP + Flyway, allocates message/event sequence numbers per chat, enforces one active execution per chat, persists durable replay, uses optimistic locking on `agent_conversation_state`, keeps Telegram binding token hashes unique, and stores per-binding poller lease ownership in `telegram_bot_bindings` for multi-instance polling safety.
+- User-scoped skill bundles and runtime sandbox workspaces remain filesystem-backed and are not backend repository storage.
 - Telegram bot tokens now use `TELEGRAM_TOKEN_ENCRYPTION_KEY` / `souz.telegram.tokenEncryptionKey` for AES-GCM encryption at rest. Telegram link secrets are stored only as hashes. Legacy rows copied forward from the old plaintext column still need to be rebound or rewritten by the application path before they stop relying on the plaintext compatibility fallback. Older pending-link rows created before the one-time-secret flow should be rebound so the UI can issue a fresh `/start <secret>` command.
 
 ## Config
@@ -51,15 +49,10 @@ The `:backend` module is a JVM HTTP server build for Souz without Compose UI sta
   - `SOUZ_FEATURE_STREAMING_MESSAGES` / `souz.backend.feature.streamingMessages`
   - `SOUZ_FEATURE_TOOL_EVENTS` / `souz.backend.feature.toolEvents`
   - `SOUZ_FEATURE_OPTIONS` / `souz.backend.feature.options`
-  - `SOUZ_FEATURE_DURABLE_EVENT_REPLAY` / `souz.backend.feature.durableEventReplay`
   - `ENABLE_BACKEND_TG_FEATURE` / `souz.backend.feature.telegramBot`
 - Telegram:
   - `TELEGRAM_TOKEN_ENCRYPTION_KEY` / `souz.telegram.tokenEncryptionKey`
   - `SOUZ_TELEGRAM_POLLING_MAX_CONCURRENCY` / `souz.telegram.pollingMaxConcurrency`
-- Storage mode:
-  - `SOUZ_STORAGE_MODE` / `souz.backend.storageMode`
-- Filesystem root:
-  - `SOUZ_BACKEND_DATA_DIR` / `souz.backend.dataDir`
 - Postgres:
   - `SOUZ_BACKEND_DB_HOST` / `souz.backend.db.host`
   - `SOUZ_BACKEND_DB_PORT` / `souz.backend.db.port`
@@ -92,7 +85,7 @@ backend/
     │   ├── options/      # Option models, repositories, services
     │   ├── security/     # Trusted proxy request identity
     │   ├── settings/     # User settings models, repositories, resolver, service
-    │   ├── storage/      # Memory/filesystem/postgres implementations
+    │   ├── storage/      # PostgreSQL repository implementations
     │   ├── telegram/     # Telegram bot binding models, API client, service, long-polling
     │   ├── toolcall/     # Tool-call audit models and repositories
     │   └── user/         # User repository abstraction

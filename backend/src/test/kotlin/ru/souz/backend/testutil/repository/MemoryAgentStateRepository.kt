@@ -1,4 +1,4 @@
-package ru.souz.backend.storage.memory
+package ru.souz.backend.testutil.repository
 
 import java.util.UUID
 import kotlinx.coroutines.sync.Mutex
