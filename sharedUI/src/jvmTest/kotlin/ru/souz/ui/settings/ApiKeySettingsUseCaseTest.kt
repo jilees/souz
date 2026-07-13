@@ -17,6 +17,7 @@ import ru.souz.ui.common.ApiKeyField
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class ApiKeySettingsUseCaseTest {
     private val dispatcher = StandardTestDispatcher()
@@ -60,6 +61,17 @@ class ApiKeySettingsUseCaseTest {
         verify(exactly = 1) { provider.aiTunnelKey }
         verify(exactly = 0) { provider.gigaChatKey }
         verify(exactly = 0) { provider.qwenChatKey }
+    }
+
+    @Test
+    fun `reveal fails when a configured key cannot be decrypted`() = runTest(dispatcher) {
+        val provider = mockk<SettingsProvider>(relaxed = true)
+        every { provider.aiTunnelKey } returns null
+
+        val result = ApiKeySettingsUseCase(provider, dispatcher)
+            .reveal(ApiKeyField.AI_TUNNEL)
+
+        assertTrue(result.isFailure)
     }
 
     @Test

@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -25,6 +26,7 @@ import ru.souz.agent.AgentFacade
 import ru.souz.agent.state.AgentContext
 import ru.souz.agent.state.AgentSettings
 import ru.souz.db.SettingsProvider
+import ru.souz.db.ProviderKeyPresence
 import ru.souz.db.SettingsProviderImpl.Companion.REGION_RU
 import ru.souz.llms.DEFAULT_MAX_TOKENS
 import ru.souz.llms.EmbeddingsModel
@@ -33,6 +35,7 @@ import ru.souz.llms.LLMModel
 import ru.souz.llms.LlmBuildProfile
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.VoiceRecognitionModel
+import ru.souz.llms.VoiceRecognitionProvider
 import ru.souz.llms.local.LocalEmbeddingProfiles
 import ru.souz.llms.local.LocalLlamaRuntime
 import ru.souz.llms.local.LocalModelProfiles
@@ -41,6 +44,7 @@ import ru.souz.llms.local.LocalProviderAvailability
 import ru.souz.service.telegram.TelegramAuthState
 import ru.souz.service.telegram.TelegramAuthStep
 import ru.souz.ui.common.usecases.ApiKeyAvailabilityUseCase
+import ru.souz.ui.common.ApiKeyField
 import ru.souz.ui.host.CalendarListProvider
 import ru.souz.ui.host.BackgroundIndexRefresher
 import ru.souz.ui.host.DesktopLocalModelUiHost
@@ -62,6 +66,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -85,7 +90,11 @@ class SettingsViewModelTest {
 
     @Test
     fun `init normalizes unavailable llm, embeddings, and voice models to available providers`() = runTest(dispatcher) {
-        val settingsProvider = mockk<SettingsProvider>(relaxed = true)
+        val settingsProvider = mockk<SettingsProvider>(
+            relaxed = true,
+            moreInterfaces = arrayOf(ProviderKeyPresence::class),
+        )
+        val keyPresence = settingsProvider as ProviderKeyPresence
         every { settingsProvider.regionProfile } returns REGION_RU
         every { settingsProvider.regionProfile = any() } just runs
         val localProviderAvailability = mockk<LocalProviderAvailability>(relaxed = true)
@@ -96,6 +105,17 @@ class SettingsViewModelTest {
         val apiKeyAvailabilityUseCase = ApiKeyAvailabilityUseCase(llmBuildProfile)
 
         val supportsSalute = llmBuildProfile.supportsSaluteSpeechRecognition
+        every { keyPresence.hasKey(any<LlmProvider>()) } answers {
+            firstArg<LlmProvider>() == LlmProvider.QWEN
+        }
+        every { keyPresence.hasKey(any<VoiceRecognitionProvider>()) } answers {
+            val provider = firstArg<VoiceRecognitionProvider>()
+            if (supportsSalute) {
+                provider == VoiceRecognitionProvider.SALUTE_SPEECH
+            } else {
+                provider == VoiceRecognitionProvider.OPENAI
+            }
+        }
         val configuredVoiceRecognitionModel = if (supportsSalute) {
             VoiceRecognitionModel.OpenAIGpt4oTranscribe
         } else {
@@ -181,7 +201,7 @@ class SettingsViewModelTest {
             bindSingleton<UiSpeechPlayer> { mockk(relaxed = true) }
         }
 
-        val viewModel = SettingsViewModel(di)
+        val viewModel = SettingsViewModel(di, secretDispatcher = dispatcher)
         advanceUntilIdle()
 
         val expectedLlmModel = settingsProvider.defaultLlmModel(llmBuildProfile)
@@ -203,9 +223,58 @@ class SettingsViewModelTest {
         assertEquals(expectedVoiceRecognitionModel, state.voiceRecognitionModel)
         assertEquals(expectedVoiceRecognitionModel, voiceRecognitionModelValue)
         assertEquals("prompt-for-${expectedLlmModel.alias}", state.systemPrompt)
+        assertIs<ApiKeyFieldState.StoredHidden>(state.apiKeyFields.getValue(ApiKeyField.QWEN_CHAT))
+
+        verify(exactly = 0) { settingsProvider.gigaChatKey }
+        verify(exactly = 0) { settingsProvider.qwenChatKey }
+        verify(exactly = 0) { settingsProvider.aiTunnelKey }
+        verify(exactly = 0) { settingsProvider.anthropicKey }
+        verify(exactly = 0) { settingsProvider.openaiKey }
+        verify(exactly = 0) { settingsProvider.saluteSpeechKey }
 
         verify(exactly = 1) { agentFacade.setModel(expectedLlmModel) }
         coVerify(exactly = 1) { desktopInfoRepository.rebuildIndexNow() }
+
+        viewModel.handleEvent(SettingsEvent.ToggleApiKeyVisibility(ApiKeyField.QWEN_CHAT))
+        advanceUntilIdle()
+
+        assertEquals(
+            ApiKeyFieldState.Editable(value = "qwen-key", revealed = true),
+            viewModel.uiState.value.apiKeyFields.getValue(ApiKeyField.QWEN_CHAT),
+        )
+        verify(exactly = 1) { settingsProvider.qwenChatKey }
+
+        viewModel.handleEvent(SettingsEvent.InputQwenChatKey("updated-qwen-key"))
+        advanceTimeBy(401)
+        advanceUntilIdle()
+
+        assertEquals(
+            ApiKeyFieldState.Editable(value = "updated-qwen-key", revealed = true),
+            viewModel.uiState.value.apiKeyFields.getValue(ApiKeyField.QWEN_CHAT),
+        )
+        verify(exactly = 1) { settingsProvider.qwenChatKey = "updated-qwen-key" }
+
+        viewModel.handleEvent(SettingsEvent.ToggleApiKeyVisibility(ApiKeyField.QWEN_CHAT))
+        advanceUntilIdle()
+        assertIs<ApiKeyFieldState.StoredHidden>(
+            viewModel.uiState.value.apiKeyFields.getValue(ApiKeyField.QWEN_CHAT),
+        )
+
+        every { settingsProvider.qwenChatKey } throws IllegalStateException("decrypt failed")
+        viewModel.handleEvent(SettingsEvent.ToggleApiKeyVisibility(ApiKeyField.QWEN_CHAT))
+        advanceUntilIdle()
+
+        assertIs<ApiKeyFieldState.RevealFailed>(
+            viewModel.uiState.value.apiKeyFields.getValue(ApiKeyField.QWEN_CHAT),
+        )
+        verify(exactly = 2) { settingsProvider.qwenChatKey }
+
+        viewModel.handleEvent(SettingsEvent.GoToMain)
+        advanceUntilIdle()
+
+        assertIs<ApiKeyFieldState.StoredHidden>(
+            viewModel.uiState.value.apiKeyFields.getValue(ApiKeyField.QWEN_CHAT),
+        )
     }
 
     @Test

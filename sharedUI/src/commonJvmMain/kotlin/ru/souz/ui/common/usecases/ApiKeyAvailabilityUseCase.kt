@@ -51,6 +51,9 @@ class ApiKeyAvailabilityUseCase(
         }
     }
 
+    fun configuredKeysCount(configuredFields: Set<ApiKeyField>): Int =
+        availableFields().count { it in configuredFields }
+
     fun hasAnyConfiguredKey(values: ApiKeyValues): Boolean = configuredKeysCount(values) > 0
 
     private fun availableFields(): Set<ApiKeyField> = buildSet {

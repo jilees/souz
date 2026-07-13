@@ -66,6 +66,8 @@ data class SettingsState(
     val anthropicKey: String = "",
     val openaiKey: String = "",
     val saluteSpeechKey: String = "",
+    val apiKeyFields: Map<ApiKeyField, ApiKeyFieldState> = emptyMap(),
+    val isClosing: Boolean = false,
     val codexConnected: Boolean = false,
     val codexOAuthState: CodexOAuthUiState = CodexOAuthUiState.Idle,
     val availableApiKeyFields: Set<ApiKeyField> = emptySet(),
@@ -144,6 +146,7 @@ sealed interface SettingsEvent : VMEvent {
     data class InputAnthropicKey(val key: String): SettingsEvent
     data class InputOpenAiKey(val key: String): SettingsEvent
     data class InputSaluteSpeechKey(val key: String): SettingsEvent
+    data class ToggleApiKeyVisibility(val field: ApiKeyField) : SettingsEvent
     object StartCodexOAuth : SettingsEvent
     object CancelCodexOAuth : SettingsEvent
     object DisconnectCodex : SettingsEvent

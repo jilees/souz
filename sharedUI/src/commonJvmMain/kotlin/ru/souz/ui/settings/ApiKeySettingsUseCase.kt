@@ -22,7 +22,7 @@ class ApiKeySettingsUseCase(
 
     suspend fun reveal(field: ApiKeyField): Result<String> = runCatching {
         withContext(dispatcher) {
-            when (field) {
+            val value = when (field) {
                 ApiKeyField.GIGA_CHAT -> settingsProvider.gigaChatKey
                 ApiKeyField.QWEN_CHAT -> settingsProvider.qwenChatKey
                 ApiKeyField.AI_TUNNEL -> settingsProvider.aiTunnelKey
@@ -30,7 +30,8 @@ class ApiKeySettingsUseCase(
                 ApiKeyField.OPENAI -> settingsProvider.openaiKey
                 ApiKeyField.SALUTE_SPEECH -> settingsProvider.saluteSpeechKey
                 ApiKeyField.CODEX -> throw UnsupportedOperationException("Codex credentials are OAuth-controlled")
-            }.orEmpty()
+            }
+            value ?: error("Configured API key could not be read")
         }
     }
 
