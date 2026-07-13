@@ -30,7 +30,7 @@ import ru.souz.backend.execution.model.AgentExecution
 import ru.souz.backend.execution.model.AgentExecutionStatus
 import ru.souz.backend.http.BackendV1Exception
 import ru.souz.backend.settings.service.UserSettingsOverrides
-import ru.souz.backend.storage.memory.MemoryTelegramBotBindingRepository
+import ru.souz.backend.testutil.repository.MemoryTelegramBotBindingRepository
 
 class TelegramBotPollingServiceTest {
     @Test

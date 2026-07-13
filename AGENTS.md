@@ -101,7 +101,7 @@ flowchart LR
 
 - Backend host adapters intentionally replace desktop-only SPI pieces with no-op implementations while keeping the same graph execution kernel.
 - `/v1/**` trusts user identity only from proxy-managed headers and never from request bodies.
-- Storage mode now supports `memory`, `filesystem`, and `postgres`; `memory` keeps bounded in-process snapshots (10_000 entities per repository) to reduce accidental OOM risk and now includes a lightweight `UserRepository`, `filesystem` persists `data/users/{encodedUserId}/user.json` plus per-user settings/chat product/runtime data under `SOUZ_BACKEND_DATA_DIR` / `souz.backend.dataDir` (default `data/` relative to the backend process working directory) with a stable URL-safe encoded user path segment instead of the raw opaque `userId`, while `postgres` uses JDBC + HikariCP + Flyway migrations with explicit `SOUZ_BACKEND_DB_*` / `souz.backend.db.*` settings (`host`, `port`, `name`, `user`, `password`, `schema`, `maxPoolSize`, `connectionTimeoutMs`) and defaults of `127.0.0.1`, `5432`, `souz`, `souz`, `public`, `10`, and `30000`.
+- PostgreSQL is the backend's only structured-data store. It uses JDBC + HikariCP + Flyway with explicit `SOUZ_BACKEND_DB_*` / `souz.backend.db.*` settings (`host`, `port`, `name`, `user`, `password`, `schema`, `maxPoolSize`, `connectionTimeoutMs`) and defaults of `127.0.0.1`, `5432`, `souz`, `souz`, `public`, `10`, and `30000`. Backend user-scoped skill bundles and runtime sandbox workspaces remain filesystem-backed independently of database persistence.
 
 ## Builds
 

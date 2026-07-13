@@ -12,7 +12,7 @@ The project is designed around one core idea: an AI agent should be useful enoug
 - **GraphBasedAgent** powered by an explicit graph runtime with classification, MCP tool injection, prompt enrichment, LLM execution, tool loops, summarization, retries, tracing, and cancellation.
 - **Shared runtime layer** used by desktop and backend for LLM clients, settings/config, sandbox-aware filesystem access, and backend-safe tools, plus an Android-safe LLM runtime surface for the Android chat-agent host.
 - **Sandbox abstraction** for filesystem and command execution, with local mode by default and opt-in Docker-backed execution.
-- **HTTP backend** with trusted-proxy auth, per-user settings/provider keys, chat lifecycle, message execution, Telegram bot chat bindings, cancellation, option continuation, event replay, WebSocket streaming, and memory/filesystem/Postgres storage.
+- **HTTP backend** with trusted-proxy auth, per-user settings/provider keys, chat lifecycle, message execution, Telegram bot chat bindings, cancellation, option continuation, event replay, WebSocket streaming, and PostgreSQL persistence.
 - **Rich desktop tool catalog** for files, browser, web search/research, config, notes, applications, data analytics, calendar, mail, text replacement, Telegram, desktop capture, presentations, and calculator.
 - **SafeMode confirmations** for tool permission prompts, destructive Telegram operations, ambiguous contact/chat selection, and deferred file-modification review.
 - **Multi-provider LLM support** for GigaChat, Qwen, AiTunnel, Anthropic Claude, OpenAI, and local llama.cpp models.
@@ -289,7 +289,7 @@ Confirmation-related flows:
 | Route | Purpose |
 |---|---|
 | `GET /health` | Process and selected-model status |
-| `GET /v1/bootstrap` | Features, storage mode, visible models/tools, effective trusted-user settings |
+| `GET /v1/bootstrap` | Features, visible models/tools, effective trusted-user settings |
 | `GET /v1/me/settings` | Read public user settings |
 | `PATCH /v1/me/settings` | Persist public user settings |
 | `GET /v1/me/provider-keys` | List configured provider-key state |
@@ -322,16 +322,11 @@ Confirmation-related flows:
 - Backend host adapters replace desktop-only services with no-op implementations.
 - The backend uses the same shared agent execution kernel as desktop.
 
-### Storage modes
+### Backend storage
 
-| Mode | Description |
-|---|---|
-| `memory` | Bounded in-process repositories, useful for local/dev execution |
-| `filesystem` | Per-user files under `SOUZ_BACKEND_DATA_DIR` / `souz.backend.dataDir` |
-| `postgres` | JDBC + HikariCP + Flyway-backed durable storage |
-
-Postgres storage supports durable event replay, per-chat message/event sequence numbers, one active execution per chat, optimistic locking for `agent_conversation_state`, and durable tool-call audit rows.
-Telegram bot bindings are available in all backend storage modes. Bot tokens are encrypted at rest via `TELEGRAM_TOKEN_ENCRYPTION_KEY`, pending links use one-time `/start <secret>` commands with only the secret hash stored server-side, and binding setup drops pending Telegram updates before long polling starts.
+PostgreSQL is the backend's only structured-data store. JDBC, HikariCP, and Flyway provide durable event replay, per-chat message/event sequence numbers, one active execution per chat, optimistic locking for `agent_conversation_state`, and durable tool-call audit rows.
+Telegram bot tokens are encrypted at rest via `TELEGRAM_TOKEN_ENCRYPTION_KEY`, pending links use one-time `/start <secret>` commands with only the secret hash stored server-side, and binding setup drops pending Telegram updates before long polling starts.
+Skill bundles and runtime sandbox workspaces remain filesystem-backed and are independent from backend database persistence.
 
 ### Backend configuration
 
@@ -345,12 +340,6 @@ SOUZ_FEATURE_WS_EVENTS=true
 SOUZ_FEATURE_STREAMING_MESSAGES=true
 SOUZ_FEATURE_TOOL_EVENTS=true
 SOUZ_FEATURE_OPTIONS=true
-SOUZ_FEATURE_DURABLE_EVENT_REPLAY=false
-
-# Storage
-SOUZ_STORAGE_MODE=filesystem
-SOUZ_BACKEND_DATA_DIR=data
-
 # Postgres
 SOUZ_BACKEND_DB_HOST=127.0.0.1
 SOUZ_BACKEND_DB_PORT=5432

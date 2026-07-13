@@ -32,7 +32,7 @@ import ru.souz.backend.telegram.TelegramUpdate
 import ru.souz.backend.telegram.TelegramUpdatesResponse
 import ru.souz.backend.telegram.TelegramUser
 import ru.souz.backend.telegram.sha256Hex
-import ru.souz.backend.storage.memory.MemoryTelegramBotBindingRepository
+import ru.souz.backend.testutil.repository.MemoryTelegramBotBindingRepository
 
 class BackendTelegramRouteTest {
     private val json = jacksonObjectMapper()

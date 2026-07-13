@@ -1,6 +1,5 @@
 package ru.souz.backend.storage.postgres
 
-import java.nio.file.Files
 import java.util.UUID
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.testcontainers.DockerClientFactory
@@ -8,7 +7,6 @@ import org.testcontainers.containers.PostgreSQLContainer
 import ru.souz.backend.app.BackendAppConfig
 import ru.souz.backend.app.BackendPostgresConfig
 import ru.souz.backend.config.BackendFeatureFlags
-import ru.souz.backend.storage.StorageMode
 
 internal object SharedPostgresContainer {
     val instance: PostgreSQLContainer<Nothing> by lazy {
@@ -26,7 +24,6 @@ internal fun newPostgresSchema(prefix: String): String =
 
 internal fun postgresAppConfig(
     schema: String,
-    durableEventReplay: Boolean = true,
 ): BackendAppConfig {
     assumeTrue(
         runCatching { DockerClientFactory.instance().isDockerAvailable() }.getOrDefault(false),
@@ -34,12 +31,8 @@ internal fun postgresAppConfig(
     )
     val container = SharedPostgresContainer.instance
     return BackendAppConfig(
-        featureFlags = BackendFeatureFlags(
-            durableEventReplay = durableEventReplay,
-        ),
-        storageMode = StorageMode.POSTGRES,
+        featureFlags = BackendFeatureFlags(),
         proxyToken = null,
-        dataDir = Files.createTempDirectory("backend-postgres-config"),
         masterKey = "test-master-key",
         postgres = BackendPostgresConfig(
             host = container.host,

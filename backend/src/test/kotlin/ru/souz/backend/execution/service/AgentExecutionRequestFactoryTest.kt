@@ -23,8 +23,8 @@ import ru.souz.backend.options.model.OptionKind
 import ru.souz.backend.options.model.OptionStatus
 import ru.souz.backend.settings.service.EffectiveSettingsResolver
 import ru.souz.backend.settings.service.UserSettingsOverrides
-import ru.souz.backend.storage.memory.MemoryUserProviderKeyRepository
-import ru.souz.backend.storage.memory.MemoryUserSettingsRepository
+import ru.souz.backend.testutil.repository.MemoryUserProviderKeyRepository
+import ru.souz.backend.testutil.repository.MemoryUserSettingsRepository
 import ru.souz.llms.LLMModel
 import ru.souz.llms.LocalModelAvailability
 import ru.souz.llms.restJsonMapper
