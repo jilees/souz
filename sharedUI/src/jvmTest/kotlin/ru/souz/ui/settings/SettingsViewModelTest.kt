@@ -66,6 +66,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -275,6 +276,7 @@ class SettingsViewModelTest {
         assertIs<ApiKeyFieldState.StoredHidden>(
             viewModel.uiState.value.apiKeyFields.getValue(ApiKeyField.QWEN_CHAT),
         )
+        assertFalse(viewModel.uiState.value.isClosing)
     }
 
     @Test

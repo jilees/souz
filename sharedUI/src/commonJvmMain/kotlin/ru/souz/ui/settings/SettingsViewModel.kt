@@ -358,8 +358,12 @@ class SettingsViewModel(
                         isClosing = true,
                     )
                 }
-                flushPendingTextSettingSaves()
-                flushPendingKeySaves()
+                try {
+                    flushPendingTextSettingSaves()
+                    flushPendingKeySaves()
+                } finally {
+                    setState { copy(isClosing = false) }
+                }
                 send(SettingsEffect.CloseScreen)
             }
             is SelectDefaultCalendar -> {

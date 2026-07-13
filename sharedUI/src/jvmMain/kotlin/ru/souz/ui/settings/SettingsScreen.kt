@@ -155,14 +155,6 @@ fun SettingsScreen(
                 )
             }
         }
-        if (state.isClosing) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(28.dp),
-                strokeWidth = 2.dp,
-            )
-        }
     }
 }
 
