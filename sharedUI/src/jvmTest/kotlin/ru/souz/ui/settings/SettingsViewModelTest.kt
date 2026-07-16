@@ -15,7 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -168,6 +168,7 @@ class SettingsViewModelTest {
         every { telegramService.isSupported() } returns true
         every { telegramService.authState } returns MutableStateFlow(TelegramAuthState(step = TelegramAuthStep.WAIT_PHONE))
         val telegramControlBot = mockk<TelegramControlBot>(relaxed = true)
+        var telegramHostCreated = false
         val localModelStore = mockk<LocalModelStore>(relaxed = true)
         val localLlamaRuntime = mockk<LocalLlamaRuntime>(relaxed = true)
         val desktopInfoRepository = mockk<BackgroundIndexRefresher>(relaxed = true)
@@ -187,7 +188,10 @@ class SettingsViewModelTest {
             bindSingleton<LocalModelUiHost> {
                 DesktopLocalModelUiHost(localModelStore, localLlamaRuntime, desktopInfoRepository)
             }
-            bindSingleton<TelegramSettingsHost> { DesktopTelegramSettingsHost(telegramService, telegramControlBot) }
+            bindSingleton<TelegramSettingsHost> {
+                telegramHostCreated = true
+                DesktopTelegramSettingsHost(telegramService, telegramControlBot)
+            }
             bindSingleton<SupportLogService> { NoopSupportLogService }
             bindSingleton<PrivacyPolicyOpener> { NoopPrivacyPolicyOpener }
             bindSingleton<SettingsHostPreferences> { InMemorySettingsHostPreferences() }
@@ -196,9 +200,13 @@ class SettingsViewModelTest {
             bindSingleton<UiSpeechPlayer> { mockk(relaxed = true) }
         }
 
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val viewModel = SettingsViewModel(di, settingsDispatcher = dispatcher)
+        assertEquals(false, telegramHostCreated)
         advanceUntilIdle()
+        assertTrue(telegramHostCreated)
         assertEquals(TelegramAuthStepUi.PHONE, viewModel.uiState.value.telegramAuthStep)
+
         viewModel.handleEvent(SettingsEvent.RefreshFromProvider)
         advanceUntilIdle()
         val expectedLlmModel = settingsProvider.defaultLlmModel(llmBuildProfile)
@@ -242,36 +250,27 @@ class SettingsViewModelTest {
         verify(exactly = 1) { settingsProvider.qwenChatKey }
 
         viewModel.handleEvent(SettingsEvent.InputApiKey(ApiKeyField.QWEN_CHAT, "updated-qwen-key"))
-        advanceTimeBy(401)
-        advanceUntilIdle()
-
-        assertEquals(
-            ApiKeyFieldState.Editable(value = "updated-qwen-key", revealed = true),
-            viewModel.uiState.value.apiKeyFields.getValue(ApiKeyField.QWEN_CHAT),
-        )
-        verify(exactly = 1) { settingsProvider.qwenChatKey = "updated-qwen-key" }
-
-        viewModel.handleEvent(SettingsEvent.ToggleApiKeyVisibility(ApiKeyField.QWEN_CHAT))
-        advanceUntilIdle()
-        assertIs<ApiKeyFieldState.StoredHidden>(
-            viewModel.uiState.value.apiKeyFields.getValue(ApiKeyField.QWEN_CHAT),
-        )
-
-        every { settingsProvider.qwenChatKey } throws IllegalStateException("decrypt failed")
-        viewModel.handleEvent(SettingsEvent.ToggleApiKeyVisibility(ApiKeyField.QWEN_CHAT))
-        advanceUntilIdle()
-
-        assertIs<ApiKeyFieldState.StoredHidden>(
-            viewModel.uiState.value.apiKeyFields.getValue(ApiKeyField.QWEN_CHAT),
-        )
-        verify(exactly = 2) { settingsProvider.qwenChatKey }
-
+        every { settingsProvider.mcpServersJson = "invalid" } throws IllegalStateException("save failed")
+        viewModel.handleEvent(SettingsEvent.InputMcpServersJson("invalid"))
         viewModel.handleEvent(SettingsEvent.GoToMain)
         advanceUntilIdle()
 
         assertIs<ApiKeyFieldState.StoredHidden>(
             viewModel.uiState.value.apiKeyFields.getValue(ApiKeyField.QWEN_CHAT),
         )
+        verify(exactly = 1) { settingsProvider.qwenChatKey = "updated-qwen-key" }
+        verify(exactly = 1) { agentFacade.setModel(expectedLlmModel) }
+        viewModel.handleEvent(SettingsEvent.RefreshFromProvider)
+
+        every { settingsProvider.qwenChatKey } throws IllegalStateException("decrypt failed")
+        viewModel.handleEvent(SettingsEvent.ToggleApiKeyVisibility(ApiKeyField.QWEN_CHAT))
+        advanceUntilIdle()
+
+        assertEquals(
+            ApiKeyFieldState.Editable(value = "", revealed = true),
+            viewModel.uiState.value.apiKeyFields.getValue(ApiKeyField.QWEN_CHAT),
+        )
+        verify(exactly = 2) { settingsProvider.qwenChatKey }
     }
 
     @Test

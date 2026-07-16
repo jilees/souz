@@ -74,20 +74,16 @@ class SettingsViewModel(
 
     init {
         viewModelScope.launch(settingsDispatcher) {
-            val isSupported = telegramSettingsHost.isSupported()
-            val isBotActive = telegramSettingsHost.isControlBotActive()
-            withContext(Dispatchers.Main) {
-                setState {
-                    copy(
-                        isTelegramSupported = isSupported,
-                        isTelegramBotActive = isBotActive,
-                    )
-                }
+            val host = telegramSettingsHost
+            val isSupported = host.isSupported()
+            val isBotActive = host.isControlBotActive()
+            setState {
+                copy(
+                    isTelegramSupported = isSupported,
+                    isTelegramBotActive = isBotActive,
+                )
             }
-        }
-
-        viewModelScope.launch {
-            telegramSettingsHost.authState.collectLatest { auth ->
+            host.authState.collectLatest { auth ->
                 setState {
                     copy(
                         telegramAuthStep = when (auth.step) {
@@ -686,22 +682,13 @@ class SettingsViewModel(
         val draftsToPersist = pendingKeyDrafts.toMap()
         if (draftsToPersist.isEmpty()) return
 
-        val persistedFields = draftsToPersist
+        draftsToPersist
             .filter { (field, value) -> persistApiKey(field, value) }
-
-        persistedFields.forEach { (field, value) ->
-            if (pendingKeyDrafts[field] == value) {
-                pendingKeyDrafts.remove(field)
+            .forEach { (field, value) ->
+                if (pendingKeyDrafts[field] == value) {
+                    pendingKeyDrafts.remove(field)
+                }
             }
-        }
-
-        if (persistedFields.keys.any { it.requiresRefreshAfterSave }) {
-            flushPendingSystemPromptSave()
-            refreshFromProvider()
-        }
-        if (persistedFields.keys.any { it.requiresBalanceRefreshAfterSave }) {
-            fetchBalance()
-        }
     }
 
     private suspend fun toggleApiKeyVisibility(field: ApiKeyField) {
@@ -733,7 +720,7 @@ class SettingsViewModel(
             throw error
         } catch (error: Throwable) {
             l.warn("Failed to reveal API key for {}", field, error)
-            updateApiKeyField(field, ApiKeyFieldState.StoredHidden)
+            updateApiKeyField(field, ApiKeyFieldState.Editable("", revealed = true))
             send(SettingsEffect.ShowSnackbar(getString(Res.string.error_failed_reveal_api_key)))
         }
     }
@@ -792,8 +779,8 @@ class SettingsViewModel(
 
     private suspend fun leaveSettings(effect: SettingsEffect) {
         setState { copy(apiKeyFields = apiKeyFields.mapValues { (_, state) -> state.concealed() }) }
-        flushPendingTextSettingSaves()
         flushPendingKeySaves()
+        flushPendingTextSettingSaves()
         send(effect)
     }
 
@@ -862,7 +849,12 @@ class SettingsViewModel(
         jobs.forEach { it.cancelAndJoin() }
 
         val fieldsToPersist = pendingTextSettingDrafts.keys.toList()
-        fieldsToPersist.forEach { field -> persistDeferredTextSettingSave(field) }
+        fieldsToPersist.forEach { field ->
+            runCatching { persistDeferredTextSettingSave(field) }.onFailure { error ->
+                if (error is CancellationException) throw error
+                l.warn("Failed to save $field", error)
+            }
+        }
     }
 
     private suspend fun flushPendingSystemPromptSave() {
