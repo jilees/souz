@@ -20,6 +20,7 @@ import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 import java.util.prefs.Preferences
 
@@ -154,11 +155,19 @@ internal object SecretPrefsCodec {
         return AesGcmSecretCodec.encrypt(masterKey = masterSecret, plainText = plainText)
     }
 
-    private fun decrypt(payload: String): String {
-        val masterSecret = masterSecret()
-            ?: throw IllegalStateException("Missing $ENV_MASTER_KEY (env/sysprop) for secret decryption")
-        return AesGcmSecretCodec.decrypt(masterKey = masterSecret, payload = payload)
-    }
+    // PBKDF2 key derivation (AesGcmSecretCodec.PBKDF2_ITERATIONS) costs over a second per
+    // call by design. Each encrypted payload carries its own random salt, so it decrypts to
+    // the same plaintext every time; memoize by the exact ciphertext string instead of paying
+    // that cost on every read (e.g. CodexOAuthService.refreshTokenIfNeeded on every LLM call).
+    // A write produces a fresh salt/payload, so stale entries just go unused, no invalidation needed.
+    private val decryptedValueCache = ConcurrentHashMap<String, String>()
+
+    private fun decrypt(payload: String): String =
+        decryptedValueCache.computeIfAbsent(payload) {
+            val masterSecret = masterSecret()
+                ?: throw IllegalStateException("Missing $ENV_MASTER_KEY (env/sysprop) for secret decryption")
+            AesGcmSecretCodec.decrypt(masterKey = masterSecret, payload = payload)
+        }
 
     private fun masterSecret(): String? =
         System.getenv(ENV_MASTER_KEY)
