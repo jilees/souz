@@ -134,7 +134,7 @@ class SaluteWebhookService(
             turnExecutor.execute(
                 userId = binding.userId,
                 chatId = binding.chatId,
-                content = text,
+                content = "$text$VOICE_INSTRUCTION",
                 clientMessageId = "salute:${binding.id}:$messageId",
                 requestOverrides = UserSettingsOverrides(streamingMessages = false),
             )
@@ -201,6 +201,14 @@ class SaluteWebhookService(
         const val NOT_CONNECTED_MESSAGE = "Устройство не подключено. Попробуйте позже."
         const val SESSION_ENDED_MESSAGE = "Сеанс завершён."
         const val FALLBACK_REPLY = "Готово."
+        // Appended to every user turn sent to the agent — mirrors picoclaw's Go client
+        // (`sberboom.go` voiceInstruction), which did the same thing client-side. There's
+        // no separate "instruction not shown in history" channel in AgentExecutionService
+        // today, so this ends up persisted as part of the user message too, same trade-off
+        // the original made.
+        const val VOICE_INSTRUCTION = "\n\n(Голосовой канал: ответь 1-3 короткими " +
+            "предложениями разговорным языком, без markdown, списков и эмодзи — текст " +
+            "будет озвучен вслух.)"
         val THINKING_PHRASES = listOf(
             "Секунду...",
             "Сейчас посмотрю.",

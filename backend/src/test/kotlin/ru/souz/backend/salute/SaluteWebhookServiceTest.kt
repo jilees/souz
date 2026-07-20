@@ -88,7 +88,8 @@ class SaluteWebhookServiceTest {
         assertEquals(1, executor.calls.size)
         val call = executor.calls.single()
         assertEquals(DEFAULT_USER_ID, call.userId)
-        assertEquals("what's up", call.content)
+        assertTrue(call.content.startsWith("what's up"), "content should start with the transcribed text")
+        assertTrue(call.content.contains("Голосовой канал"), "content should carry the voice-style instruction")
         assertEquals(UserSettingsOverrides(streamingMessages = false), call.requestOverrides)
 
         val binding = bindingRepository.getByDeviceId("device-1")
