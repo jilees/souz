@@ -1,0 +1,34 @@
+# System-wide systemd unit for the Souz backend. Runs as root, alongside the
+# other services already on this VPS — no dedicated OS account for now, which
+# means the sandbox's LOCAL tool execution (shell/file access for agent
+# tools) also runs as root. Revisit with a dedicated user + systemd
+# hardening (User=, ProtectSystem=) if that risk becomes a concern later.
+#
+# Test instance: no release history, no rollback — /opt/souz-backend/app is
+# overwritten in place on every deploy.
+#
+# One-time install (as root), before the first CD run:
+#   mkdir -p /opt/souz-backend/app /opt/souz-backend/config
+#   cp backend.env.example /opt/souz-backend/config/backend.env  # fill in and chmod 600
+#   cp souz-backend.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable souz-backend   # don't start yet — app/ is still empty
+#
+# The first deploy-backend workflow run then populates app/ and starts it.
+
+[Unit]
+Description=Souz backend
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/souz-backend/config/backend.env
+WorkingDirectory=/opt/souz-backend/app
+ExecStart=/opt/souz-backend/app/bin/backend
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

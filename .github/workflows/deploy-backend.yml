@@ -1,0 +1,70 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'agent/**'
+      - 'graph-engine/**'
+      - 'llms/**'
+      - 'sharedLogic/**'
+      - 'native/**'
+      - 'gradle/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 21
+          cache: gradle
+
+      - name: Test
+        run: ./gradlew :backend:test --console=plain --stacktrace --no-parallel
+
+      - name: Build distribution
+        run: ./gradlew :backend:installDist --console=plain --stacktrace --no-parallel
+
+      - name: Install sshpass
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Pin VPS host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      # The VPS accepts root password auth only (no SSH key deployed there).
+      # sshpass -e reads the password from $SSHPASS instead of argv, so it
+      # never shows up in `ps` output or command logs.
+      #
+      # Test instance: no release history, no rollback. Each deploy overwrites
+      # /opt/souz-backend/app in place (--delete removes files from a previous
+      # build that no longer exist, e.g. after a dependency bump).
+      - name: Upload build and restart
+        env:
+          SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
+        run: |
+          sshpass -e rsync -az --delete \
+            -e "ssh -o UserKnownHostsFile=~/.ssh/known_hosts" \
+            backend/build/install/backend/ \
+            "root@${{ secrets.VPS_HOST }}:/opt/souz-backend/app/"
+          sshpass -e ssh -o UserKnownHostsFile=~/.ssh/known_hosts "root@${{ secrets.VPS_HOST }}" '
+            set -e
+            systemctl restart souz-backend
+            sleep 3
+            systemctl is-active souz-backend
+            curl -fsS http://127.0.0.1:8080/health
+          '
