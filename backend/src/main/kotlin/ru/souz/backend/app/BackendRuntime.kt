@@ -70,7 +70,9 @@ class BackendRuntime private constructor(
                     )
                 )
             }
-            seedCodexCredentialsFromEnv(di.direct.instance())
+            val settingsProvider = di.direct.instance<SettingsProvider>()
+            seedCodexCredentialsFromEnv(settingsProvider)
+            applyRegionProfileFromEnv(settingsProvider)
             return BackendRuntime(di = di)
         }
 
@@ -101,5 +103,19 @@ class BackendRuntime private constructor(
 
         private fun configValue(envKey: String, propertyKey: String): String? =
             System.getenv(envKey) ?: System.getProperty(propertyKey)
+
+        /**
+         * Deployment-wide region/edition choice (RU vs EN provider defaults and
+         * priorities, see LlmBuildProfile). Requests without an explicit locale
+         * (e.g. Telegram-originated turns) fall back to this. Always applied from
+         * env on boot, unlike the Codex seed, since it's a deployment setting rather
+         * than runtime-refreshed credential state.
+         */
+        private fun applyRegionProfileFromEnv(settingsProvider: SettingsProvider) {
+            val region = configValue("SOUZ_BACKEND_REGION_PROFILE", "souz.backend.regionProfile")
+                ?.trim()?.takeIf { it.isNotEmpty() } ?: return
+            settingsProvider.regionProfile = region
+            log.info("Backend region profile set to '{}' from environment.", settingsProvider.regionProfile)
+        }
     }
 }
