@@ -90,15 +90,22 @@ private class RoutingLlmChatApi(
         apis[provider]?.let { return it }
         return mutex.withLock {
             apis[provider]?.let { return@withLock it }
-            val credential = credentialResolver.resolve(context.userId, provider)
-                ?: error("Missing configured credential for provider $provider.")
-            providerClientFactory.build(
-                provider = provider,
-                settingsProvider = CredentialOverrideSettingsProvider(
+            // Codex is OAuth-authenticated (device flow, token refresh), not a static
+            // per-provider API key, so it has no ResolvedProviderCredential to resolve.
+            val settingsProvider = if (provider == LlmProvider.CODEX) {
+                context.settingsProvider
+            } else {
+                val credential = credentialResolver.resolve(context.userId, provider)
+                    ?: error("Missing configured credential for provider $provider.")
+                CredentialOverrideSettingsProvider(
                     delegate = context.settingsProvider,
                     overrideProvider = provider,
                     apiKey = credential.apiKey,
-                ),
+                )
+            }
+            providerClientFactory.build(
+                provider = provider,
+                settingsProvider = settingsProvider,
                 sharedTransport = transports.getValue(provider),
                 executionContext = context,
             ).also { api ->

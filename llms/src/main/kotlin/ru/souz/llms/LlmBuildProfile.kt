@@ -52,7 +52,7 @@ class LlmBuildProfile(
                 LlmProvider.LOCAL to LLMModel.LocalQwen3_4B_Instruct_2507,
             ),
             BuildEdition.EN to mapOf(
-                LlmProvider.CODEX to LLMModel.CodexGpt54,
+                LlmProvider.CODEX to LLMModel.CodexGpt55,
                 LlmProvider.OPENAI to LLMModel.OpenAIGpt5Nano,
                 LlmProvider.QWEN to LLMModel.QwenMax,
                 LlmProvider.ANTHROPIC to LLMModel.AnthropicHaiku45,

@@ -3,6 +3,7 @@ package ru.souz.backend.app
 import org.kodein.di.DI
 import org.kodein.di.direct
 import org.kodein.di.instance
+import org.slf4j.LoggerFactory
 import ru.souz.backend.bootstrap.BackendBootstrapService
 import ru.souz.backend.chat.service.ChatService
 import ru.souz.backend.chat.service.MessageService
@@ -18,6 +19,8 @@ import ru.souz.backend.telegram.TelegramBotPollingService
 import ru.souz.backend.user.repository.UserRepository
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.local.LocalLlamaRuntime
+
+private val log = LoggerFactory.getLogger("SouzBackendRuntime")
 
 /** Process-wide backend runtime container with shared services and LLM resources. */
 class BackendRuntime private constructor(
@@ -67,6 +70,7 @@ class BackendRuntime private constructor(
                     )
                 )
             }
+            seedCodexCredentialsFromEnv(di.direct.instance())
             return BackendRuntime(di = di)
         }
 
@@ -74,5 +78,28 @@ class BackendRuntime private constructor(
             System.getenv("SOUZ_BACKEND_SYSTEM_PROMPT")
                 ?: System.getProperty("souz.backend.systemPrompt")
                 ?: "You are Souz AI backend assistant. Answer directly and concisely in the user's language."
+
+        /**
+         * One-time import path for Codex OAuth credentials obtained elsewhere (the
+         * device-code flow itself is desktop-UI-only and not exposed by the backend).
+         * Only seeds when ConfigStore doesn't already hold a token, so a later refresh
+         * persisted by CodexOAuthService is never clobbered by a stale env value on restart.
+         */
+        private fun seedCodexCredentialsFromEnv(settingsProvider: SettingsProvider) {
+            if (!settingsProvider.codexAccessToken.isNullOrBlank()) return
+            val accessToken = configValue("SOUZ_BACKEND_CODEX_ACCESS_TOKEN", "souz.backend.codex.accessToken")
+                ?.trim()?.takeIf { it.isNotEmpty() } ?: return
+            settingsProvider.codexAccessToken = accessToken
+            settingsProvider.codexRefreshToken =
+                configValue("SOUZ_BACKEND_CODEX_REFRESH_TOKEN", "souz.backend.codex.refreshToken")
+            settingsProvider.codexAccountId =
+                configValue("SOUZ_BACKEND_CODEX_ACCOUNT_ID", "souz.backend.codex.accountId")
+            settingsProvider.codexExpiresAt =
+                configValue("SOUZ_BACKEND_CODEX_EXPIRES_AT", "souz.backend.codex.expiresAt")?.toLongOrNull()
+            log.info("Seeded Codex credentials from environment on first boot.")
+        }
+
+        private fun configValue(envKey: String, propertyKey: String): String? =
+            System.getenv(envKey) ?: System.getProperty(propertyKey)
     }
 }

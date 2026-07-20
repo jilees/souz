@@ -153,6 +153,8 @@ fun backendDiModule(
         RuntimeProviderChatApiBuilder(
             tokenLogging = instance(),
             retryPolicy = appConfig.providerRetryPolicy,
+            // Already bound by the imported runtimeLlmDiModule (shared with desktop).
+            codexOAuthService = instance(),
         )
     }
     bindSingleton<LlmClientFactory> {
