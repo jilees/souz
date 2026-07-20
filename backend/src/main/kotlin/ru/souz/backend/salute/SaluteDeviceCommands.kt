@@ -10,17 +10,22 @@ object SaluteDeviceCommands {
     private const val STAR_JSON = "/vendor/staros/star.json"
     private const val REQUEST_ID = "souz-backend"
 
+    // Deployed alongside the souz-thin-client binary (souz-thin-client/hooks/, pushed by its
+    // deploy.sh) — a triangular 12-step scarlet pulse over the standard Linux LED sysfs class,
+    // ported from souz-agent's own SOUZ_HOOK_TURN_START/END hooks (themselves recolored from
+    // picoclaw's original coral pulse) so both products render the same "thinking" animation.
+    // Kept as standalone files rather than an inline `sh -c` string — no dependency on
+    // souz-agent being deployed on the same device, and the animation is easy to read/tweak
+    // on its own.
+    private const val LED_TURN_START_SCRIPT = "/data/souz-thin-client/hooks/led-turn-start.sh"
+    private const val LED_TURN_END_SCRIPT = "/data/souz-thin-client/hooks/led-turn-end.sh"
+
     fun speak(text: String): List<String> =
         listOf(BOX_BINARY, "--app", "client", "-f", STAR_JSON, "-v", "1", buildStarTtsProto(text))
 
-    /**
-     * Waiting-indicator (LED) control — the exact local mechanism (another `box` command vs. a
-     * sysfs/GPIO write) needs to be confirmed against a physical device. Returns null until then;
-     * callers must treat null as "skip, no indicator support yet" rather than fail the turn.
-     */
-    fun waitingIndicatorOn(): List<String>? = null
+    fun waitingIndicatorOn(): List<String> = listOf(LED_TURN_START_SCRIPT)
 
-    fun waitingIndicatorOff(): List<String>? = null
+    fun waitingIndicatorOff(): List<String> = listOf(LED_TURN_END_SCRIPT)
 
     private fun buildStarTtsProto(text: String): String {
         val escaped = text.replace("\\", "\\\\").replace("\"", "\\\"")

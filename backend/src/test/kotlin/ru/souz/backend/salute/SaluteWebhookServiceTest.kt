@@ -96,9 +96,9 @@ class SaluteWebhookServiceTest {
         assertNotNull(binding)
         assertEquals(call.chatId, binding.chatId)
 
-        // Thinking-phrase speak, then the final answer speak — both delivered as generic `exec`
-        // pushes, never a bespoke "message" type.
-        assertEquals(2, pusher.execCalls.size)
+        // LED on, thinking-phrase speak, LED off, final answer speak — all delivered as
+        // generic `exec` pushes, never a bespoke "message" type.
+        assertEquals(4, pusher.execCalls.size)
         assertTrue(pusher.execCalls.all { it.message.type == SaluteDeviceMessageType.EXEC })
         val finalSpeak = pusher.execCalls.last().message
         assertTrue(finalSpeak.argv.orEmpty().last().contains("Ответ агента."))

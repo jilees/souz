@@ -125,9 +125,7 @@ class SaluteWebhookService(
             return
         }
 
-        SaluteDeviceCommands.waitingIndicatorOn()?.let { argv ->
-            connectionRegistry.sendExec(deviceId, execMessage(argv))
-        }
+        connectionRegistry.sendExec(deviceId, execMessage(SaluteDeviceCommands.waitingIndicatorOn()))
         connectionRegistry.sendExec(deviceId, execMessage(SaluteDeviceCommands.speak(randomThinkingPhrase())))
 
         val result = try {
@@ -145,9 +143,7 @@ class SaluteWebhookService(
             null
         }
 
-        SaluteDeviceCommands.waitingIndicatorOff()?.let { argv ->
-            connectionRegistry.sendExec(deviceId, execMessage(argv))
-        }
+        connectionRegistry.sendExec(deviceId, execMessage(SaluteDeviceCommands.waitingIndicatorOff()))
         val answer = result?.assistantMessage?.content?.trim()?.takeIf { it.isNotEmpty() } ?: FALLBACK_REPLY
         connectionRegistry.sendExec(deviceId, execMessage(SaluteDeviceCommands.speak(answer)))
     }
@@ -209,10 +205,18 @@ class SaluteWebhookService(
         const val VOICE_INSTRUCTION = "\n\n(Голосовой канал: ответь 1-3 короткими " +
             "предложениями разговорным языком, без markdown, списков и эмодзи — текст " +
             "будет озвучен вслух.)"
+        // Ported verbatim from picoclaw's Go client (pkg/channels/sberboom/sberboom.go
+        // thinkingPhrases) — gender-neutral Russian phrasing that reads naturally aloud.
         val THINKING_PHRASES = listOf(
+            "Минуту...",
+            "Одну минуту...",
+            "Минуточку...",
             "Секунду...",
-            "Сейчас посмотрю.",
-            "Момент, думаю.",
+            "Одну секунду...",
+            "Секундочку...",
+            "Момент...",
+            "Один момент...",
+            "Сейчас вернусь...",
         )
     }
 }
