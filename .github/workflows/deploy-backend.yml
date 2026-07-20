@@ -64,7 +64,14 @@ jobs:
           sshpass -e ssh -o UserKnownHostsFile=~/.ssh/known_hosts "root@${{ secrets.VPS_HOST }}" '
             set -e
             systemctl restart souz-backend
-            sleep 3
             systemctl is-active souz-backend
-            curl -fsS http://127.0.0.1:8080/health
+            for i in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:8080/health; then
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "backend did not become healthy within 60s" >&2
+            journalctl -u souz-backend --no-pager -n 50
+            exit 1
           '
