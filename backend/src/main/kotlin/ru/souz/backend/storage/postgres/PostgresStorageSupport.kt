@@ -33,6 +33,7 @@ import ru.souz.backend.execution.model.AgentExecution
 import ru.souz.backend.execution.model.AgentExecutionStatus
 import ru.souz.backend.execution.model.AgentExecutionUsage
 import ru.souz.backend.keys.model.UserProviderKey
+import ru.souz.backend.salute.SaluteDeviceBinding
 import ru.souz.backend.settings.model.ToolPermission
 import ru.souz.backend.settings.model.UserMcpServer
 import ru.souz.backend.settings.model.UserSettings
@@ -212,6 +213,17 @@ internal fun ResultSet.toTelegramBotBinding(): TelegramBotBinding =
         lastErrorAt = getObject("last_error_at", OffsetDateTime::class.java)?.toInstant(),
         createdAt = instant("created_at"),
         updatedAt = instant("updated_at"),
+    )
+
+internal fun ResultSet.toSaluteDeviceBinding(): SaluteDeviceBinding =
+    SaluteDeviceBinding(
+        id = getObject("id", java.util.UUID::class.java),
+        deviceId = getString("device_id"),
+        userId = getString("user_id"),
+        chatId = getObject("chat_id", java.util.UUID::class.java),
+        createdAt = instant("created_at"),
+        updatedAt = instant("updated_at"),
+        lastSeenAt = getObject("last_seen_at", OffsetDateTime::class.java)?.toInstant(),
     )
 
 internal fun ResultSet.toMessage(): ChatMessage =

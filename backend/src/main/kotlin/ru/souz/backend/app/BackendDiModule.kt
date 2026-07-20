@@ -25,6 +25,9 @@ import ru.souz.backend.chat.service.MessageService
 import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.options.repository.OptionRepository
 import ru.souz.backend.options.service.OptionService
+import ru.souz.backend.salute.SaluteDeviceBindingRepository
+import ru.souz.backend.salute.SaluteDeviceConnectionRegistry
+import ru.souz.backend.salute.SaluteWebhookService
 import ru.souz.backend.events.repository.AgentEventRepository
 import ru.souz.backend.events.bus.AgentEventBus
 import ru.souz.backend.events.service.AgentEventService
@@ -54,6 +57,7 @@ import ru.souz.backend.storage.postgres.PostgresOptionRepository
 import ru.souz.backend.storage.postgres.PostgresDataSourceFactory
 import ru.souz.backend.storage.postgres.PostgresMessageRepository
 import ru.souz.backend.storage.postgres.PostgresToolCallRepository
+import ru.souz.backend.storage.postgres.PostgresSaluteDeviceBindingRepository
 import ru.souz.backend.storage.postgres.PostgresTelegramBotBindingRepository
 import ru.souz.backend.storage.postgres.PostgresUserRepository
 import ru.souz.backend.storage.postgres.PostgresUserProviderKeyRepository
@@ -120,6 +124,7 @@ fun backendDiModule(
     bindSingleton<UserSettingsRepository> { PostgresUserSettingsRepository(instance()) }
     bindSingleton<UserProviderKeyRepository> { PostgresUserProviderKeyRepository(instance()) }
     bindSingleton<TelegramBotBindingRepository> { PostgresTelegramBotBindingRepository(instance()) }
+    bindSingleton<SaluteDeviceBindingRepository> { PostgresSaluteDeviceBindingRepository(instance()) }
     bindSingleton {
         BackendRuntimeResources(
             closeables = listOf(
@@ -268,6 +273,20 @@ fun backendDiModule(
                 tokenCrypto = instance(),
                 scope = instance<BackendApplicationScope>(),
                 maxConcurrency = appConfig.telegramPollingMaxConcurrency,
+            )
+        }
+    }
+    if (appConfig.featureFlags.saluteVoice) {
+        bindSingleton { SaluteDeviceConnectionRegistry() }
+        bindSingleton {
+            SaluteWebhookService(
+                bindingRepository = instance(),
+                chatService = instance(),
+                connectionRegistry = instance(),
+                executionService = instance(),
+                applicationScope = instance<BackendApplicationScope>(),
+                defaultUserId = appConfig.saluteDefaultUserId,
+                clock = instance(),
             )
         }
     }

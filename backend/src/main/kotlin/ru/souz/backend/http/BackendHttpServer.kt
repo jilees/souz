@@ -29,6 +29,9 @@ import ru.souz.backend.http.routes.v1Routes
 import ru.souz.backend.keys.service.UserProviderKeyService
 import ru.souz.backend.onboarding.BackendOnboardingService
 import ru.souz.backend.options.service.OptionService
+import ru.souz.backend.salute.SaluteDeviceConnectionRegistry
+import ru.souz.backend.salute.SaluteWebhookService
+import ru.souz.backend.salute.routes.saluteRoutes
 import ru.souz.backend.security.RequestIdentityPlugin
 import ru.souz.backend.settings.service.UserSettingsService
 import ru.souz.backend.telegram.TelegramBotBindingService
@@ -57,6 +60,8 @@ class BackendHttpServer(
     optionService: OptionService? = null,
     eventService: AgentEventService? = null,
     telegramBotBindingService: TelegramBotBindingService? = null,
+    saluteWebhookService: SaluteWebhookService? = null,
+    saluteDeviceConnectionRegistry: SaluteDeviceConnectionRegistry? = null,
     featureFlags: BackendFeatureFlags = BackendFeatureFlags(),
     selectedModel: () -> String,
     private val bindAddress: InetSocketAddress,
@@ -75,6 +80,8 @@ class BackendHttpServer(
         optionService = optionService,
         eventService = eventService,
         telegramBotBindingService = telegramBotBindingService,
+        saluteWebhookService = saluteWebhookService,
+        saluteDeviceConnectionRegistry = saluteDeviceConnectionRegistry,
         featureFlags = featureFlags,
         selectedModel = selectedModel,
         trustedProxyToken = trustedProxyToken,
@@ -120,6 +127,8 @@ fun Application.backendApplication(
     optionService: OptionService? = null,
     eventService: AgentEventService? = null,
     telegramBotBindingService: TelegramBotBindingService? = null,
+    saluteWebhookService: SaluteWebhookService? = null,
+    saluteDeviceConnectionRegistry: SaluteDeviceConnectionRegistry? = null,
     featureFlags: BackendFeatureFlags = BackendFeatureFlags(),
     selectedModel: () -> String,
     trustedProxyToken: () -> String? = { null },
@@ -137,6 +146,8 @@ fun Application.backendApplication(
             optionService = optionService,
             eventService = eventService,
             telegramBotBindingService = telegramBotBindingService,
+            saluteWebhookService = saluteWebhookService,
+            saluteDeviceConnectionRegistry = saluteDeviceConnectionRegistry,
             featureFlags = featureFlags,
             selectedModel = selectedModel,
             trustedProxyToken = trustedProxyToken,
@@ -206,6 +217,9 @@ internal fun Application.configureBackendHttpServer(dependencies: BackendHttpDep
         }
 
         v1Routes(dependencies)
+        if (dependencies.featureFlags.saluteVoice) {
+            saluteRoutes(dependencies)
+        }
     }
 }
 
@@ -237,4 +251,8 @@ private fun rootEndpoints(featureFlags: BackendFeatureFlags): List<String> =
         add("POST ${BackendHttpRoutes.CHAT_EXECUTION_CANCEL_PATTERN}")
         add("POST ${BackendHttpRoutes.OPTION_ANSWER_PATTERN}")
         add("WS ${BackendHttpRoutes.CHAT_WS_PATTERN}")
+        if (featureFlags.saluteVoice) {
+            add("POST ${BackendHttpRoutes.SALUTE_WEBHOOK}")
+            add("WS ${BackendHttpRoutes.SALUTE_WS}")
+        }
     }

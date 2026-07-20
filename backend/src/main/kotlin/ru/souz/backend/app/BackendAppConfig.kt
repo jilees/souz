@@ -91,6 +91,7 @@ data class BackendAppConfig(
     val masterKey: String? = null,
     val telegramTokenEncryptionKey: String? = null,
     val telegramPollingMaxConcurrency: Int = 4,
+    val saluteDefaultUserId: String = "owner",
     val llmLimits: BackendLlmLimits = BackendLlmLimits(),
     val providerRetryPolicy: BackendProviderRetryPolicy = BackendProviderRetryPolicy(),
 ) {
@@ -106,6 +107,9 @@ data class BackendAppConfig(
         }
         if (telegramPollingMaxConcurrency <= 0) {
             throw BackendConfigurationException("Telegram polling max concurrency must be positive.")
+        }
+        if (saluteDefaultUserId.isBlank()) {
+            throw BackendConfigurationException("SOUZ_SALUTE_DEFAULT_USER_ID / souz.salute.defaultUserId must not be blank.")
         }
         llmLimits.validate()
         providerRetryPolicy.validate()
@@ -173,6 +177,11 @@ data class BackendAppConfig(
                     envKey = "SOUZ_TELEGRAM_POLLING_MAX_CONCURRENCY",
                     propertyKey = "souz.telegram.pollingMaxConcurrency",
                     default = 4,
+                ),
+                saluteDefaultUserId = source.stringValue(
+                    envKey = "SOUZ_SALUTE_DEFAULT_USER_ID",
+                    propertyKey = "souz.salute.defaultUserId",
+                    default = "owner",
                 ),
                 llmLimits = BackendLlmLimits(
                     perUserConcurrentExecutions = source.intValue(
