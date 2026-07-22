@@ -4,6 +4,7 @@ enum class SandboxMode {
     LOCAL,
     DOCKER,
     ANDROID,
+    SALUTE,
 }
 
 interface RuntimeSandbox {

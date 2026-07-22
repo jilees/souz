@@ -32,6 +32,8 @@ internal fun Route.saluteRoutes(deps: BackendHttpDependencies) {
     webSocket(BackendHttpRoutes.SALUTE_WS) {
         val service = requireV1Service(deps.saluteWebhookService, "Salute")
         val registry = requireV1Service(deps.saluteDeviceConnectionRegistry, "Salute")
+        val bindingRepository = deps.saluteDeviceBindingRepository
+        val execRequestRegistry = deps.saluteExecRequestRegistry
 
         var deviceId: String? = null
         try {
@@ -46,6 +48,7 @@ internal fun Route.saluteRoutes(deps: BackendHttpDependencies) {
             }
             deviceId = registeredDeviceId
             registry.register(deviceId, this)
+            bindingRepository?.getByDeviceId(deviceId)?.let { registry.recordDeviceOwner(deviceId, it.userId) }
 
             for (frame in incoming) {
                 val message = parseDeviceMessage(frame) ?: continue
@@ -58,7 +61,10 @@ internal fun Route.saluteRoutes(deps: BackendHttpDependencies) {
                 }
             }
         } finally {
-            deviceId?.let { registry.unregister(it, this) }
+            deviceId?.let {
+                registry.unregister(it, this)
+                execRequestRegistry?.failAllForDevice(it, "Salute device $it disconnected.")
+            }
         }
     }
 }

@@ -33,6 +33,8 @@ fun main() {
         telegramBotBindingService = runtime.telegramBotBindingService,
         saluteWebhookService = runtime.saluteWebhookService,
         saluteDeviceConnectionRegistry = runtime.saluteDeviceConnectionRegistry,
+        saluteDeviceBindingRepository = runtime.saluteDeviceBindingRepository,
+        saluteExecRequestRegistry = runtime.saluteExecRequestRegistry,
         featureFlags = runtime.featureFlags,
         selectedModel = runtime::selectedModel,
         bindAddress = InetSocketAddress(host, port),

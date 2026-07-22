@@ -82,6 +82,7 @@ internal class BackendConversationRuntime(
                 requestId = request.executionId,
                 locale = request.locale,
                 timeZone = request.timeZone,
+                attributes = request.attributes,
             ),
         )
 

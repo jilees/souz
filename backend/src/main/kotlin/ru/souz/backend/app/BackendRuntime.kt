@@ -13,7 +13,9 @@ import ru.souz.backend.events.service.AgentEventService
 import ru.souz.backend.execution.service.AgentExecutionService
 import ru.souz.backend.keys.service.UserProviderKeyService
 import ru.souz.backend.onboarding.BackendOnboardingService
+import ru.souz.backend.salute.SaluteDeviceBindingRepository
 import ru.souz.backend.salute.SaluteDeviceConnectionRegistry
+import ru.souz.backend.salute.SaluteExecRequestRegistry
 import ru.souz.backend.salute.SaluteWebhookService
 import ru.souz.backend.settings.service.UserSettingsService
 import ru.souz.backend.telegram.TelegramBotBindingService
@@ -48,6 +50,12 @@ class BackendRuntime private constructor(
         if (featureFlags.saluteVoice) di.direct.instance() else null
     }
     val saluteDeviceConnectionRegistry: SaluteDeviceConnectionRegistry? by lazy {
+        if (featureFlags.saluteVoice) di.direct.instance() else null
+    }
+    val saluteDeviceBindingRepository: SaluteDeviceBindingRepository? by lazy {
+        if (featureFlags.saluteVoice) di.direct.instance() else null
+    }
+    val saluteExecRequestRegistry: SaluteExecRequestRegistry? by lazy {
         if (featureFlags.saluteVoice) di.direct.instance() else null
     }
     val userRepository: UserRepository by lazy { di.direct.instance() }

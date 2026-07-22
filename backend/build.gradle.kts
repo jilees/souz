@@ -32,6 +32,7 @@ dependencies {
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.kotlinx.coroutinesTest)
+    testImplementation(libs.mockk)
     testImplementation("io.ktor:ktor-client-websockets:${libs.versions.ktor.get()}")
     testImplementation("io.ktor:ktor-server-test-host:${libs.versions.ktor.get()}")
     testImplementation(libs.testcontainers.junitJupiter)

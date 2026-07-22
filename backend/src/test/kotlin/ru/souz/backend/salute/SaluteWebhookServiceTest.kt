@@ -20,10 +20,12 @@ import ru.souz.backend.chat.service.ChatService
 import ru.souz.backend.chat.service.SendMessageResult
 import ru.souz.backend.execution.model.AgentExecution
 import ru.souz.backend.execution.model.AgentExecutionStatus
+import ru.souz.backend.salute.sandbox.SaluteToolAttributes
 import ru.souz.backend.settings.service.UserSettingsOverrides
 import ru.souz.backend.testutil.repository.MemoryChatRepository
 import ru.souz.backend.testutil.repository.MemoryMessageRepository
 import ru.souz.backend.testutil.repository.MemorySaluteDeviceBindingRepository
+import ru.souz.runtime.sandbox.SandboxCommandResult
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SaluteWebhookServiceTest {
@@ -91,6 +93,7 @@ class SaluteWebhookServiceTest {
         assertTrue(call.content.startsWith("what's up"), "content should start with the transcribed text")
         assertTrue(call.content.contains("Голосовой канал"), "content should carry the voice-style instruction")
         assertEquals(UserSettingsOverrides(streamingMessages = false), call.requestOverrides)
+        assertEquals("device-1", call.attributes[SaluteToolAttributes.DEVICE_ID])
 
         val binding = bindingRepository.getByDeviceId("device-1")
         assertNotNull(binding)
@@ -125,11 +128,43 @@ class SaluteWebhookServiceTest {
         assertEquals(executor.calls[0].chatId, executor.calls[1].chatId)
     }
 
+    @Test
+    fun `handleExecResult resolves a pending exec request registered for the same id`() = runTest {
+        val execRequestRegistry = SaluteExecRequestRegistry()
+        val service = service(this, execRequestRegistry = execRequestRegistry)
+        val deferred = execRequestRegistry.beginRequest(deviceId = "device-1", id = "req-1")
+
+        service.handleExecResult(
+            deviceId = "device-1",
+            message = SaluteDeviceMessage(
+                type = SaluteDeviceMessageType.EXEC_RESULT,
+                id = "req-1",
+                exitCode = 0,
+                stdout = "ok",
+                stderr = "",
+                timedOut = false,
+            ),
+        )
+
+        assertEquals(SandboxCommandResult(exitCode = 0, stdout = "ok", stderr = "", timedOut = false), deferred.await())
+    }
+
+    @Test
+    fun `handleExecResult for an unknown id is a no-op`() = runTest {
+        val service = service(this)
+
+        service.handleExecResult(
+            deviceId = "device-1",
+            message = SaluteDeviceMessage(type = SaluteDeviceMessageType.EXEC_RESULT, id = "unknown", exitCode = 0),
+        )
+    }
+
     private fun service(
         scope: CoroutineScope,
         bindingRepository: SaluteDeviceBindingRepository = MemorySaluteDeviceBindingRepository(),
         connectionRegistry: SaluteDevicePusher = RecordingDevicePusher(),
         turnExecutor: SaluteTurnExecutor = RecordingSaluteTurnExecutor(),
+        execRequestRegistry: SaluteExecRequestRegistry = SaluteExecRequestRegistry(),
     ): SaluteWebhookService = SaluteWebhookService(
         bindingRepository = bindingRepository,
         chatService = ChatService(MemoryChatRepository(), MemoryMessageRepository()),
@@ -137,6 +172,7 @@ class SaluteWebhookServiceTest {
         turnExecutor = turnExecutor,
         applicationScope = scope,
         defaultUserId = DEFAULT_USER_ID,
+        execRequestRegistry = execRequestRegistry,
         clock = Clock.fixed(Instant.parse("2026-07-20T10:00:00Z"), ZoneOffset.UTC),
     )
 
@@ -173,8 +209,9 @@ private class RecordingSaluteTurnExecutor(
         content: String,
         clientMessageId: String,
         requestOverrides: UserSettingsOverrides,
+        attributes: Map<String, String>,
     ): SendMessageResult {
-        calls += SaluteTurnCall(userId, chatId, content, clientMessageId, requestOverrides)
+        calls += SaluteTurnCall(userId, chatId, content, clientMessageId, requestOverrides, attributes)
         val userMessage = ChatMessage(
             id = UUID.randomUUID(),
             userId = userId,
@@ -229,6 +266,7 @@ private data class SaluteTurnCall(
     val content: String,
     val clientMessageId: String,
     val requestOverrides: UserSettingsOverrides,
+    val attributes: Map<String, String> = emptyMap(),
 )
 
 private class RecordingDevicePusher(

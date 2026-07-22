@@ -19,4 +19,5 @@ internal data class BackendConversationTurnRequest(
     val streamingMessages: Boolean? = null,
     val requestTimeoutMillis: Long? = null,
     val useFewShotExamples: Boolean? = null,
+    val attributes: Map<String, String> = emptyMap(),
 )

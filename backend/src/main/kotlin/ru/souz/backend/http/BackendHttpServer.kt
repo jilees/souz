@@ -29,7 +29,9 @@ import ru.souz.backend.http.routes.v1Routes
 import ru.souz.backend.keys.service.UserProviderKeyService
 import ru.souz.backend.onboarding.BackendOnboardingService
 import ru.souz.backend.options.service.OptionService
+import ru.souz.backend.salute.SaluteDeviceBindingRepository
 import ru.souz.backend.salute.SaluteDeviceConnectionRegistry
+import ru.souz.backend.salute.SaluteExecRequestRegistry
 import ru.souz.backend.salute.SaluteWebhookService
 import ru.souz.backend.salute.routes.saluteRoutes
 import ru.souz.backend.security.RequestIdentityPlugin
@@ -62,6 +64,8 @@ class BackendHttpServer(
     telegramBotBindingService: TelegramBotBindingService? = null,
     saluteWebhookService: SaluteWebhookService? = null,
     saluteDeviceConnectionRegistry: SaluteDeviceConnectionRegistry? = null,
+    saluteDeviceBindingRepository: SaluteDeviceBindingRepository? = null,
+    saluteExecRequestRegistry: SaluteExecRequestRegistry? = null,
     featureFlags: BackendFeatureFlags = BackendFeatureFlags(),
     selectedModel: () -> String,
     private val bindAddress: InetSocketAddress,
@@ -82,6 +86,8 @@ class BackendHttpServer(
         telegramBotBindingService = telegramBotBindingService,
         saluteWebhookService = saluteWebhookService,
         saluteDeviceConnectionRegistry = saluteDeviceConnectionRegistry,
+        saluteDeviceBindingRepository = saluteDeviceBindingRepository,
+        saluteExecRequestRegistry = saluteExecRequestRegistry,
         featureFlags = featureFlags,
         selectedModel = selectedModel,
         trustedProxyToken = trustedProxyToken,
@@ -129,6 +135,8 @@ fun Application.backendApplication(
     telegramBotBindingService: TelegramBotBindingService? = null,
     saluteWebhookService: SaluteWebhookService? = null,
     saluteDeviceConnectionRegistry: SaluteDeviceConnectionRegistry? = null,
+    saluteDeviceBindingRepository: SaluteDeviceBindingRepository? = null,
+    saluteExecRequestRegistry: SaluteExecRequestRegistry? = null,
     featureFlags: BackendFeatureFlags = BackendFeatureFlags(),
     selectedModel: () -> String,
     trustedProxyToken: () -> String? = { null },
@@ -148,6 +156,8 @@ fun Application.backendApplication(
             telegramBotBindingService = telegramBotBindingService,
             saluteWebhookService = saluteWebhookService,
             saluteDeviceConnectionRegistry = saluteDeviceConnectionRegistry,
+            saluteDeviceBindingRepository = saluteDeviceBindingRepository,
+            saluteExecRequestRegistry = saluteExecRequestRegistry,
             featureFlags = featureFlags,
             selectedModel = selectedModel,
             trustedProxyToken = trustedProxyToken,

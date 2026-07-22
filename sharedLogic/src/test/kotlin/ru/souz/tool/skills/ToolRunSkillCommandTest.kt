@@ -9,7 +9,9 @@ import java.util.Base64
 import kotlinx.coroutines.test.runTest
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.ToolInvocationMeta
+import ru.souz.runtime.sandbox.RuntimeSandbox
 import ru.souz.runtime.sandbox.SandboxCommandRuntime
+import ru.souz.runtime.sandbox.SandboxMode
 import ru.souz.runtime.sandbox.SandboxScope
 import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.runtime.sandbox.local.LocalRuntimeSandbox
@@ -171,6 +173,53 @@ class ToolRunSkillCommandTest {
                 ToolInvocationMeta(userId = "user-1"),
             )
         }
+    }
+
+    @Test
+    fun `rejects skills with supporting files when targeting a salute sandbox`() = runTest {
+        val saluteSandbox = mockk<RuntimeSandbox>()
+        every { saluteSandbox.mode } returns SandboxMode.SALUTE
+        val tool = ToolRunSkillCommand(
+            sandboxResolver = ToolInvocationRuntimeSandboxResolver.fixed(saluteSandbox),
+        )
+
+        assertFailsWith<BadInputException> {
+            tool.suspendInvoke(
+                ToolRunSkillCommand.Input(
+                    skillId = "path-skill",
+                    script = "echo hi",
+                    timeoutMillis = 1_000,
+                    activeSkills = listOf(activeSkill("path-skill")),
+                ),
+                ToolInvocationMeta(userId = "user-1"),
+            )
+        }
+    }
+
+    @Test
+    fun `allows skills with supporting files on non salute sandboxes`() = runTest {
+        val home = createTempDirectory("skill-command-salute-gate-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        val skillRoot = stateRoot.resolve("skills/path-skill").createDirectories()
+        skillRoot.resolve("scripts").createDirectories()
+        skillRoot.resolve("scripts/echo.sh").writeText("printf ok")
+        val sandbox = createSandbox(home = home, stateRoot = stateRoot)
+        val tool = ToolRunSkillCommand(
+            sandboxResolver = ToolInvocationRuntimeSandboxResolver.fixed(sandbox),
+        )
+
+        val result = tool.suspendInvoke(
+            ToolRunSkillCommand.Input(
+                skillId = "path-skill",
+                runtime = SandboxCommandRuntime.BASH,
+                scriptPath = "scripts/echo.sh",
+                timeoutMillis = 1_000,
+                activeSkills = listOf(activeSkill("path-skill")),
+            ),
+            ToolInvocationMeta(userId = "user-1"),
+        )
+
+        assertContains(result, "exitCode: 0")
     }
 
     private fun createSandbox(

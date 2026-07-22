@@ -18,6 +18,16 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
 
+/**
+ * Public escape hatch so other modules (e.g. `:backend`'s Salute sandbox) can reuse the exact
+ * same backend-local file resolution/content-reading semantics as `LOCAL` mode without exposing
+ * the whole `internal` class.
+ */
+fun createLocalSandboxFileSystem(
+    settingsProvider: SettingsProvider,
+    runtimePaths: SandboxRuntimePaths,
+): SandboxFileSystem = LocalSandboxFileSystem(settingsProvider, runtimePaths)
+
 internal class LocalSandboxFileSystem(
     private val settingsProvider: SettingsProvider,
     override val runtimePaths: SandboxRuntimePaths,

@@ -9,7 +9,9 @@ import ru.souz.backend.execution.service.AgentExecutionService
 import ru.souz.backend.keys.service.UserProviderKeyService
 import ru.souz.backend.onboarding.BackendOnboardingService
 import ru.souz.backend.options.service.OptionService
+import ru.souz.backend.salute.SaluteDeviceBindingRepository
 import ru.souz.backend.salute.SaluteDeviceConnectionRegistry
+import ru.souz.backend.salute.SaluteExecRequestRegistry
 import ru.souz.backend.salute.SaluteWebhookService
 import ru.souz.backend.settings.service.UserSettingsService
 import ru.souz.backend.telegram.TelegramBotBindingService
@@ -27,6 +29,8 @@ internal data class BackendHttpDependencies(
     val telegramBotBindingService: TelegramBotBindingService?,
     val saluteWebhookService: SaluteWebhookService?,
     val saluteDeviceConnectionRegistry: SaluteDeviceConnectionRegistry?,
+    val saluteDeviceBindingRepository: SaluteDeviceBindingRepository?,
+    val saluteExecRequestRegistry: SaluteExecRequestRegistry?,
     val featureFlags: BackendFeatureFlags,
     val selectedModel: () -> String,
     val trustedProxyToken: () -> String?,

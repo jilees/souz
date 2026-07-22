@@ -489,3 +489,53 @@ tasks.matching { it.name == "packageReleaseDmg" || it.name == "notarizeReleaseDm
 tasks.matching { it.name == "prepareAppResources" || it.name == "createReleaseDistributable" || it.name == "notarizeReleaseDmg" }.configureEach {
     dependsOn(prepareMacAppResources)
 }
+
+// Keep dev runs stable: run from the packaged jar instead of mutable classes directories.
+tasks.withType<JavaExec>().configureEach {
+    if (name != "run") return@configureEach
+
+    val jarTask = tasks.named<Jar>("jar")
+    val runtimeClasspath = configurations.named("runtimeClasspath")
+    val buildClassesDir = layout.buildDirectory.dir("classes").get().asFile.absolutePath
+    val buildResourcesDir = layout.buildDirectory.dir("resources").get().asFile.absolutePath
+
+    dependsOn(jarTask)
+    mainClass.set(providers.systemProperty("mainClass").orElse("ru.souz.MainKt"))
+    standardInput = System.`in`
+
+    doFirst {
+        val stableRuntimeClasspath = runtimeClasspath.get().filterNot { file ->
+            val path = file.absolutePath
+            path.startsWith(buildClassesDir) || path.startsWith(buildResourcesDir)
+        }
+        classpath = files(jarTask.flatMap { it.archiveFile }) + files(stableRuntimeClasspath)
+    }
+}
+
+// Temporary: headless ru.souz.TextMainKt entry point for scripted probe testing.
+// A plain, separate JavaExec — the Compose Desktop plugin's own "run" task pins
+// mainClass to ru.souz.MainKt via compose.desktop.application above and
+// re-asserts it regardless of any -DmainClass override attempted on that task,
+// so this sidesteps it entirely instead of fighting it. Safe to remove once
+// probing is done.
+tasks.register<JavaExec>("runProbe") {
+    group = "verification"
+    description = "Runs ru.souz.TextMainKt headlessly for scripted testing (temporary)."
+
+    val jarTask = tasks.named<Jar>("jar")
+    val runtimeClasspath = configurations.named("runtimeClasspath")
+    val buildClassesDir = layout.buildDirectory.dir("classes").get().asFile.absolutePath
+    val buildResourcesDir = layout.buildDirectory.dir("resources").get().asFile.absolutePath
+
+    dependsOn(jarTask)
+    mainClass.set("ru.souz.TextMainKt")
+    standardInput = System.`in`
+
+    doFirst {
+        val stableRuntimeClasspath = runtimeClasspath.get().filterNot { file ->
+            val path = file.absolutePath
+            path.startsWith(buildClassesDir) || path.startsWith(buildResourcesDir)
+        }
+        classpath = files(jarTask.flatMap { it.archiveFile }) + files(stableRuntimeClasspath)
+    }
+}

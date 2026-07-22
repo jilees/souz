@@ -68,6 +68,10 @@ class DefaultRuntimeSandboxFactory(
         }
 
         SandboxMode.ANDROID -> error("Android sandbox mode is not available in the JVM runtime.")
+
+        SandboxMode.SALUTE -> error(
+            "Salute sandbox mode is resolved by the backend's Salute-aware resolver, not DefaultRuntimeSandboxFactory."
+        )
     }
 
     companion object {

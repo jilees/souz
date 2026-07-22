@@ -45,6 +45,7 @@ class AgentExecutionService internal constructor(
         content: String,
         clientMessageId: String? = null,
         requestOverrides: UserSettingsOverrides = UserSettingsOverrides(),
+        attributes: Map<String, String> = emptyMap(),
     ): SendMessageResult = supervisorScope {
         val chat = requireOwnedChat(userId, chatId)
         val prepared = requestFactory.prepareChatTurn(
@@ -53,6 +54,7 @@ class AgentExecutionService internal constructor(
             content = content,
             clientMessageId = clientMessageId,
             requestOverrides = requestOverrides,
+            attributes = attributes,
         )
         prepared.normalizedClientMessageId?.let { normalizedClientMessageId ->
             executionRepository.findByClientMessageId(userId, chatId, normalizedClientMessageId)

@@ -23,6 +23,16 @@ class SaluteDeviceConnectionRegistry : SaluteDevicePusher {
     private val logger = LoggerFactory.getLogger(SaluteDeviceConnectionRegistry::class.java)
     private val connections = ConcurrentHashMap<String, DefaultWebSocketServerSession>()
 
+    /**
+     * device_id -> owning user_id, populated once per connection at register time (see
+     * [recordDeviceOwner]) and intentionally NOT cleared on [unregister] — it's binding
+     * knowledge, not connection state, and lets [ru.souz.backend.salute.sandbox.SaluteConnectedDeviceResolver]
+     * resolve "which devices does this user own" synchronously without a DB round trip on the
+     * tool-call hot path. Known limitation: a device's very first-ever connection (before any
+     * binding row exists) won't populate this until it reconnects once after its first webhook turn.
+     */
+    private val userIdByDeviceId = ConcurrentHashMap<String, String>()
+
     fun register(deviceId: String, session: DefaultWebSocketServerSession) {
         connections[deviceId] = session
     }
@@ -31,6 +41,13 @@ class SaluteDeviceConnectionRegistry : SaluteDevicePusher {
     fun unregister(deviceId: String, session: DefaultWebSocketServerSession) {
         connections.remove(deviceId, session)
     }
+
+    fun recordDeviceOwner(deviceId: String, userId: String) {
+        userIdByDeviceId[deviceId] = userId
+    }
+
+    fun boundDeviceIdsForUser(userId: String): Set<String> =
+        userIdByDeviceId.filterValues { it == userId }.keys.toSet()
 
     override fun isConnected(deviceId: String): Boolean = connections.containsKey(deviceId)
 

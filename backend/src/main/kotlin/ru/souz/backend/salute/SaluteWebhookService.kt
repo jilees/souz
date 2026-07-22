@@ -11,7 +11,9 @@ import org.slf4j.LoggerFactory
 import ru.souz.backend.chat.service.ChatService
 import ru.souz.backend.chat.service.SendMessageResult
 import ru.souz.backend.execution.service.AgentExecutionService
+import ru.souz.backend.salute.sandbox.SaluteToolAttributes
 import ru.souz.backend.settings.service.UserSettingsOverrides
+import ru.souz.runtime.sandbox.SandboxCommandResult
 
 /** Mirrors `TelegramTurnExecutor` — decouples the Salute flow from the concrete execution kernel so tests don't need to stand up a full `AgentExecutionService`. */
 fun interface SaluteTurnExecutor {
@@ -21,6 +23,7 @@ fun interface SaluteTurnExecutor {
         content: String,
         clientMessageId: String,
         requestOverrides: UserSettingsOverrides,
+        attributes: Map<String, String>,
     ): SendMessageResult
 }
 
@@ -33,6 +36,7 @@ private class AgentExecutionSaluteTurnExecutor(
         content: String,
         clientMessageId: String,
         requestOverrides: UserSettingsOverrides,
+        attributes: Map<String, String>,
     ): SendMessageResult =
         executionService.executeChatTurn(
             userId = userId,
@@ -40,6 +44,7 @@ private class AgentExecutionSaluteTurnExecutor(
             content = content,
             clientMessageId = clientMessageId,
             requestOverrides = requestOverrides,
+            attributes = attributes,
         )
 }
 
@@ -56,6 +61,7 @@ class SaluteWebhookService(
     private val turnExecutor: SaluteTurnExecutor,
     private val applicationScope: CoroutineScope,
     private val defaultUserId: String,
+    private val execRequestRegistry: SaluteExecRequestRegistry,
     private val clock: Clock = Clock.systemUTC(),
 ) {
     constructor(
@@ -65,6 +71,7 @@ class SaluteWebhookService(
         executionService: AgentExecutionService,
         applicationScope: CoroutineScope,
         defaultUserId: String,
+        execRequestRegistry: SaluteExecRequestRegistry,
         clock: Clock = Clock.systemUTC(),
     ) : this(
         bindingRepository = bindingRepository,
@@ -73,6 +80,7 @@ class SaluteWebhookService(
         turnExecutor = AgentExecutionSaluteTurnExecutor(executionService),
         applicationScope = applicationScope,
         defaultUserId = defaultUserId,
+        execRequestRegistry = execRequestRegistry,
         clock = clock,
     )
     private val logger = LoggerFactory.getLogger(SaluteWebhookService::class.java)
@@ -113,6 +121,16 @@ class SaluteWebhookService(
             message.exitCode,
             message.timedOut,
         )
+        val id = message.id ?: return
+        execRequestRegistry.complete(
+            id,
+            SandboxCommandResult(
+                exitCode = message.exitCode ?: -1,
+                stdout = message.stdout.orEmpty(),
+                stderr = message.stderr.orEmpty(),
+                timedOut = message.timedOut ?: false,
+            ),
+        )
     }
 
     private suspend fun runTurn(deviceId: String, sessionId: String, messageId: Long, text: String) {
@@ -135,6 +153,7 @@ class SaluteWebhookService(
                 content = "$text$VOICE_INSTRUCTION",
                 clientMessageId = "salute:${binding.id}:$messageId",
                 requestOverrides = UserSettingsOverrides(streamingMessages = false),
+                attributes = mapOf(SaluteToolAttributes.DEVICE_ID to deviceId),
             )
         } catch (e: CancellationException) {
             throw e

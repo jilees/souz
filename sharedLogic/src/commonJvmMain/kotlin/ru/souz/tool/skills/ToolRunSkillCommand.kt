@@ -10,6 +10,7 @@ import ru.souz.runtime.sandbox.RuntimeSandbox
 import ru.souz.runtime.sandbox.SandboxCommandRequest
 import ru.souz.runtime.sandbox.SandboxCommandResult
 import ru.souz.runtime.sandbox.SandboxCommandRuntime
+import ru.souz.runtime.sandbox.SandboxMode
 import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.skills.registry.SkillStorageScope
 import ru.souz.tool.BadInputException
@@ -59,6 +60,7 @@ class ToolRunSkillCommand(
         append("Run a command or script for one of the currently active Skills inside the Souz runtime sandbox. ")
         append("The working directory defaults to the selected skill bundle root, so supporting files can be used by relative path. ")
         append("On Android, BASH uses POSIX /system/bin/sh rather than GNU Bash. ")
+        append("On a Salute device sandbox, only a single self-contained script/command runs: skills with supportingFiles are rejected, and workingDirectory/environment are not delivered to the device. ")
         append("Use only for files or instructions from active Skills, and only when a skill explicitly needs command execution. ")
         append("Do not use this tool just to list, inspect, or browse skill bundle files. ")
         append("Do not call it for instruction-only/template-only skills that can be followed from the system prompt.")
@@ -93,6 +95,12 @@ class ToolRunSkillCommand(
         val skill = input.activeSkills.firstOrNull { it.skillId == skillId.value }
             ?: throw BadInputException("Skill is not active for this turn: ${input.skillId}")
         val sandbox = sandboxResolver.resolve(meta)
+        if (sandbox.mode == SandboxMode.SALUTE && skill.supportingFiles.isNotEmpty()) {
+            throw BadInputException(
+                "Skill '${skill.skillId}' declares supporting files (${skill.supportingFiles.joinToString()}), " +
+                    "which are not available when executing on a Salute device."
+            )
+        }
         val skillRoot = resolveSkillRoot(sandbox = sandbox, skill = skill, userId = meta.userId)
         val workingDirectory = resolveWorkingDirectory(skillRoot, input.workingDirectory)
         val scriptPath = resolveScriptPath(sandbox, skillRoot, input.scriptPath)

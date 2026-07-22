@@ -47,6 +47,7 @@ internal class AgentExecutionRequestFactory(
         content: String,
         clientMessageId: String? = null,
         requestOverrides: UserSettingsOverrides = UserSettingsOverrides(),
+        attributes: Map<String, String> = emptyMap(),
     ): PreparedChatTurn {
         val effectiveSettings = effectiveSettingsResolver.resolve(userId, requestOverrides)
         val normalizedClientMessageId = clientMessageId?.trim()?.takeIf { it.isNotEmpty() }
@@ -97,6 +98,7 @@ internal class AgentExecutionRequestFactory(
                 streamingMessages = effectiveSettings.streamingMessages,
                 requestTimeoutMillis = effectiveSettings.requestTimeoutMillis,
                 useFewShotExamples = effectiveSettings.useFewShotExamples,
+                attributes = attributes,
             ),
             userMessageMetadata = userMessageMetadata(normalizedClientMessageId),
             shouldReturnRunning = effectiveSettings.streamingMessages && featureFlags.wsEvents,

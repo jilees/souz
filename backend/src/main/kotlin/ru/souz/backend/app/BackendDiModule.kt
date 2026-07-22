@@ -27,7 +27,12 @@ import ru.souz.backend.options.repository.OptionRepository
 import ru.souz.backend.options.service.OptionService
 import ru.souz.backend.salute.SaluteDeviceBindingRepository
 import ru.souz.backend.salute.SaluteDeviceConnectionRegistry
+import ru.souz.backend.salute.SaluteExecRequestRegistry
 import ru.souz.backend.salute.SaluteWebhookService
+import ru.souz.backend.salute.sandbox.BackendSaluteAwareToolInvocationRuntimeSandboxResolver
+import ru.souz.backend.salute.sandbox.RegistryBackedSaluteConnectedDeviceResolver
+import ru.souz.backend.salute.sandbox.SaluteConnectedDeviceResolver
+import ru.souz.backend.salute.sandbox.SaluteRuntimeSandboxProvider
 import ru.souz.backend.events.repository.AgentEventRepository
 import ru.souz.backend.events.bus.AgentEventBus
 import ru.souz.backend.events.service.AgentEventService
@@ -76,9 +81,13 @@ import ru.souz.backend.telegram.TelegramBotTokenCrypto
 import ru.souz.skills.registry.FileSystemSkillRegistryConfig
 import ru.souz.skills.registry.SkillStorageScope
 import ru.souz.tool.runtimeToolsDiModule
+import ru.souz.tool.skills.ToolRunSkillCommand
+import ru.souz.llms.LLMToolSetup
+import ru.souz.llms.giga.toGiga
 
 private object BackendDiTags {
     const val LOG_OBJECT_MAPPER = "backendLogObjectMapper"
+    const val SALUTE_AWARE_COMMAND_TOOL = "saluteAwareSkillCommandTool"
 }
 
 /** Backend Kodein module that wires HTTP services to the shared JVM runtime. */
@@ -210,7 +219,13 @@ fun backendDiModule(
             systemPrompt = systemPrompt,
             toolCatalog = instance(),
             toolsFilter = instance(),
-            skillCommandTool = instance(tag = SkillToolBindingTags.COMMAND_TOOL),
+            skillCommandTool = instance(
+                tag = if (appConfig.featureFlags.saluteVoice) {
+                    BackendDiTags.SALUTE_AWARE_COMMAND_TOOL
+                } else {
+                    SkillToolBindingTags.COMMAND_TOOL
+                }
+            ),
             skillRegistryRepository = instance(),
             agentBackgroundScope = instance<BackendApplicationScope>(),
         )
@@ -278,6 +293,7 @@ fun backendDiModule(
     }
     if (appConfig.featureFlags.saluteVoice) {
         bindSingleton { SaluteDeviceConnectionRegistry() }
+        bindSingleton { SaluteExecRequestRegistry() }
         bindSingleton {
             SaluteWebhookService(
                 bindingRepository = instance(),
@@ -286,8 +302,29 @@ fun backendDiModule(
                 executionService = instance(),
                 applicationScope = instance<BackendApplicationScope>(),
                 defaultUserId = appConfig.saluteDefaultUserId,
+                execRequestRegistry = instance(),
                 clock = instance(),
             )
+        }
+        bindSingleton<SaluteConnectedDeviceResolver> {
+            RegistryBackedSaluteConnectedDeviceResolver(registry = instance())
+        }
+        bindSingleton {
+            SaluteRuntimeSandboxProvider(
+                settingsProvider = instance(),
+                devicePusher = instance<SaluteDeviceConnectionRegistry>(),
+                execRequestRegistry = instance(),
+            )
+        }
+        bindSingleton<LLMToolSetup>(tag = BackendDiTags.SALUTE_AWARE_COMMAND_TOOL) {
+            ToolRunSkillCommand(
+                sandboxResolver = BackendSaluteAwareToolInvocationRuntimeSandboxResolver(
+                    fallback = instance(),
+                    deviceResolver = instance(),
+                    saluteSandboxes = instance(),
+                ),
+                skillStorageScope = SkillStorageScope.USER_SCOPED,
+            ).toGiga()
         }
     }
     bindSingleton {
