@@ -89,8 +89,9 @@ class SaluteSandboxCommandExecutor(
 
     private companion object {
         const val DEFAULT_TIMEOUT_MILLIS = 60_000L
-        // Unverified against the real souz-thin-client exec environment — mirrors Local/Docker's
-        // choice of bash as a first approximation; confirm before shipping.
-        const val DEVICE_SHELL = "bash"
+        // POSIX sh, not bash: StarOS/embedded speaker firmware is not guaranteed to ship bash
+        // (same reasoning as AndroidSkillCommandExecutor's /system/bin/sh, and the tv-control
+        // skill's explicit "sh, не bash" note). Scripts targeting Salute must stay POSIX-only.
+        const val DEVICE_SHELL = "sh"
     }
 }
