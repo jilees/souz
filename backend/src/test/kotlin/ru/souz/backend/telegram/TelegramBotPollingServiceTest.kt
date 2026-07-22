@@ -161,7 +161,10 @@ class TelegramBotPollingServiceTest {
     fun `linked private telegram message executes turn with scoped client id and sends assistant reply`() = runTest {
         val repository = MemoryTelegramBotBindingRepository()
         val botApi = FakePollingTelegramBotApi()
-        val executor = RecordingTelegramTurnExecutor(assistantResponse = "Финальный ответ агента.")
+        // A non-zero delay lets the concurrently-launched typing indicator actually run at
+        // least once before the turn completes and cancels it (it is fire-and-forget and does
+        // not delay a turn that finishes without ever suspending).
+        val executor = RecordingTelegramTurnExecutor(assistantResponse = "Финальный ответ агента.", delayMs = 1L)
         val service = pollingService(repository, botApi, executor)
         val binding = linkedBinding(repository)
         botApi.enqueueUpdates(
@@ -252,6 +255,51 @@ class TelegramBotPollingServiceTest {
         // No further chat action once the turn completes at 9s and cancels the repeating job.
         assertEquals(3, botApi.chatActions.size)
         assertEquals(listOf(SentTelegramMessage(777L, "done")), botApi.sentMessages)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `typing indicator stops once this instance loses the poller lease`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val repository = LeaseTogglingTelegramBindingRepository(MemoryTelegramBotBindingRepository())
+        val botApi = FakePollingTelegramBotApi()
+        val executor = RecordingTelegramTurnExecutor(assistantResponse = "done", delayMs = 9_000L)
+        executor.repository = repository
+        linkedBinding(repository)
+        val service = TelegramBotPollingService(
+            repository = repository,
+            botApi = botApi,
+            turnExecutor = executor,
+            tokenCrypto = TelegramBotTokenCrypto(TEST_TELEGRAM_TOKEN_ENCRYPTION_KEY),
+            scope = backgroundScope,
+        )
+        botApi.enqueueSingleTextUpdate(
+            token = "123456:linked-token",
+            updateId = 40L,
+            chatId = 777L,
+            userId = 555L,
+            text = "long thinking please",
+        )
+
+        val poll = backgroundScope.launch(dispatcher) {
+            service.pollEnabledOnce()
+        }
+        runCurrent()
+        assertEquals(1, botApi.chatActions.size)
+
+        advanceTimeBy(4_001L)
+        assertEquals(2, botApi.chatActions.size)
+
+        // Another instance takes over the binding's lease while the turn is still running.
+        repository.leaseActive = false
+        advanceTimeBy(4_000L)
+        assertEquals(2, botApi.chatActions.size)
+
+        advanceTimeBy(5_000L)
+        poll.join()
+
+        // The stale instance must not have kept pinging "typing" after losing the lease.
+        assertEquals(2, botApi.chatActions.size)
     }
 
     @Test
@@ -855,6 +903,15 @@ private data class GetUpdatesCall(
     val timeoutSeconds: Int,
     val allowedUpdates: List<String>,
 )
+
+private class LeaseTogglingTelegramBindingRepository(
+    private val delegate: TelegramBotBindingRepository,
+) : TelegramBotBindingRepository by delegate {
+    var leaseActive: Boolean = true
+
+    override suspend fun hasActiveLease(id: UUID, owner: String, now: Instant): Boolean =
+        leaseActive && delegate.hasActiveLease(id, owner, now)
+}
 
 private class RecordingTelegramTurnExecutor(
     private val assistantResponse: String? = "Готово",
