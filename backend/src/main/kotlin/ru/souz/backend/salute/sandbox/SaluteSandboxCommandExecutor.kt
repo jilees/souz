@@ -67,10 +67,16 @@ class SaluteSandboxCommandExecutor(
             SandboxCommandRuntime.PROCESS ->
                 command.ifEmpty { throw BadInputException("command must not be empty for PROCESS runtime.") }
 
+            // `sh -c <content> [args...]` assigns the first args element to $0, not $1 — unlike
+            // `sh <path> [args...]`, where the path itself fills $0. Since Salute always runs
+            // via `-c` (never a direct file path — see class doc), an explicit $0 placeholder
+            // is required so `args` lands at $1 as callers expect (mirrors DockerSandboxCommandExecutor's
+            // `inlineCommandName = "bash"` for the same reason).
             SandboxCommandRuntime.BASH -> listOf(
                 DEVICE_SHELL,
                 "-c",
                 requireNotNull(inlineContent) { "script or scriptPath is required for BASH runtime." },
+                DEVICE_SHELL,
             ) + args
 
             SandboxCommandRuntime.PYTHON -> listOf(

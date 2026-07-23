@@ -130,6 +130,33 @@ class SaluteSandboxCommandExecutorTest {
         assertTrue(argv.none { it.contains(script.toString()) }, "argv must never reference the backend-local path")
     }
 
+    @Test
+    fun `args are preceded by a dollar-zero placeholder so they land at $1, not $0`() = runTest {
+        val registry = SaluteExecRequestRegistry()
+        val capturedArgv = mutableListOf<List<String>>()
+        val pusher = ImmediateReplyPusher(registry, onArgv = { capturedArgv += it }) {
+            SandboxCommandResult(exitCode = 0, stdout = "", stderr = "", timedOut = false)
+        }
+        val executor = executor(pusher, registry)
+
+        executor.execute(
+            SandboxCommandRequest(
+                runtime = SandboxCommandRuntime.BASH,
+                script = "echo hi",
+                args = listOf("hello", "world"),
+                timeoutMillis = 1_000,
+            )
+        )
+
+        // `sh -c <content> [args...]` assigns the first args element to $0 unless a placeholder
+        // is inserted first — argv must end in [<placeholder>, "hello", "world"], not
+        // [..., "hello", "world"] directly after the script content.
+        val argv = capturedArgv.single()
+        assertEquals(listOf("hello", "world"), argv.takeLast(2))
+        assertEquals("-c", argv[1])
+        assertTrue(argv.size >= 5, "expected [sh, -c, content, placeholder, hello, world]: $argv")
+    }
+
     private fun executor(pusher: SaluteDevicePusher, registry: SaluteExecRequestRegistry): SaluteSandboxCommandExecutor {
         val home = createTempDirectory("salute-executor-home-")
         val settingsProvider = mockk<SettingsProvider> { every { forbiddenFolders } returns emptyList() }
