@@ -8,7 +8,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
-import ru.souz.backend.chat.service.ChatService
 import ru.souz.backend.chat.service.SendMessageResult
 import ru.souz.backend.execution.service.AgentExecutionService
 import ru.souz.backend.salute.sandbox.SaluteToolAttributes
@@ -56,30 +55,24 @@ private class AgentExecutionSaluteTurnExecutor(
  */
 class SaluteWebhookService(
     private val bindingRepository: SaluteDeviceBindingRepository,
-    private val chatService: ChatService,
     private val connectionRegistry: SaluteDevicePusher,
     private val turnExecutor: SaluteTurnExecutor,
     private val applicationScope: CoroutineScope,
-    private val defaultUserId: String,
     private val execRequestRegistry: SaluteExecRequestRegistry,
     private val clock: Clock = Clock.systemUTC(),
 ) {
     constructor(
         bindingRepository: SaluteDeviceBindingRepository,
-        chatService: ChatService,
         connectionRegistry: SaluteDeviceConnectionRegistry,
         executionService: AgentExecutionService,
         applicationScope: CoroutineScope,
-        defaultUserId: String,
         execRequestRegistry: SaluteExecRequestRegistry,
         clock: Clock = Clock.systemUTC(),
     ) : this(
         bindingRepository = bindingRepository,
-        chatService = chatService,
         connectionRegistry = connectionRegistry,
         turnExecutor = AgentExecutionSaluteTurnExecutor(executionService),
         applicationScope = applicationScope,
-        defaultUserId = defaultUserId,
         execRequestRegistry = execRequestRegistry,
         clock = clock,
     )
@@ -135,13 +128,18 @@ class SaluteWebhookService(
 
     private suspend fun runTurn(deviceId: String, sessionId: String, messageId: Long, text: String) {
         val binding = try {
-            getOrCreateBinding(deviceId)
+            bindingRepository.getByDeviceId(deviceId)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             logger.warn("Failed to resolve Salute binding for device {}: {}", deviceId, e.message)
             return
         }
+        if (binding == null) {
+            connectionRegistry.sendExec(deviceId, execMessage(SaluteDeviceCommands.speak(NOT_BOUND_MESSAGE)))
+            return
+        }
+        bindingRepository.touchLastSeen(binding.id, clock.instant())
 
         connectionRegistry.sendExec(deviceId, execMessage(SaluteDeviceCommands.waitingIndicatorOn()))
         connectionRegistry.sendExec(deviceId, execMessage(SaluteDeviceCommands.speak(randomThinkingPhrase())))
@@ -165,20 +163,6 @@ class SaluteWebhookService(
         connectionRegistry.sendExec(deviceId, execMessage(SaluteDeviceCommands.waitingIndicatorOff()))
         val answer = result?.assistantMessage?.content?.trim()?.takeIf { it.isNotEmpty() } ?: FALLBACK_REPLY
         connectionRegistry.sendExec(deviceId, execMessage(SaluteDeviceCommands.speak(answer)))
-    }
-
-    private suspend fun getOrCreateBinding(deviceId: String): SaluteDeviceBinding {
-        bindingRepository.getByDeviceId(deviceId)?.let { existing ->
-            bindingRepository.touchLastSeen(existing.id, clock.instant())
-            return existing
-        }
-        val chat = chatService.create(userId = defaultUserId, title = "Salute: $deviceId")
-        return bindingRepository.insertIfAbsent(
-            deviceId = deviceId,
-            userId = defaultUserId,
-            chatId = chat.id,
-            now = clock.instant(),
-        )
     }
 
     private fun execMessage(argv: List<String>): SaluteDeviceMessage =
@@ -214,6 +198,7 @@ class SaluteWebhookService(
         const val EXEC_TIMEOUT_MS: Long = 10_000L
         const val GREETING_MESSAGE = "Навык связи с Souz запущен. Задайте вопрос."
         const val NOT_CONNECTED_MESSAGE = "Устройство не подключено. Попробуйте позже."
+        const val NOT_BOUND_MESSAGE = "Устройство не привязано."
         const val SESSION_ENDED_MESSAGE = "Сеанс завершён."
         const val FALLBACK_REPLY = "Готово."
         // Appended to every user turn sent to the agent — mirrors picoclaw's Go client

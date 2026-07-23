@@ -26,6 +26,7 @@ import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.options.repository.OptionRepository
 import ru.souz.backend.options.service.OptionService
 import ru.souz.backend.salute.SaluteDeviceBindingRepository
+import ru.souz.backend.salute.SaluteDeviceBindingService
 import ru.souz.backend.salute.SaluteDeviceConnectionRegistry
 import ru.souz.backend.salute.SaluteExecRequestRegistry
 import ru.souz.backend.salute.SaluteWebhookService
@@ -211,6 +212,13 @@ fun backendDiModule(
         )
     }
     bindSingleton {
+        SaluteDeviceBindingService(
+            bindingRepository = instance(),
+            chatService = instance(),
+            clock = instance(),
+        )
+    }
+    bindSingleton {
         BackendConversationRuntimeFactory(
             baseSettingsProvider = instance(),
             llmApiFactory = { executionContext -> instance<LlmClientFactory>().create(executionContext) },
@@ -286,6 +294,7 @@ fun backendDiModule(
                 botApi = instance(),
                 executionService = instance(),
                 tokenCrypto = instance(),
+                saluteBindingService = instance(),
                 scope = instance<BackendApplicationScope>(),
                 maxConcurrency = appConfig.telegramPollingMaxConcurrency,
             )
@@ -297,11 +306,9 @@ fun backendDiModule(
         bindSingleton {
             SaluteWebhookService(
                 bindingRepository = instance(),
-                chatService = instance(),
                 connectionRegistry = instance(),
                 executionService = instance(),
                 applicationScope = instance<BackendApplicationScope>(),
-                defaultUserId = appConfig.saluteDefaultUserId,
                 execRequestRegistry = instance(),
                 clock = instance(),
             )

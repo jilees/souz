@@ -24,6 +24,8 @@ import ru.souz.backend.chat.service.SendMessageResult
 import ru.souz.backend.execution.model.AgentExecutionStatus
 import ru.souz.backend.execution.service.AgentExecutionService
 import ru.souz.backend.http.BackendV1Exception
+import ru.souz.backend.salute.SaluteDeviceBindOutcome
+import ru.souz.backend.salute.SaluteDeviceBindingService
 import ru.souz.backend.settings.service.UserSettingsOverrides
 
 fun interface TelegramTurnExecutor {
@@ -60,6 +62,7 @@ class TelegramBotPollingService(
     private val botApi: TelegramBotApi,
     private val turnExecutor: TelegramTurnExecutor,
     private val tokenCrypto: TelegramBotTokenCrypto,
+    private val saluteBindingService: SaluteDeviceBindingService,
     private val scope: CoroutineScope,
     private val clock: Clock = Clock.systemUTC(),
     private val instanceId: String = defaultInstanceId(),
@@ -77,6 +80,7 @@ class TelegramBotPollingService(
         botApi: TelegramBotApi,
         executionService: AgentExecutionService,
         tokenCrypto: TelegramBotTokenCrypto,
+        saluteBindingService: SaluteDeviceBindingService,
         scope: CoroutineScope,
         clock: Clock = Clock.systemUTC(),
         instanceId: String = defaultInstanceId(),
@@ -89,6 +93,7 @@ class TelegramBotPollingService(
         botApi = botApi,
         turnExecutor = AgentExecutionTelegramTurnExecutor(executionService),
         tokenCrypto = tokenCrypto,
+        saluteBindingService = saluteBindingService,
         scope = scope,
         clock = clock,
         instanceId = instanceId,
@@ -280,6 +285,12 @@ class TelegramBotPollingService(
             return binding
         }
 
+        val saluteBindArg = extractSaluteBindArg(text, binding.botUsername)
+        if (saluteBindArg != null) {
+            handleSaluteBind(binding, token, message.chat.id, saluteBindArg)
+            return binding
+        }
+
         if (text.isBlank()) {
             return binding
         }
@@ -318,6 +329,24 @@ class TelegramBotPollingService(
             sendReplySafely(binding.id, token, message.chat.id, GENERIC_FAILURE_REPLY)
         }
         return binding
+    }
+
+    private suspend fun handleSaluteBind(
+        binding: TelegramBotBinding,
+        token: String,
+        chatId: Long,
+        deviceId: String,
+    ) {
+        if (deviceId.isBlank()) {
+            sendReplySafely(binding.id, token, chatId, SALUTE_BIND_USAGE_REPLY)
+            return
+        }
+        val reply = when (saluteBindingService.bind(userId = binding.userId, deviceId = deviceId)) {
+            is SaluteDeviceBindOutcome.Bound -> "Колонка «$deviceId» привязана к этому чату."
+            is SaluteDeviceBindOutcome.AlreadyBoundToYou -> "Колонка «$deviceId» уже привязана к этому чату."
+            SaluteDeviceBindOutcome.BoundToAnotherUser -> SALUTE_BIND_TAKEN_REPLY
+        }
+        sendReplySafely(binding.id, token, chatId, reply)
     }
 
     private suspend fun sendAssistantReply(
@@ -448,6 +477,9 @@ class TelegramBotPollingService(
         const val ALREADY_BOUND_REPLY: String = "Этот бот уже привязан к другому Telegram-аккаунту."
         const val PENDING_LINK_REPLY: String = "Чтобы привязать этот чат, отправь команду из Souz."
         const val TOO_LONG_REPLY: String = "Сообщение слишком длинное."
+        const val SALUTE_BIND_COMMAND: String = "/salute_bind"
+        const val SALUTE_BIND_USAGE_REPLY: String = "Укажи идентификатор устройства: /salute_bind <deviceId>."
+        const val SALUTE_BIND_TAKEN_REPLY: String = "Это устройство уже привязано к другому пользователю."
 
         const val TELEGRAM_UNAUTHORIZED: String = "telegram_unauthorized"
         const val TELEGRAM_CONFLICT_WEBHOOK_ENABLED: String = "telegram_conflict_webhook_enabled"
@@ -477,6 +509,31 @@ class TelegramBotPollingService(
                 return null
             }
             return parts.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() }
+        }
+
+        /**
+         * Null means "not a /salute_bind command at all" (fall through to a normal agent
+         * turn). An empty string means the command was used without a device id, so the
+         * caller can reply with usage instead of silently ignoring it.
+         */
+        fun extractSaluteBindArg(
+            text: String,
+            botUsername: String?,
+        ): String? {
+            if (text.isBlank()) {
+                return null
+            }
+            val parts = text.split(Regex("\\s+"), limit = 2)
+            val command = parts.firstOrNull().orEmpty()
+            val commandName = command.substringBefore('@')
+            if (commandName != SALUTE_BIND_COMMAND) {
+                return null
+            }
+            val addressedBot = command.substringAfter('@', missingDelimiterValue = "")
+            if (addressedBot.isNotBlank() && (botUsername == null || !addressedBot.equals(botUsername, ignoreCase = true))) {
+                return null
+            }
+            return parts.getOrNull(1)?.trim().orEmpty()
         }
 
         fun telegramTextChunks(

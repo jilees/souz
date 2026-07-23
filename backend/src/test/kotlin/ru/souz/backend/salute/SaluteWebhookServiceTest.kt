@@ -16,14 +16,11 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import ru.souz.backend.chat.model.ChatMessage
 import ru.souz.backend.chat.model.ChatRole
-import ru.souz.backend.chat.service.ChatService
 import ru.souz.backend.chat.service.SendMessageResult
 import ru.souz.backend.execution.model.AgentExecution
 import ru.souz.backend.execution.model.AgentExecutionStatus
 import ru.souz.backend.salute.sandbox.SaluteToolAttributes
 import ru.souz.backend.settings.service.UserSettingsOverrides
-import ru.souz.backend.testutil.repository.MemoryChatRepository
-import ru.souz.backend.testutil.repository.MemoryMessageRepository
 import ru.souz.backend.testutil.repository.MemorySaluteDeviceBindingRepository
 import ru.souz.runtime.sandbox.SandboxCommandResult
 
@@ -69,10 +66,30 @@ class SaluteWebhookServiceTest {
     }
 
     @Test
+    fun `unbound device is told it's not bound, agent never runs`() = runTest {
+        val pusher = RecordingDevicePusher(connectedDevices = setOf("device-1"))
+        val executor = RecordingSaluteTurnExecutor()
+        val service = service(this, connectionRegistry = pusher, turnExecutor = executor)
+
+        service.handleWebhook(request(deviceId = "device-1", text = "hello"))
+        advanceUntilIdle()
+
+        assertTrue(executor.calls.isEmpty(), "agent must not run for an unbound device")
+        val speak = pusher.execCalls.single().message
+        assertTrue(speak.argv.orEmpty().last().contains("не привязано"))
+    }
+
+    @Test
     fun `connected device gets a silent response and the turn runs in the background`() = runTest {
         val pusher = RecordingDevicePusher(connectedDevices = setOf("device-1"))
         val executor = RecordingSaluteTurnExecutor(assistantResponse = "Ответ агента.")
         val bindingRepository = MemorySaluteDeviceBindingRepository()
+        bindingRepository.insertIfAbsent(
+            deviceId = "device-1",
+            userId = DEFAULT_USER_ID,
+            chatId = UUID.randomUUID(),
+            now = Instant.parse("2026-07-20T09:00:00Z"),
+        )
         val service = service(
             this,
             bindingRepository = bindingRepository,
@@ -112,6 +129,12 @@ class SaluteWebhookServiceTest {
         val pusher = RecordingDevicePusher(connectedDevices = setOf("device-1"))
         val executor = RecordingSaluteTurnExecutor()
         val bindingRepository = MemorySaluteDeviceBindingRepository()
+        bindingRepository.insertIfAbsent(
+            deviceId = "device-1",
+            userId = DEFAULT_USER_ID,
+            chatId = UUID.randomUUID(),
+            now = Instant.parse("2026-07-20T09:00:00Z"),
+        )
         val service = service(
             this,
             bindingRepository = bindingRepository,
@@ -167,11 +190,9 @@ class SaluteWebhookServiceTest {
         execRequestRegistry: SaluteExecRequestRegistry = SaluteExecRequestRegistry(),
     ): SaluteWebhookService = SaluteWebhookService(
         bindingRepository = bindingRepository,
-        chatService = ChatService(MemoryChatRepository(), MemoryMessageRepository()),
         connectionRegistry = connectionRegistry,
         turnExecutor = turnExecutor,
         applicationScope = scope,
-        defaultUserId = DEFAULT_USER_ID,
         execRequestRegistry = execRequestRegistry,
         clock = Clock.fixed(Instant.parse("2026-07-20T10:00:00Z"), ZoneOffset.UTC),
     )
