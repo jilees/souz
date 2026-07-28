@@ -10,6 +10,7 @@ import ru.souz.runtime.sandbox.RuntimeSandbox
 import ru.souz.runtime.sandbox.SandboxCommandRequest
 import ru.souz.runtime.sandbox.SandboxCommandResult
 import ru.souz.runtime.sandbox.SandboxCommandRuntime
+import ru.souz.runtime.sandbox.SkillCommandSandboxAttributes
 import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.skills.registry.SkillStorageScope
 import ru.souz.tool.BadInputException
@@ -27,6 +28,7 @@ class ToolRunSkillCommand(
         val skillId: String = "",
         val bundleHash: String = "",
         val supportingFiles: List<String> = emptyList(),
+        val runsOnDevice: Boolean = false,
     )
 
     data class Input(
@@ -100,7 +102,10 @@ class ToolRunSkillCommand(
         val skillId = SkillId(input.skillId.trim())
         val skill = input.activeSkills.firstOrNull { it.skillId == skillId.value }
             ?: throw BadInputException("Skill is not active for this turn: ${input.skillId}")
-        val sandbox = sandboxResolver.resolve(meta)
+        val resolverMeta = meta.copy(
+            attributes = meta.attributes + (SkillCommandSandboxAttributes.RUNS_ON_DEVICE to skill.runsOnDevice.toString()),
+        )
+        val sandbox = sandboxResolver.resolve(resolverMeta)
         val skillRoot = resolveSkillRoot(sandbox = sandbox, skill = skill, userId = meta.userId)
         val workingDirectory = resolveWorkingDirectory(skillRoot, input.workingDirectory)
         val scriptPath = resolveScriptPath(sandbox, skillRoot, input.scriptPath)

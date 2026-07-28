@@ -11,6 +11,7 @@ import ru.souz.db.SettingsProvider
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.runtime.sandbox.RuntimeSandbox
 import ru.souz.runtime.sandbox.SandboxMode
+import ru.souz.runtime.sandbox.SkillCommandSandboxAttributes
 import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.tool.BadInputException
 import kotlin.test.AfterTest
@@ -36,18 +37,33 @@ class BackendSaluteAwareToolInvocationRuntimeSandboxResolverTest {
             deviceResolver = fakeDeviceResolver { SaluteDeviceResolution.NotASaluteUser },
         )
 
+        val result = resolver.resolve(runsOnDeviceMeta())
+
+        assertEquals(fallbackSandbox, result)
+    }
+
+    @Test
+    fun `skill that does not run on device delegates to fallback without querying device resolver`() {
+        val fallbackSandbox = mockk<RuntimeSandbox> { every { mode } returns SandboxMode.LOCAL }
+        val resolver = resolver(
+            fallback = ToolInvocationRuntimeSandboxResolver.fixed(fallbackSandbox),
+            deviceResolver = fakeDeviceResolver {
+                error("device resolver must not be queried when the skill does not opt into device execution")
+            },
+        )
+
         val result = resolver.resolve(ToolInvocationMeta(userId = "user-1"))
 
         assertEquals(fallbackSandbox, result)
     }
 
     @Test
-    fun `resolved device returns a salute sandbox`() {
+    fun `resolved device returns a salute sandbox when skill runs on device`() {
         val resolver = resolver(
             deviceResolver = fakeDeviceResolver { SaluteDeviceResolution.Resolved("device-1") },
         )
 
-        val result = resolver.resolve(ToolInvocationMeta(userId = "user-1"))
+        val result = resolver.resolve(runsOnDeviceMeta())
 
         assertIs<SaluteRuntimeSandbox>(result)
         assertEquals(SandboxMode.SALUTE, result.mode)
@@ -60,7 +76,7 @@ class BackendSaluteAwareToolInvocationRuntimeSandboxResolverTest {
             deviceResolver = fakeDeviceResolver { SaluteDeviceResolution.NotConnected(setOf("device-1")) },
         )
 
-        assertFailsWith<BadInputException> { resolver.resolve(ToolInvocationMeta(userId = "user-1")) }
+        assertFailsWith<BadInputException> { resolver.resolve(runsOnDeviceMeta()) }
     }
 
     @Test
@@ -69,7 +85,7 @@ class BackendSaluteAwareToolInvocationRuntimeSandboxResolverTest {
             deviceResolver = fakeDeviceResolver { SaluteDeviceResolution.Ambiguous(setOf("device-1", "device-2")) },
         )
 
-        assertFailsWith<BadInputException> { resolver.resolve(ToolInvocationMeta(userId = "user-1")) }
+        assertFailsWith<BadInputException> { resolver.resolve(runsOnDeviceMeta()) }
     }
 
     @Test
@@ -99,6 +115,11 @@ class BackendSaluteAwareToolInvocationRuntimeSandboxResolverTest {
             )
         }
     }
+
+    private fun runsOnDeviceMeta(): ToolInvocationMeta = ToolInvocationMeta(
+        userId = "user-1",
+        attributes = mapOf(SkillCommandSandboxAttributes.RUNS_ON_DEVICE to "true"),
+    )
 
     private fun resolver(
         fallback: ToolInvocationRuntimeSandboxResolver = ToolInvocationRuntimeSandboxResolver.fixed(

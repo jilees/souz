@@ -11,6 +11,7 @@ import ru.souz.db.SettingsProvider
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.runtime.sandbox.SandboxCommandRuntime
 import ru.souz.runtime.sandbox.SandboxScope
+import ru.souz.runtime.sandbox.SkillCommandSandboxAttributes
 import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.runtime.sandbox.local.LocalRuntimeSandbox
 import ru.souz.skills.registry.SkillStorageScope
@@ -20,6 +21,7 @@ import kotlin.io.path.writeText
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class ToolRunSkillCommandTest {
@@ -199,6 +201,64 @@ class ToolRunSkillCommandTest {
         assertContains(result, "exitCode: 0")
     }
 
+    @Test
+    fun `forwards active skill runsOnDevice as a sandbox resolver attribute`() = runTest {
+        val home = createTempDirectory("skill-command-runs-on-device-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        val skillRoot = stateRoot.resolve("skills/device-skill").createDirectories()
+        skillRoot.resolve("scripts").createDirectories()
+        skillRoot.resolve("scripts/echo.sh").writeText("printf ok")
+        val sandbox = createSandbox(home = home, stateRoot = stateRoot)
+        val observedAttributes = mutableListOf<Map<String, String>>()
+        val resolver = ToolInvocationRuntimeSandboxResolver { meta ->
+            observedAttributes += meta.attributes
+            sandbox
+        }
+        val tool = ToolRunSkillCommand(sandboxResolver = resolver)
+
+        tool.suspendInvoke(
+            ToolRunSkillCommand.Input(
+                skillId = "device-skill",
+                runtime = SandboxCommandRuntime.BASH,
+                scriptPath = "scripts/echo.sh",
+                timeoutMillis = 1_000,
+                activeSkills = listOf(activeSkill("device-skill", runsOnDevice = true)),
+            ),
+            ToolInvocationMeta(userId = "user-1"),
+        )
+
+        assertEquals("true", observedAttributes.single()[SkillCommandSandboxAttributes.RUNS_ON_DEVICE])
+    }
+
+    @Test
+    fun `defaults runsOnDevice attribute to false when active skill does not declare it`() = runTest {
+        val home = createTempDirectory("skill-command-no-device-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        val skillRoot = stateRoot.resolve("skills/server-skill").createDirectories()
+        skillRoot.resolve("scripts").createDirectories()
+        skillRoot.resolve("scripts/echo.sh").writeText("printf ok")
+        val sandbox = createSandbox(home = home, stateRoot = stateRoot)
+        val observedAttributes = mutableListOf<Map<String, String>>()
+        val resolver = ToolInvocationRuntimeSandboxResolver { meta ->
+            observedAttributes += meta.attributes
+            sandbox
+        }
+        val tool = ToolRunSkillCommand(sandboxResolver = resolver)
+
+        tool.suspendInvoke(
+            ToolRunSkillCommand.Input(
+                skillId = "server-skill",
+                runtime = SandboxCommandRuntime.BASH,
+                scriptPath = "scripts/echo.sh",
+                timeoutMillis = 1_000,
+                activeSkills = listOf(activeSkill("server-skill")),
+            ),
+            ToolInvocationMeta(userId = "user-1"),
+        )
+
+        assertEquals("false", observedAttributes.single()[SkillCommandSandboxAttributes.RUNS_ON_DEVICE])
+    }
+
     private fun createSandbox(
         home: Path,
         stateRoot: Path,
@@ -216,10 +276,12 @@ class ToolRunSkillCommandTest {
     private fun activeSkill(
         skillId: String,
         bundleHash: String = "a".repeat(64),
+        runsOnDevice: Boolean = false,
     ): ToolRunSkillCommand.ActiveSkillInput = ToolRunSkillCommand.ActiveSkillInput(
         skillId = skillId,
         bundleHash = bundleHash,
         supportingFiles = listOf("scripts/echo.sh"),
+        runsOnDevice = runsOnDevice,
     )
 
     private fun createTempDirectory(prefix: String): Path =

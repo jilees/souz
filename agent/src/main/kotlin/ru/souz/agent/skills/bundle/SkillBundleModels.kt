@@ -56,6 +56,8 @@ data class SkillManifest(
     val description: String,
     val author: String? = null,
     val version: String? = null,
+    /** Declares that this skill's scripts must run on the user's own physical device (e.g. a connected Salute speaker) rather than the server-side Local/Docker sandbox. */
+    val runsOnDevice: Boolean = false,
     val metadata: Map<String, String> = emptyMap(),
     val rawFrontmatter: String,
 )

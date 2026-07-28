@@ -46,9 +46,16 @@ object SkillBundleParser {
             description = description,
             author = parsedMap["author"]?.takeIf { it.isNotBlank() },
             version = parsedMap["version"]?.takeIf { it.isNotBlank() },
+            runsOnDevice = parseRunsOnDevice(parsedMap["runsOnDevice"]),
             metadata = metadata,
             rawFrontmatter = frontmatter,
         )
+    }
+
+    private fun parseRunsOnDevice(raw: String?): Boolean {
+        val trimmed = raw?.trim()?.takeIf(String::isNotEmpty) ?: return false
+        return trimmed.toBooleanStrictOrNull()
+            ?: throw SkillBundleException("SKILL.md frontmatter field 'runsOnDevice' must be 'true' or 'false', got: $trimmed")
     }
 
     private fun parseYamlLikeMap(frontmatter: String): Map<String, String> {

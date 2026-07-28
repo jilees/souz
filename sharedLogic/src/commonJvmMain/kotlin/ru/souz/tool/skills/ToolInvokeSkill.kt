@@ -128,6 +128,7 @@ class ToolInvokeSkill(
                         supportingFiles = bundle.files
                             .map { it.normalizedPath }
                             .filterNot { it == SKILL_MARKDOWN_PATH },
+                        runsOnDevice = bundle.manifest.runsOnDevice,
                     )
                 ),
             )
