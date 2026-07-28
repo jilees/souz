@@ -89,7 +89,7 @@ class BackendSaluteAwareToolInvocationRuntimeSandboxResolverTest {
     }
 
     @Test
-    fun `explicit device id attribute takes precedence but must be connected`() {
+    fun `explicit device id attribute takes precedence but must be connected, when skill runs on device`() {
         val resolver = resolver(
             deviceResolver = object : SaluteConnectedDeviceResolver {
                 override fun resolveForUser(userId: String) = SaluteDeviceResolution.Resolved("device-other")
@@ -100,7 +100,10 @@ class BackendSaluteAwareToolInvocationRuntimeSandboxResolverTest {
         val result = resolver.resolve(
             ToolInvocationMeta(
                 userId = "user-1",
-                attributes = mapOf(SaluteToolAttributes.DEVICE_ID to "device-explicit-connected"),
+                attributes = mapOf(
+                    SkillCommandSandboxAttributes.RUNS_ON_DEVICE to "true",
+                    SaluteToolAttributes.DEVICE_ID to "device-explicit-connected",
+                ),
             )
         )
         assertIs<SaluteRuntimeSandbox>(result)
@@ -110,10 +113,36 @@ class BackendSaluteAwareToolInvocationRuntimeSandboxResolverTest {
             resolver.resolve(
                 ToolInvocationMeta(
                     userId = "user-1",
-                    attributes = mapOf(SaluteToolAttributes.DEVICE_ID to "device-explicit-disconnected"),
+                    attributes = mapOf(
+                        SkillCommandSandboxAttributes.RUNS_ON_DEVICE to "true",
+                        SaluteToolAttributes.DEVICE_ID to "device-explicit-disconnected",
+                    ),
                 )
             )
         }
+    }
+
+    @Test
+    fun `explicit device id is ignored when skill does not run on device, even from a voice-originated call`() {
+        val fallbackSandbox = mockk<RuntimeSandbox> { every { mode } returns SandboxMode.LOCAL }
+        val resolver = resolver(
+            fallback = ToolInvocationRuntimeSandboxResolver.fixed(fallbackSandbox),
+            deviceResolver = object : SaluteConnectedDeviceResolver {
+                override fun resolveForUser(userId: String) =
+                    error("device resolver must not be queried when the skill does not opt into device execution")
+                override fun isConnected(deviceId: String) =
+                    error("device resolver must not be queried when the skill does not opt into device execution")
+            },
+        )
+
+        val result = resolver.resolve(
+            ToolInvocationMeta(
+                userId = "user-1",
+                attributes = mapOf(SaluteToolAttributes.DEVICE_ID to "device-explicit-connected"),
+            )
+        )
+
+        assertEquals(fallbackSandbox, result)
     }
 
     private fun runsOnDeviceMeta(): ToolInvocationMeta = ToolInvocationMeta(

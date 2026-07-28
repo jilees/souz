@@ -12,10 +12,14 @@ import ru.souz.tool.BadInputException
  * singleton, which is also used by general-purpose file tools and skill bundle storage that must
  * never be routed to a device with no shared filesystem.
  *
- * Having a connected device bound to the user is not enough on its own to route there: the active
- * skill's manifest must also declare `runsOnDevice: true` (surfaced via
- * [SkillCommandSandboxAttributes.RUNS_ON_DEVICE]), except when the call originates from the device
- * itself (explicit device id attribute) — that case always targets the calling device.
+ * The active skill's manifest declaring `runsOnDevice: true` (surfaced via
+ * [SkillCommandSandboxAttributes.RUNS_ON_DEVICE]) is the ONLY signal that routes execution to a
+ * Salute device — this is checked first and is absolute. In particular, a call that originates
+ * from the device itself (voice channel, explicit device id attribute) does NOT by itself force
+ * device routing: a skill that doesn't declare `runsOnDevice` still runs on Local/Docker even when
+ * the user is talking directly to their colonka. The explicit device id only ever matters as a
+ * *device selection* hint (which of possibly several connected devices to target) once a skill has
+ * already opted into device execution.
  */
 class BackendSaluteAwareToolInvocationRuntimeSandboxResolver(
     private val fallback: ToolInvocationRuntimeSandboxResolver,
@@ -23,6 +27,10 @@ class BackendSaluteAwareToolInvocationRuntimeSandboxResolver(
     private val saluteSandboxes: SaluteRuntimeSandboxProvider,
 ) : ToolInvocationRuntimeSandboxResolver {
     override fun resolve(meta: ToolInvocationMeta): RuntimeSandbox {
+        val skillRunsOnDevice = meta.attributes[SkillCommandSandboxAttributes.RUNS_ON_DEVICE] == "true"
+        if (!skillRunsOnDevice) {
+            return fallback.resolve(meta)
+        }
         val userId = meta.userId.trim()
         val explicitDeviceId = meta.attributes[SaluteToolAttributes.DEVICE_ID]?.trim()?.takeIf(String::isNotEmpty)
         if (explicitDeviceId != null) {
@@ -30,10 +38,6 @@ class BackendSaluteAwareToolInvocationRuntimeSandboxResolver(
                 throw BadInputException("Salute device $explicitDeviceId is not connected.")
             }
             return saluteSandboxes.get(userId, explicitDeviceId)
-        }
-        val skillRunsOnDevice = meta.attributes[SkillCommandSandboxAttributes.RUNS_ON_DEVICE] == "true"
-        if (!skillRunsOnDevice) {
-            return fallback.resolve(meta)
         }
         return when (val resolution = deviceResolver.resolveForUser(userId)) {
             is SaluteDeviceResolution.Resolved -> saluteSandboxes.get(userId, resolution.deviceId)
