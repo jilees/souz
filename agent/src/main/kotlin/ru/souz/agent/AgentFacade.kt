@@ -26,7 +26,7 @@ class AgentFacade internal constructor(
 ) {
     private val l = LoggerFactory.getLogger(AgentFacade::class.java)
 
-    val availableAgents: List<AgentId> = executor.availableAgents
+    val availableAgents: List<AgentId> = contextFactory.availableAgents
 
     private val _activeAgentId = MutableStateFlow(contextFactory.normalizeAgentId(settingsProvider.activeAgentId))
     val activeAgentId: StateFlow<AgentId> = _activeAgentId.asStateFlow()
@@ -133,10 +133,6 @@ class AgentFacade internal constructor(
                 sessionService.onStep(step, node, from, to)
             }
             _currentContext.emit(result.context.copy(toolInvocationMeta = baseContext.toolInvocationMeta))
-            if (generation == executionGeneration) {
-                runCatching { result.captureCompletedTurn() }
-                    .onFailure { e -> l.warn("memory capture completion failed", e) }
-            }
             result
         } finally {
             runCatching { sessionService.finishTask() }

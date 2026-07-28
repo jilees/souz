@@ -9,12 +9,14 @@ import java.time.Clock
 import org.kodein.di.DI
 import org.kodein.di.bindSingleton
 import org.kodein.di.instance
+import ru.souz.agent.knowledge.ConversationKnowledgeStore
 import ru.souz.agent.spi.SkillToolBindingTags
 import ru.souz.backend.agent.session.AgentStateBackedSessionRepository
 import ru.souz.backend.app.BackendAppConfig
 import ru.souz.backend.agent.runtime.BackendSandboxScopeResolver
 import ru.souz.backend.agent.runtime.BackendConversationRuntimeFactory
 import ru.souz.backend.agent.runtime.BackendConversationRuntimeTurnRunner
+import ru.souz.backend.agent.runtime.BackendSkillCoreToolsFactory
 import ru.souz.backend.agent.session.AgentStateRepository
 import ru.souz.backend.agent.session.AgentSessionRepository
 import ru.souz.backend.bootstrap.BackendBootstrapService
@@ -42,6 +44,7 @@ import ru.souz.backend.execution.service.AgentExecutionFinalizer
 import ru.souz.backend.execution.service.AgentExecutionLauncher
 import ru.souz.backend.execution.service.AgentExecutionRequestFactory
 import ru.souz.backend.execution.service.AgentExecutionService
+import ru.souz.backend.http.BackendHttpDependencies
 import ru.souz.backend.keys.repository.UserProviderKeyRepository
 import ru.souz.backend.keys.service.UserProviderKeyService
 import ru.souz.backend.llm.BackendLlmClientFactory
@@ -70,6 +73,7 @@ import ru.souz.backend.storage.postgres.PostgresUserProviderKeyRepository
 import ru.souz.backend.storage.postgres.PostgresUserSettingsRepository
 import ru.souz.backend.toolcall.repository.ToolCallRepository
 import ru.souz.backend.user.repository.UserRepository
+import ru.souz.db.SettingsProvider
 import ru.souz.llms.local.LocalProviderAvailability
 import ru.souz.runtime.di.runtimeCoreDiModule
 import ru.souz.runtime.di.runtimeLlmDiModule
@@ -83,8 +87,6 @@ import ru.souz.skills.registry.FileSystemSkillRegistryConfig
 import ru.souz.skills.registry.SkillStorageScope
 import ru.souz.tool.runtimeToolsDiModule
 import ru.souz.tool.skills.ToolRunSkillCommand
-import ru.souz.llms.LLMToolSetup
-import ru.souz.llms.giga.toGiga
 
 private object BackendDiTags {
     const val LOG_OBJECT_MAPPER = "backendLogObjectMapper"
@@ -219,21 +221,29 @@ fun backendDiModule(
         )
     }
     bindSingleton {
+        BackendSkillCoreToolsFactory(
+            skillRegistryRepository = instance(),
+            legacyCommandTool = instance(tag = SkillToolBindingTags.COMMAND_TOOL),
+            getKnowledgeTool = instance(tag = SkillToolBindingTags.GET_KNOWLEDGE_TOOL),
+            searchKnowledgeTool = instance(tag = SkillToolBindingTags.SEARCH_KNOWLEDGE_TOOL),
+            commandTool = if (appConfig.featureFlags.saluteVoice) {
+                instance(tag = BackendDiTags.SALUTE_AWARE_COMMAND_TOOL)
+            } else {
+                instance<ToolRunSkillCommand>()
+            },
+        )
+    }
+    bindSingleton {
         BackendConversationRuntimeFactory(
             baseSettingsProvider = instance(),
             llmApiFactory = { executionContext -> instance<LlmClientFactory>().create(executionContext) },
             sessionRepository = instance(),
             logObjectMapper = instance(BackendDiTags.LOG_OBJECT_MAPPER),
             systemPrompt = systemPrompt,
+            configuredAgentId = appConfig.agentId,
             toolCatalog = instance(),
-            toolsFilter = instance(),
-            skillCommandTool = instance(
-                tag = if (appConfig.featureFlags.saluteVoice) {
-                    BackendDiTags.SALUTE_AWARE_COMMAND_TOOL
-                } else {
-                    SkillToolBindingTags.COMMAND_TOOL
-                }
-            ),
+            skillCoreToolsFactory = instance(),
+            knowledgeStore = instance<ConversationKnowledgeStore>(),
             skillRegistryRepository = instance(),
             agentBackgroundScope = instance<BackendApplicationScope>(),
         )
@@ -323,7 +333,7 @@ fun backendDiModule(
                 execRequestRegistry = instance(),
             )
         }
-        bindSingleton<LLMToolSetup>(tag = BackendDiTags.SALUTE_AWARE_COMMAND_TOOL) {
+        bindSingleton<ToolRunSkillCommand>(tag = BackendDiTags.SALUTE_AWARE_COMMAND_TOOL) {
             ToolRunSkillCommand(
                 sandboxResolver = BackendSaluteAwareToolInvocationRuntimeSandboxResolver(
                     fallback = instance(),
@@ -331,7 +341,7 @@ fun backendDiModule(
                     saluteSandboxes = instance(),
                 ),
                 skillStorageScope = SkillStorageScope.USER_SCOPED,
-            ).toGiga()
+            )
         }
     }
     bindSingleton {
@@ -356,6 +366,31 @@ fun backendDiModule(
             featureFlags = instance(),
             localModelAvailability = instance<LocalProviderAvailability>(),
             userProviderKeyRepository = instance(),
+        )
+    }
+    bindSingleton {
+        val featureFlags = instance<BackendFeatureFlags>()
+        val settingsProvider = instance<SettingsProvider>()
+        val userRepository = instance<UserRepository>()
+        BackendHttpDependencies(
+            bootstrapService = instance(),
+            onboardingService = instance(),
+            userSettingsService = instance(),
+            providerKeyService = instance(),
+            chatService = instance(),
+            messageService = instance(),
+            executionService = instance(),
+            optionService = instance(),
+            eventService = instance(),
+            telegramBotBindingService = if (featureFlags.telegramBot) instance() else null,
+            saluteWebhookService = if (featureFlags.saluteVoice) instance() else null,
+            saluteDeviceConnectionRegistry = if (featureFlags.saluteVoice) instance() else null,
+            saluteDeviceBindingRepository = if (featureFlags.saluteVoice) instance() else null,
+            saluteExecRequestRegistry = if (featureFlags.saluteVoice) instance() else null,
+            featureFlags = featureFlags,
+            selectedModel = { settingsProvider.gigaModel.alias },
+            trustedProxyToken = { appConfig.server.proxyToken },
+            ensureTrustedUser = userRepository::ensureUser,
         )
     }
 }

@@ -1,5 +1,6 @@
 package ru.souz.backend.app
 
+import ru.souz.agent.AgentId
 import ru.souz.backend.common.BackendConfigurationException
 import ru.souz.backend.config.BackendConfigSource
 import ru.souz.backend.config.BackendFeatureFlags
@@ -50,6 +51,22 @@ data class BackendProviderRetryPolicy(
     }
 }
 
+data class BackendServerConfig(
+    val host: String,
+    val port: Int,
+    val proxyToken: String?,
+) {
+    fun validate(): BackendServerConfig {
+        if (host.isBlank()) {
+            throw BackendConfigurationException("SOUZ_BACKEND_HOST / souz.backend.host must not be blank.")
+        }
+        if (port !in 1..65_535) {
+            throw BackendConfigurationException("Backend server port must be between 1 and 65535.")
+        }
+        return this
+    }
+}
+
 data class BackendPostgresConfig(
     val host: String,
     val port: Int,
@@ -86,15 +103,17 @@ data class BackendPostgresConfig(
 
 data class BackendAppConfig(
     val featureFlags: BackendFeatureFlags,
+    val server: BackendServerConfig,
     val postgres: BackendPostgresConfig,
-    val proxyToken: String?,
     val masterKey: String? = null,
     val telegramTokenEncryptionKey: String? = null,
     val telegramPollingMaxConcurrency: Int = 4,
     val llmLimits: BackendLlmLimits = BackendLlmLimits(),
     val providerRetryPolicy: BackendProviderRetryPolicy = BackendProviderRetryPolicy(),
+    val agentId: AgentId = AgentId.default,
 ) {
     fun validate(): BackendAppConfig {
+        server.validate()
         postgres.validate()
         if (masterKey.isNullOrBlank()) {
             throw BackendConfigurationException("SOUZ_MASTER_KEY / souz.masterKey must not be blank.")
@@ -116,6 +135,21 @@ data class BackendAppConfig(
         fun load(source: BackendConfigSource = SystemBackendConfigSource): BackendAppConfig =
             BackendAppConfig(
                 featureFlags = BackendFeatureFlags.load(source),
+                server = BackendServerConfig(
+                    host = source.value(
+                        envKey = "SOUZ_BACKEND_HOST",
+                        propertyKey = "souz.backend.host",
+                    )?.trim() ?: "127.0.0.1",
+                    port = source.intValue(
+                        envKey = "SOUZ_BACKEND_PORT",
+                        propertyKey = "souz.backend.port",
+                        default = 8080,
+                    ),
+                    proxyToken = source.value(
+                        envKey = "SOUZ_BACKEND_PROXY_TOKEN",
+                        propertyKey = "souz.backend.proxyToken",
+                    )?.trim()?.takeIf { it.isNotEmpty() },
+                ),
                 postgres = BackendPostgresConfig(
                     host = source.stringValue(
                         envKey = "SOUZ_BACKEND_DB_HOST",
@@ -157,10 +191,6 @@ data class BackendAppConfig(
                         default = 30_000L,
                     ),
                 ),
-                proxyToken = source.value(
-                    envKey = "SOUZ_BACKEND_PROXY_TOKEN",
-                    propertyKey = "souz.backend.proxyToken",
-                )?.trim()?.takeIf { it.isNotEmpty() },
                 masterKey = source.value(
                     envKey = "SOUZ_MASTER_KEY",
                     propertyKey = "souz.masterKey",
@@ -213,6 +243,10 @@ data class BackendAppConfig(
                         default = 5_000L,
                     ),
                 ),
+                agentId = source.agentIdValue(
+                    envKey = "SOUZ_BACKEND_AGENT",
+                    propertyKey = "souz.backend.agent",
+                ),
             )
     }
 }
@@ -242,4 +276,19 @@ private fun BackendConfigSource.longValue(
     val rawValue = value(envKey, propertyKey)?.trim()?.takeIf { it.isNotEmpty() } ?: return default
     return rawValue.toLongOrNull()
         ?: throw BackendConfigurationException("Invalid long value '$rawValue' for $envKey / $propertyKey.")
+}
+
+private fun BackendConfigSource.agentIdValue(
+    envKey: String,
+    propertyKey: String,
+): AgentId {
+    val rawValue = value(envKey, propertyKey)?.trim()?.takeIf { it.isNotEmpty() }
+        ?: return AgentId.default
+    return when (rawValue.lowercase()) {
+        AgentId.GRAPH.storageValue -> AgentId.GRAPH
+        AgentId.SKILLS_GRAPH.storageValue -> AgentId.SKILLS_GRAPH
+        else -> throw BackendConfigurationException(
+            "Invalid value '$rawValue' for $envKey / $propertyKey. Expected one of: graph, skills."
+        )
+    }
 }

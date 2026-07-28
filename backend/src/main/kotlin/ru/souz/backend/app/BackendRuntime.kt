@@ -4,23 +4,8 @@ import org.kodein.di.DI
 import org.kodein.di.direct
 import org.kodein.di.instance
 import org.slf4j.LoggerFactory
-import ru.souz.backend.bootstrap.BackendBootstrapService
-import ru.souz.backend.chat.service.ChatService
-import ru.souz.backend.chat.service.MessageService
-import ru.souz.backend.options.service.OptionService
-import ru.souz.backend.config.BackendFeatureFlags
-import ru.souz.backend.events.service.AgentEventService
-import ru.souz.backend.execution.service.AgentExecutionService
-import ru.souz.backend.keys.service.UserProviderKeyService
-import ru.souz.backend.onboarding.BackendOnboardingService
-import ru.souz.backend.salute.SaluteDeviceBindingRepository
-import ru.souz.backend.salute.SaluteDeviceConnectionRegistry
-import ru.souz.backend.salute.SaluteExecRequestRegistry
-import ru.souz.backend.salute.SaluteWebhookService
-import ru.souz.backend.settings.service.UserSettingsService
-import ru.souz.backend.telegram.TelegramBotBindingService
+import ru.souz.backend.http.BackendHttpDependencies
 import ru.souz.backend.telegram.TelegramBotPollingService
-import ru.souz.backend.user.repository.UserRepository
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.local.LocalLlamaRuntime
 
@@ -30,40 +15,12 @@ private val log = LoggerFactory.getLogger("SouzBackendRuntime")
 class BackendRuntime private constructor(
     private val di: DI,
 ) : AutoCloseable {
-    val bootstrapService: BackendBootstrapService by lazy { di.direct.instance() }
-    val onboardingService: BackendOnboardingService by lazy { di.direct.instance() }
-    val userSettingsService: UserSettingsService by lazy { di.direct.instance() }
-    val userProviderKeyService: UserProviderKeyService by lazy { di.direct.instance() }
-    val chatService: ChatService by lazy { di.direct.instance() }
-    val messageService: MessageService by lazy { di.direct.instance() }
-    val executionService: AgentExecutionService by lazy { di.direct.instance() }
-    val optionService: OptionService by lazy { di.direct.instance() }
-    val eventService: AgentEventService by lazy { di.direct.instance() }
-    val featureFlags: BackendFeatureFlags by lazy { di.direct.instance() }
-    val telegramBotBindingService: TelegramBotBindingService? by lazy {
-        if (featureFlags.telegramBot) di.direct.instance() else null
+    internal val httpDependencies: BackendHttpDependencies by lazy { di.direct.instance() }
+    private val telegramBotPollingService: TelegramBotPollingService? by lazy {
+        if (httpDependencies.featureFlags.telegramBot) di.direct.instance() else null
     }
-    val telegramBotPollingService: TelegramBotPollingService? by lazy {
-        if (featureFlags.telegramBot) di.direct.instance() else null
-    }
-    val saluteWebhookService: SaluteWebhookService? by lazy {
-        if (featureFlags.saluteVoice) di.direct.instance() else null
-    }
-    val saluteDeviceConnectionRegistry: SaluteDeviceConnectionRegistry? by lazy {
-        if (featureFlags.saluteVoice) di.direct.instance() else null
-    }
-    val saluteDeviceBindingRepository: SaluteDeviceBindingRepository? by lazy {
-        if (featureFlags.saluteVoice) di.direct.instance() else null
-    }
-    val saluteExecRequestRegistry: SaluteExecRequestRegistry? by lazy {
-        if (featureFlags.saluteVoice) di.direct.instance() else null
-    }
-    val userRepository: UserRepository by lazy { di.direct.instance() }
     private val resources: BackendRuntimeResources by lazy { di.direct.instance() }
-    private val settingsProvider: SettingsProvider by lazy { di.direct.instance() }
     private val localRuntime: LocalLlamaRuntime by lazy { di.direct.instance() }
-
-    fun selectedModel(): String = settingsProvider.gigaModel.alias
 
     fun startBackgroundServices() {
         telegramBotPollingService?.start()
