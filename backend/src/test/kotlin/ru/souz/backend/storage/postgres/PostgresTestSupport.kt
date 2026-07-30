@@ -39,6 +39,10 @@ internal fun postgresAppConfig(
             proxyToken = null,
         ),
         masterKey = "test-master-key",
+        skillOAuthTokenEncryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        yandexOAuthClientId = "test-yandex-client-id",
+        yandexOAuthClientSecret = "test-yandex-client-secret",
+        yandexOAuthRedirectUri = "https://backend.test/oauth/callback",
         postgres = BackendPostgresConfig(
             host = container.host,
             port = container.firstMappedPort,

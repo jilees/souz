@@ -19,6 +19,10 @@ internal object BackendHttpRoutes {
     const val SALUTE_WEBHOOK = "/salute/webhook"
     const val SALUTE_WS = "/salute/ws"
 
+    // Outside /v1/ for the same reason as Salute's webhook above: the OAuth provider's redirect
+    // never carries our trusted-proxy headers, so it cannot land under /v1/.
+    const val OAUTH_CALLBACK = "/oauth/callback"
+
     private const val PROVIDER_PARAMETER = "{provider}"
     private const val CHAT_ID_PARAMETER = "{chatId}"
     private const val EXECUTION_ID_PARAMETER = "{executionId}"

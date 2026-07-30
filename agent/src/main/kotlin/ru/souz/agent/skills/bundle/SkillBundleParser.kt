@@ -47,6 +47,8 @@ object SkillBundleParser {
             author = parsedMap["author"]?.takeIf { it.isNotBlank() },
             version = parsedMap["version"]?.takeIf { it.isNotBlank() },
             runsOnDevice = parseRunsOnDevice(parsedMap["runsOnDevice"]),
+            oauthProvider = parsedMap["oauthProvider"]?.takeIf { it.isNotBlank() },
+            oauthScopes = parseIndentedList(frontmatter, "oauthScopes"),
             metadata = metadata,
             rawFrontmatter = frontmatter,
         )
@@ -56,6 +58,22 @@ object SkillBundleParser {
         val trimmed = raw?.trim()?.takeIf(String::isNotEmpty) ?: return false
         return trimmed.toBooleanStrictOrNull()
             ?: throw SkillBundleException("SKILL.md frontmatter field 'runsOnDevice' must be 'true' or 'false', got: $trimmed")
+    }
+
+    private fun parseIndentedList(frontmatter: String, key: String): List<String> {
+        val lines = frontmatter.lines()
+        val startIndex = lines.indexOfFirst { it.trim() == "$key:" }
+        if (startIndex < 0) return emptyList()
+
+        val values = mutableListOf<String>()
+        for (lineIndex in startIndex + 1 until lines.size) {
+            val line = lines[lineIndex]
+            if (!line.startsWith("  ")) break
+            val trimmed = line.trim()
+            if (!trimmed.startsWith("- ")) break
+            values += trimmed.removePrefix("-").trim().trim('"', '\'')
+        }
+        return values
     }
 
     private fun parseYamlLikeMap(frontmatter: String): Map<String, String> {

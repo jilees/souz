@@ -108,6 +108,10 @@ data class BackendAppConfig(
     val masterKey: String? = null,
     val telegramTokenEncryptionKey: String? = null,
     val telegramPollingMaxConcurrency: Int = 4,
+    val skillOAuthTokenEncryptionKey: String? = null,
+    val yandexOAuthClientId: String? = null,
+    val yandexOAuthClientSecret: String? = null,
+    val yandexOAuthRedirectUri: String? = null,
     val llmLimits: BackendLlmLimits = BackendLlmLimits(),
     val providerRetryPolicy: BackendProviderRetryPolicy = BackendProviderRetryPolicy(),
     val agentId: AgentId = AgentId.default,
@@ -126,6 +130,10 @@ data class BackendAppConfig(
         if (telegramPollingMaxConcurrency <= 0) {
             throw BackendConfigurationException("Telegram polling max concurrency must be positive.")
         }
+        // Skill OAuth config (skillOAuthTokenEncryptionKey/yandexOAuth*) is intentionally not
+        // validated here — it is unconditionally wired in BackendDiModule (no feature flag), but
+        // each value is only required lazily at the point it's actually used there, so that
+        // config-validation tests unrelated to OAuth don't all need to supply Yandex credentials.
         llmLimits.validate()
         providerRetryPolicy.validate()
         return this
@@ -204,6 +212,22 @@ data class BackendAppConfig(
                     propertyKey = "souz.telegram.pollingMaxConcurrency",
                     default = 4,
                 ),
+                skillOAuthTokenEncryptionKey = source.value(
+                    envKey = "SKILL_OAUTH_TOKEN_ENCRYPTION_KEY",
+                    propertyKey = "souz.skillOAuth.tokenEncryptionKey",
+                )?.trim()?.takeIf { it.isNotEmpty() },
+                yandexOAuthClientId = source.value(
+                    envKey = "YANDEX_OAUTH_CLIENT_ID",
+                    propertyKey = "souz.skillOAuth.yandex.clientId",
+                )?.trim()?.takeIf { it.isNotEmpty() },
+                yandexOAuthClientSecret = source.value(
+                    envKey = "YANDEX_OAUTH_CLIENT_SECRET",
+                    propertyKey = "souz.skillOAuth.yandex.clientSecret",
+                )?.trim()?.takeIf { it.isNotEmpty() },
+                yandexOAuthRedirectUri = source.value(
+                    envKey = "YANDEX_OAUTH_REDIRECT_URI",
+                    propertyKey = "souz.skillOAuth.yandex.redirectUri",
+                )?.trim()?.takeIf { it.isNotEmpty() },
                 llmLimits = BackendLlmLimits(
                     perUserConcurrentExecutions = source.intValue(
                         envKey = "SOUZ_BACKEND_LIMIT_PER_USER_CONCURRENT_EXECUTIONS",

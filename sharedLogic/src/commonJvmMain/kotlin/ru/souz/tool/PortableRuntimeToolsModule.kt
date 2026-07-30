@@ -12,6 +12,7 @@ import ru.souz.agent.spi.SkillToolBindingTags
 import ru.souz.llms.LLMToolSetup
 import ru.souz.llms.giga.toGiga
 import ru.souz.knowledge.SandboxConversationKnowledgeStore
+import ru.souz.skilloauth.SkillOAuthApi
 import ru.souz.runtime.files.FilesToolUtil
 import ru.souz.runtime.sandbox.FactoryBackedToolInvocationRuntimeSandboxResolver
 import ru.souz.runtime.sandbox.RuntimeSandboxFactory
@@ -34,11 +35,14 @@ import ru.souz.tool.math.ToolCalculator
 import ru.souz.tool.knowledge.KnowledgeRetriever
 import ru.souz.tool.knowledge.ToolGetKnowledge
 import ru.souz.tool.knowledge.ToolSearchKnowledge
+import ru.souz.tool.skills.ToolCheckOAuthStatus
+import ru.souz.tool.skills.ToolConnectOAuthProvider
 import ru.souz.tool.skills.ToolGetSkillByName
 import ru.souz.tool.skills.ToolGetSkillsByCategory
 import ru.souz.tool.skills.ToolGetSkillsNamesByCategory
 import ru.souz.tool.skills.ToolInvokeSkill
 import ru.souz.tool.skills.ToolRunSkillCommand
+import ru.souz.tool.skills.ToolSafeApiCall
 import ru.souz.tool.web.ToolInternetResearch
 import ru.souz.tool.web.ToolInternetSearch
 import ru.souz.tool.web.ToolWebPageText
@@ -75,6 +79,10 @@ fun portableRuntimeToolsDiModule(
     bindSingleton { ToolInternetResearch(api = instance(), settingsProvider = instance(), filesToolUtil = instance(), webResearchClient = instance()) }
     bindSingleton { ToolWebPageText(webResearchClient = instance()) }
 
+    bindSingleton { ToolConnectOAuthProvider(skillRegistryRepository = instance(), skillOAuthApi = instanceOrNull()) }
+    bindSingleton { ToolCheckOAuthStatus(skillRegistryRepository = instance(), skillOAuthApi = instanceOrNull()) }
+    bindSingleton { ToolSafeApiCall(skillRegistryRepository = instance(), skillOAuthApi = instanceOrNull()) }
+
     bindSingleton {
         PortableRuntimeToolsFactory(
             toolListFiles = instance(),
@@ -91,6 +99,9 @@ fun portableRuntimeToolsDiModule(
             toolInternetSearch = instance(),
             toolInternetResearch = instance(),
             toolWebPageText = instance(),
+            toolConnectOAuthProvider = instance(),
+            toolCheckOAuthStatus = instance(),
+            toolSafeApiCall = instance(),
         )
     }
     if (bindAgentToolCatalog) {
@@ -194,6 +205,9 @@ class PortableRuntimeToolsFactory(
     private val toolInternetSearch: ToolInternetSearch,
     private val toolInternetResearch: ToolInternetResearch,
     private val toolWebPageText: ToolWebPageText,
+    private val toolConnectOAuthProvider: ToolConnectOAuthProvider,
+    private val toolCheckOAuthStatus: ToolCheckOAuthStatus,
+    private val toolSafeApiCall: ToolSafeApiCall,
 ) : AgentToolCatalog {
     override val toolsByCategory: Map<ToolCategory, Map<String, LLMToolSetup>> by lazy {
         ToolCategory.entries.associateWith { category ->
@@ -221,6 +235,12 @@ class PortableRuntimeToolsFactory(
             toolWebPageText.toGiga(),
         )
         ToolCategory.CALCULATOR -> listOf(toolCalculator.toGiga())
+
+        ToolCategory.OAUTH -> listOf(
+            toolConnectOAuthProvider.toGiga(),
+            toolCheckOAuthStatus.toGiga(),
+            toolSafeApiCall.toGiga(),
+        )
 
         ToolCategory.CONFIG,
         ToolCategory.DATA_ANALYTICS,

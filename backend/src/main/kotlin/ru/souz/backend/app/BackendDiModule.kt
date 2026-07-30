@@ -85,6 +85,16 @@ import ru.souz.backend.telegram.TelegramBotPollingService
 import ru.souz.backend.telegram.TelegramBotTokenCrypto
 import ru.souz.skills.registry.FileSystemSkillRegistryConfig
 import ru.souz.skills.registry.SkillStorageScope
+import ru.souz.skilloauth.SkillOAuthApi
+import ru.souz.skilloauth.impl.OAuthProviderClient
+import ru.souz.skilloauth.impl.PostgresSkillOAuthCredentialRepository
+import ru.souz.skilloauth.impl.PostgresSkillOAuthPendingStateRepository
+import ru.souz.skilloauth.impl.SkillOAuthApiImpl
+import ru.souz.skilloauth.impl.SkillOAuthCredentialRepository
+import ru.souz.skilloauth.impl.SkillOAuthPendingStateRepository
+import ru.souz.skilloauth.impl.SkillOAuthTokenCrypto
+import ru.souz.skilloauth.impl.YandexOAuthClient
+import ru.souz.skilloauth.impl.YandexOAuthConfig
 import ru.souz.tool.runtimeToolsDiModule
 import ru.souz.tool.skills.ToolRunSkillCommand
 
@@ -137,6 +147,38 @@ fun backendDiModule(
     bindSingleton<UserProviderKeyRepository> { PostgresUserProviderKeyRepository(instance()) }
     bindSingleton<TelegramBotBindingRepository> { PostgresTelegramBotBindingRepository(instance()) }
     bindSingleton<SaluteDeviceBindingRepository> { PostgresSaluteDeviceBindingRepository(instance()) }
+    bindSingleton<SkillOAuthCredentialRepository> { PostgresSkillOAuthCredentialRepository(instance()) }
+    bindSingleton<SkillOAuthPendingStateRepository> { PostgresSkillOAuthPendingStateRepository(instance()) }
+    // Not gated by a feature flag, but genuinely optional: a fresh backend deployment has no
+    // registered OAuth provider apps yet, and skill OAuth must never be able to take the whole
+    // process down over that (see incident where a missing SKILL_OAUTH_TOKEN_ENCRYPTION_KEY threw
+    // during eager DI resolution of BackendHttpDependencies and crash-looped the entire backend).
+    // Absent config here means SkillOAuthApi is simply not bound: instanceOrNull<SkillOAuthApi>()
+    // in the shared tool DI resolves to null, and the OAuth tools/callback route stay disabled.
+    val skillOAuthProviders: Map<String, OAuthProviderClient> = buildMap {
+        val clientId = appConfig.yandexOAuthClientId
+        val clientSecret = appConfig.yandexOAuthClientSecret
+        val redirectUri = appConfig.yandexOAuthRedirectUri
+        if (clientId != null && clientSecret != null && redirectUri != null) {
+            put(
+                "yandex",
+                YandexOAuthClient(YandexOAuthConfig(clientId = clientId, clientSecret = clientSecret, redirectUri = redirectUri)),
+            )
+        }
+    }
+    val skillOAuthTokenEncryptionKey = appConfig.skillOAuthTokenEncryptionKey
+    if (skillOAuthTokenEncryptionKey != null) {
+        bindSingleton { SkillOAuthTokenCrypto(rawBase64Key = skillOAuthTokenEncryptionKey) }
+        bindSingleton {
+            SkillOAuthApiImpl(
+                credentialRepository = instance(),
+                pendingStateRepository = instance(),
+                crypto = instance(),
+                providers = skillOAuthProviders,
+            )
+        }
+        bindSingleton<SkillOAuthApi> { instance<SkillOAuthApiImpl>() }
+    }
     bindSingleton {
         BackendRuntimeResources(
             closeables = listOf(
@@ -374,6 +416,7 @@ fun backendDiModule(
         val userRepository = instance<UserRepository>()
         BackendHttpDependencies(
             bootstrapService = instance(),
+            skillOAuthApiImpl = if (skillOAuthTokenEncryptionKey != null) instance() else null,
             onboardingService = instance(),
             userSettingsService = instance(),
             providerKeyService = instance(),

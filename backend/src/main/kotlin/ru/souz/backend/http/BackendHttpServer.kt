@@ -32,6 +32,7 @@ import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.http.routes.v1Routes
 import ru.souz.backend.salute.routes.saluteRoutes
 import ru.souz.backend.security.RequestIdentityPlugin
+import ru.souz.skilloauth.impl.installSkillOAuthRoutes
 
 /** Health-check response returned by `GET /health`. */
 data class HealthResponse(
@@ -182,6 +183,7 @@ internal fun Application.configureBackendHttpServer(dependencies: BackendHttpDep
         if (dependencies.featureFlags.saluteVoice) {
             saluteRoutes(dependencies)
         }
+        dependencies.skillOAuthApiImpl?.let { installSkillOAuthRoutes(it, BackendHttpRoutes.OAUTH_CALLBACK) }
 
         swaggerUI(BackendHttpRoutes.DOCS) {
             openapiVersion = "3.1.1"
