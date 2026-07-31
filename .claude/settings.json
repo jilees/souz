@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(chmod +x /Users/jiles/Projects/souz-thin-client/scripts/build.sh /Users/jiles/Projects/souz-thin-client/scripts/deploy.sh)"
+    ],
+    "additionalDirectories": [
+      "/Users/jiles/Projects/souz-go/pkg/tools",
+      "/Users/jiles/Projects/souz-go/pkg/bus",
+      "/Users/jiles/Projects/souz-thin-client/src/salute",
+      "/Users/jiles/Projects/souz-thin-client/apps/souz-thin-client",
+      "/Users/jiles/Projects/souz-thin-client/apps",
+      "/Users/jiles/Projects/souz-thin-client/tests",
+      "/Users/jiles/Projects/souz-thin-client"
+    ]
+  }
+}
