@@ -9,6 +9,8 @@ on:
       - 'graph-engine/**'
       - 'llms/**'
       - 'sharedLogic/**'
+      - 'skill-oauth-api/**'
+      - 'skill-oauth-impl/**'
       - 'native/**'
       - 'gradle/**'
       - 'build.gradle.kts'
