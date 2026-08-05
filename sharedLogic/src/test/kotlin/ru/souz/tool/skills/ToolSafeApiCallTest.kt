@@ -8,6 +8,7 @@ import ru.souz.agent.skills.bundle.SkillBundle
 import ru.souz.agent.skills.bundle.SkillFile
 import ru.souz.agent.skills.bundle.SkillManifest
 import ru.souz.agent.skills.registry.SkillRegistryRepository
+import ru.souz.agent.skills.validation.SkillApprovalGate
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.skilloauth.ApiCallRequest
 import ru.souz.skilloauth.ApiCallResponse
@@ -47,8 +48,10 @@ class ToolSafeApiCallTest {
     ) : SkillOAuthApi {
         var lastProvider: String? = null
             private set
+        var lastRequiredScopes: List<String>? = null
+            private set
 
-        override suspend fun status(userId: String, provider: String): OAuthStatus =
+        override suspend fun status(userId: String, provider: String, requiredScopes: List<String>): OAuthStatus =
             OAuthStatus(connected = true)
 
         override suspend fun startAuthorization(
@@ -62,9 +65,11 @@ class ToolSafeApiCallTest {
             userId: String,
             provider: String,
             skillId: String,
+            requiredScopes: List<String>,
             request: ApiCallRequest,
         ): ApiCallResponse {
             lastProvider = provider
+            lastRequiredScopes = requiredScopes
             return response
         }
     }
@@ -77,9 +82,10 @@ class ToolSafeApiCallTest {
     }
 
     @Test
-    fun `forwards the call using the provider declared in the skill's own manifest`() = runTest {
+    fun `forwards the call using the provider and scopes declared in the skill's own manifest`() = runTest {
         val repository = mockk<SkillRegistryRepository>()
-        coEvery { repository.loadSkillBundle("user-1", SkillId("skill-1")) } returns bundleWith(oauthProvider = "yandex")
+        coEvery { repository.loadSkillBundle("user-1", SkillId("skill-1")) } returns
+            bundleWith(oauthProvider = "yandex", oauthScopes = listOf("login:info"))
         val api = FakeSkillOAuthApi(response = ApiCallResponse(200, "ok"))
         val tool = ToolSafeApiCall(skillRegistryRepository = repository, skillOAuthApi = api)
 
@@ -89,6 +95,7 @@ class ToolSafeApiCallTest {
         )
 
         assertEquals("yandex", api.lastProvider)
+        assertEquals(listOf("login:info"), api.lastRequiredScopes)
         assertTrue(result.contains("\"statusCode\":200"))
     }
 
@@ -114,6 +121,30 @@ class ToolSafeApiCallTest {
         assertFailsWith<BadInputException> {
             tool.suspendInvoke(
                 ToolSafeApiCall.Input(skillId = "skill-1", method = "GET", path = "https://example.com"),
+                ToolInvocationMeta(userId = "user-1"),
+            )
+        }
+    }
+
+    @Test
+    fun `rejects a stored bundle that failed skill approval`() = runTest {
+        // Regression test: a stored-but-unapproved (or rejected) bundle declaring oauthProvider
+        // must not be able to drive a real OAuth API call just because it's on disk.
+        val repository = mockk<SkillRegistryRepository>()
+        coEvery { repository.loadSkillBundle("user-1", SkillId("skill-1")) } returns
+            bundleWith(oauthProvider = "yandex")
+        val approvalGate = mockk<SkillApprovalGate>()
+        coEvery { approvalGate.ensureApproved(any()) } returns
+            SkillApprovalGate.Result.Rejected(bundleHash = "hash", reason = "rejected in test", findings = emptyList())
+        val tool = ToolSafeApiCall(
+            skillRegistryRepository = repository,
+            skillOAuthApi = FakeSkillOAuthApi(),
+            approvalGate = approvalGate,
+        )
+
+        assertFailsWith<BadInputException> {
+            tool.suspendInvoke(
+                ToolSafeApiCall.Input(skillId = "skill-1", method = "GET", path = "https://login.yandex.ru/info"),
                 ToolInvocationMeta(userId = "user-1"),
             )
         }

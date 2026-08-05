@@ -1,8 +1,8 @@
 package ru.souz.tool.skills
 
 import kotlinx.coroutines.runBlocking
-import ru.souz.agent.skills.activation.SkillId
 import ru.souz.agent.skills.registry.SkillRegistryRepository
+import ru.souz.agent.skills.validation.SkillApprovalGate
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.llms.restJsonMapper
 import ru.souz.skilloauth.SkillOAuthApi
@@ -16,6 +16,7 @@ import ru.souz.tool.ToolSetup
 class ToolCheckOAuthStatus(
     private val skillRegistryRepository: SkillRegistryRepository,
     private val skillOAuthApi: SkillOAuthApi?,
+    private val approvalGate: SkillApprovalGate? = null,
 ) : ToolSetup<ToolCheckOAuthStatus.Input> {
     data class Input(
         @InputParamDescription("Activated Skill ID that declares an oauthProvider in its manifest.")
@@ -25,6 +26,7 @@ class ToolCheckOAuthStatus(
     data class Output(
         val connected: Boolean,
         val grantedScopes: List<String>,
+        val missingScopes: List<String>,
     )
 
     override val name: String = "CheckOAuthStatus"
@@ -41,8 +43,9 @@ class ToolCheckOAuthStatus(
 
     override val returnParameters: ReturnParameters = ReturnParameters(
         properties = mapOf(
-            "connected" to ReturnProperty("boolean", "Whether the provider is connected."),
+            "connected" to ReturnProperty("boolean", "Whether the provider is connected AND covers this skill's declared oauthScopes."),
             "grantedScopes" to ReturnProperty("array", "Scopes currently granted, if connected."),
+            "missingScopes" to ReturnProperty("array", "This skill's declared scopes not yet granted, if any."),
         )
     )
 
@@ -52,12 +55,11 @@ class ToolCheckOAuthStatus(
         val api = skillOAuthApi
             ?: throw BadInputException("OAuth connections are not available in this runtime.")
         val skillId = input.skillId.trim()
-        val bundle = skillRegistryRepository.loadSkillBundle(meta.userId, SkillId(skillId))
-            ?: throw BadInputException("Skill is not available: $skillId")
+        val bundle = loadApprovedOAuthSkillBundle(skillRegistryRepository, approvalGate, meta.userId, skillId)
         val provider = bundle.manifest.oauthProvider
             ?: throw BadInputException("Skill '$skillId' does not declare an oauthProvider in its manifest.")
 
-        val status = api.status(meta.userId, provider)
-        return restJsonMapper.writeValueAsString(Output(status.connected, status.grantedScopes))
+        val status = api.status(meta.userId, provider, bundle.manifest.oauthScopes)
+        return restJsonMapper.writeValueAsString(Output(status.connected, status.grantedScopes, status.missingScopes))
     }
 }

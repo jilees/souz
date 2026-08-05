@@ -163,9 +163,17 @@ class BackendDiModuleTest {
         masterKey = "test-master-key",
         telegramTokenEncryptionKey = telegramTokenEncryptionKey,
         skillOAuthTokenEncryptionKey = if (includeSkillOAuthConfig) TEST_SKILL_OAUTH_TOKEN_ENCRYPTION_KEY else null,
-        yandexOAuthClientId = if (includeSkillOAuthConfig) "test-yandex-client-id" else null,
-        yandexOAuthClientSecret = if (includeSkillOAuthConfig) "test-yandex-client-secret" else null,
-        yandexOAuthRedirectUri = if (includeSkillOAuthConfig) "https://backend.test/oauth/callback" else null,
+        skillOAuthProviderCredentials = if (includeSkillOAuthConfig) {
+            mapOf(
+                "yandex" to SkillOAuthProviderCredentials(
+                    clientId = "test-yandex-client-id",
+                    clientSecret = "test-yandex-client-secret",
+                    redirectUri = "https://backend.test/oauth/callback",
+                )
+            )
+        } else {
+            emptyMap()
+        },
     )
 
     private companion object {

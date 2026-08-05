@@ -5,7 +5,6 @@ import com.zaxxer.hikari.HikariDataSource
 import java.sql.DriverManager
 import java.util.Properties
 import java.util.UUID
-import org.flywaydb.core.Flyway
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.testcontainers.DockerClientFactory
 import org.testcontainers.containers.PostgreSQLContainer
@@ -52,13 +51,6 @@ internal fun skillOAuthTestDataSource(schema: String): HikariDataSource {
         addDataSourceProperty("currentSchema", schema)
     }
     return HikariDataSource(hikariConfig).also { dataSource ->
-        Flyway.configure()
-            .dataSource(dataSource)
-            .locations("classpath:db/migration")
-            .defaultSchema(schema)
-            .schemas(schema)
-            .createSchemas(false)
-            .load()
-            .migrate()
+        SkillOAuthMigrations.migrate(dataSource, schema)
     }
 }

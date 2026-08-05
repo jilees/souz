@@ -16,6 +16,7 @@ import ru.souz.knowledge.SandboxConversationKnowledgeStore
 import ru.souz.skilloauth.SkillOAuthApi
 import ru.souz.memory.ConversationMemoryRuntime
 import ru.souz.memory.NoopConversationMemoryRuntime
+import ru.souz.skilloauth.SkillOAuthApi
 import ru.souz.runtime.files.FilesToolUtil
 import ru.souz.runtime.sandbox.FactoryBackedToolInvocationRuntimeSandboxResolver
 import ru.souz.runtime.sandbox.RuntimeSandboxFactory
@@ -41,6 +42,8 @@ import ru.souz.tool.knowledge.ToolSearchKnowledge
 import ru.souz.tool.skills.ToolCheckOAuthStatus
 import ru.souz.tool.skills.ToolConnectOAuthProvider
 import ru.souz.tool.memory.ToolSearchMemory
+import ru.souz.tool.skills.ToolCheckOAuthStatus
+import ru.souz.tool.skills.ToolConnectOAuthProvider
 import ru.souz.tool.skills.ToolGetSkillByName
 import ru.souz.tool.skills.ToolGetSkillsByCategory
 import ru.souz.tool.skills.ToolGetSkillsNamesByCategory
@@ -86,6 +89,28 @@ fun portableRuntimeToolsDiModule(
     bindSingleton { ToolConnectOAuthProvider(skillRegistryRepository = instance(), skillOAuthApi = instanceOrNull()) }
     bindSingleton { ToolCheckOAuthStatus(skillRegistryRepository = instance(), skillOAuthApi = instanceOrNull()) }
     bindSingleton { ToolSafeApiCall(skillRegistryRepository = instance(), skillOAuthApi = instanceOrNull()) }
+
+    bindSingleton {
+        ToolConnectOAuthProvider(
+            skillRegistryRepository = instance(),
+            skillOAuthApi = instanceOrNull(),
+            approvalGate = instanceOrNull(),
+        )
+    }
+    bindSingleton {
+        ToolCheckOAuthStatus(
+            skillRegistryRepository = instance(),
+            skillOAuthApi = instanceOrNull(),
+            approvalGate = instanceOrNull(),
+        )
+    }
+    bindSingleton {
+        ToolSafeApiCall(
+            skillRegistryRepository = instance(),
+            skillOAuthApi = instanceOrNull(),
+            approvalGate = instanceOrNull(),
+        )
+    }
 
     bindSingleton {
         PortableRuntimeToolsFactory(

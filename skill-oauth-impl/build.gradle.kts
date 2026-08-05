@@ -10,6 +10,8 @@ dependencies {
     implementation(libs.bundles.ktorClient)
     implementation("io.ktor:ktor-server-core:${libs.versions.ktor.get()}")
     implementation(libs.postgresql.jdbc)
+    implementation(libs.flyway.core)
+    implementation(libs.flyway.database.postgresql)
 
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlin.testJunit5)
@@ -17,8 +19,6 @@ dependencies {
     testImplementation(libs.mockk)
     testImplementation(libs.testcontainers.junitJupiter)
     testImplementation(libs.testcontainers.postgresql)
-    testImplementation(libs.flyway.core)
-    testImplementation(libs.flyway.database.postgresql)
     testImplementation(libs.hikari.cp)
 }
 

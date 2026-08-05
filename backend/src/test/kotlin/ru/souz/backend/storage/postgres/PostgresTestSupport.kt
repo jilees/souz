@@ -7,6 +7,7 @@ import org.testcontainers.containers.PostgreSQLContainer
 import ru.souz.backend.app.BackendAppConfig
 import ru.souz.backend.app.BackendPostgresConfig
 import ru.souz.backend.app.BackendServerConfig
+import ru.souz.backend.app.SkillOAuthProviderCredentials
 import ru.souz.backend.config.BackendFeatureFlags
 
 internal object SharedPostgresContainer {
@@ -40,9 +41,13 @@ internal fun postgresAppConfig(
         ),
         masterKey = "test-master-key",
         skillOAuthTokenEncryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-        yandexOAuthClientId = "test-yandex-client-id",
-        yandexOAuthClientSecret = "test-yandex-client-secret",
-        yandexOAuthRedirectUri = "https://backend.test/oauth/callback",
+        skillOAuthProviderCredentials = mapOf(
+            "yandex" to SkillOAuthProviderCredentials(
+                clientId = "test-yandex-client-id",
+                clientSecret = "test-yandex-client-secret",
+                redirectUri = "https://backend.test/oauth/callback",
+            )
+        ),
         postgres = BackendPostgresConfig(
             host = container.host,
             port = container.firstMappedPort,

@@ -15,7 +15,14 @@ package ru.souz.skilloauth
  * without any change to callers.
  */
 interface SkillOAuthApi {
-    suspend fun status(userId: String, provider: String): OAuthStatus
+    /**
+     * [requiredScopes] is the *calling skill's own* declared `oauthScopes` — [OAuthStatus.connected]
+     * is only true when a credential exists AND covers every one of them. A shared `(userId,
+     * provider)` credential can accumulate broader scopes than any single skill declared (see
+     * [startAuthorization]); without this check a narrowly-scoped skill would silently ride on
+     * another skill's broader grant.
+     */
+    suspend fun status(userId: String, provider: String, requiredScopes: List<String> = emptyList()): OAuthStatus
 
     suspend fun startAuthorization(
         userId: String,
@@ -24,10 +31,13 @@ interface SkillOAuthApi {
         scopes: List<String>,
     ): AuthorizationUrl
 
+    /** [requiredScopes] is enforced the same way as in [status] — the call is refused, not just
+     *  reported, if the shared credential doesn't cover the calling skill's own declared scopes. */
     suspend fun callAuthorizedApi(
         userId: String,
         provider: String,
         skillId: String,
+        requiredScopes: List<String>,
         request: ApiCallRequest,
     ): ApiCallResponse
 }
@@ -35,6 +45,7 @@ interface SkillOAuthApi {
 data class OAuthStatus(
     val connected: Boolean,
     val grantedScopes: List<String> = emptyList(),
+    val missingScopes: List<String> = emptyList(),
 )
 
 data class AuthorizationUrl(

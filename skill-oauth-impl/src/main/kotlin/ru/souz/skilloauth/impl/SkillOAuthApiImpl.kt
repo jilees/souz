@@ -1,12 +1,15 @@
 package ru.souz.skilloauth.impl
 
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.header
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
+import io.ktor.http.URLProtocol
+import io.ktor.http.Url
 import java.security.SecureRandom
 import java.time.Clock
 import java.util.Base64
@@ -23,24 +26,34 @@ import ru.souz.skilloauth.SkillOAuthException
  * appears as a map key supplied at DI-wiring time in `:backend`, not in any logic here. Adding a
  * second provider means adding another `providers` entry, not touching this class.
  *
- * `apiRequest.path` is treated as a full URL supplied by the skill (a single provider can expose
- * multiple API hosts, e.g. Yandex's login.yandex.ru vs. cloud-api.yandex.net) — this class only
- * injects the Authorization header and forwards the call.
+ * `apiRequest.path` is a full URL supplied by the skill (a single provider can expose multiple API
+ * hosts, e.g. Yandex's login.yandex.ru vs. cloud-api.yandex.net) — validated against
+ * [OAuthProviderClient.allowedApiHosts] (HTTPS + host allowlist) before this class injects the
+ * Authorization header and forwards the call; see [requireAllowedApiUrl].
  */
 class SkillOAuthApiImpl(
     private val credentialRepository: SkillOAuthCredentialRepository,
     private val pendingStateRepository: SkillOAuthPendingStateRepository,
     private val crypto: SkillOAuthTokenCrypto,
     private val providers: Map<String, OAuthProviderClient>,
-    private val httpClient: HttpClient = HttpClient(CIO),
+    private val httpClient: HttpClient = defaultSkillOAuthHttpClient(),
     private val clock: Clock = Clock.systemUTC(),
-) : SkillOAuthApi {
+) : SkillOAuthApi, AutoCloseable {
 
-    override suspend fun status(userId: String, provider: String): OAuthStatus {
+    override fun close() {
+        runCatching { httpClient.close() }
+    }
+
+    override suspend fun status(userId: String, provider: String, requiredScopes: List<String>): OAuthStatus {
         requireProviderClient(provider)
         val credential = credentialRepository.find(userId, provider)
-            ?: return OAuthStatus(connected = false)
-        return OAuthStatus(connected = true, grantedScopes = credential.grantedScopes)
+        val granted = credential?.grantedScopes.orEmpty()
+        val missing = requiredScopes.filterNot { it in granted }
+        return OAuthStatus(
+            connected = credential != null && missing.isEmpty(),
+            grantedScopes = granted,
+            missingScopes = missing,
+        )
     }
 
     override suspend fun startAuthorization(
@@ -68,6 +81,7 @@ class SkillOAuthApiImpl(
         userId: String,
         provider: String,
         skillId: String,
+        requiredScopes: List<String>,
         request: ApiCallRequest,
     ): ApiCallResponse {
         val providerClient = requireProviderClient(provider)
@@ -75,14 +89,48 @@ class SkillOAuthApiImpl(
             ?: throw SkillOAuthException(
                 "Skill '$skillId' is not connected to '$provider'. Use ConnectOAuthProvider first."
             )
+        val missingScopes = requiredScopes.filterNot { it in credential.grantedScopes }
+        if (missingScopes.isNotEmpty()) {
+            throw SkillOAuthException(
+                "Skill '$skillId' requires scopes not yet granted for '$provider': $missingScopes. " +
+                    "Use ConnectOAuthProvider first."
+            )
+        }
+        requireAllowedApiUrl(providerClient, request.path)
         val accessToken = ensureFreshAccessToken(credential, providerClient)
         val apiRequest = request
         val response = httpClient.request(apiRequest.path) {
             method = HttpMethod.parse(apiRequest.method.uppercase())
             header("Authorization", "Bearer $accessToken")
-            apiRequest.body?.let { setBody(it) }
+            apiRequest.body?.let {
+                header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                setBody(it)
+            }
         }
         return ApiCallResponse(statusCode = response.status.value, body = response.bodyAsText())
+    }
+
+    /**
+     * Rejects anything but an HTTPS URL on one of the provider's own declared
+     * [OAuthProviderClient.allowedApiHosts]. `ApiCallRequest.path` is a model-supplied full URL — a
+     * hijacked model turn (e.g. via indirect prompt injection) could otherwise redirect the bearer
+     * token to an attacker-controlled or internal host.
+     */
+    private fun requireAllowedApiUrl(providerClient: OAuthProviderClient, rawUrl: String) {
+        val url = try {
+            Url(rawUrl)
+        } catch (e: Exception) {
+            throw SkillOAuthException("Invalid API URL: $rawUrl")
+        }
+        if (url.protocol != URLProtocol.HTTPS) {
+            throw SkillOAuthException("Only HTTPS API URLs are allowed, got: $rawUrl")
+        }
+        if (url.host !in providerClient.allowedApiHosts) {
+            throw SkillOAuthException(
+                "Host '${url.host}' is not an allowed API host for this provider. " +
+                    "Allowed hosts: ${providerClient.allowedApiHosts}"
+            )
+        }
     }
 
     /**
