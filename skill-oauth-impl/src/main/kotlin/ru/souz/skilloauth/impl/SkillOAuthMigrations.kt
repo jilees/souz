@@ -20,6 +20,13 @@ object SkillOAuthMigrations {
             .defaultSchema(schema)
             .schemas(schema)
             .createSchemas(false)
+            // The target schema is never empty by the time this runs — the host's own migration
+            // (PostgresDataSourceFactory) already populated it — but this module's own history
+            // table never has. Without baselining, Flyway refuses to touch a "non-empty schema
+            // with no schema history table" at all. baselineVersion "0" keeps this a no-op marker
+            // (nothing of this module's own is considered applied yet), so V1 below still runs.
+            .baselineOnMigrate(true)
+            .baselineVersion("0")
             .load()
             .migrate()
     }
