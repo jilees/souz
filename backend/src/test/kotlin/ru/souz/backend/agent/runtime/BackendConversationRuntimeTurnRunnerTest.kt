@@ -17,9 +17,12 @@ import ru.souz.backend.TestSkillRegistryRepository
 import ru.souz.backend.TestConversationKnowledgeStore
 import ru.souz.agent.runtime.AgentRuntimeEventSink
 import ru.souz.backend.TestSettingsProvider
+import ru.souz.backend.testCoreTool
+import ru.souz.backend.testSearchMemoryTool
 import ru.souz.backend.testSkillCoreToolsFactory
 import ru.souz.backend.agent.model.AgentConversationKey
 import ru.souz.backend.agent.model.BackendConversationTurnRequest
+import ru.souz.backend.agent.runtime.conversation.BackendConversationRuntimeFactory
 import ru.souz.backend.agent.session.InMemoryAgentSessionRepository
 import ru.souz.llms.LLMChatAPI
 import ru.souz.llms.LLMRequest
@@ -84,6 +87,9 @@ private fun runtimeTurnRunner(failure: Throwable): BackendConversationRuntimeTur
             systemPrompt = "backend test prompt",
             skillRegistryRepository = TestSkillRegistryRepository,
             skillCoreToolsFactory = testSkillCoreToolsFactory(),
+            getKnowledgeTool = testCoreTool("GetKnowledge"),
+            searchKnowledgeTool = testCoreTool("SearchKnowledge"),
+            searchMemoryTool = testSearchMemoryTool(),
             knowledgeStore = TestConversationKnowledgeStore,
             agentBackgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         )

@@ -21,4 +21,5 @@ internal data class BackendConversationTurnRequest(
     val useFewShotExamples: Boolean? = null,
     val attributes: Map<String, String> = emptyMap(),
     val enabledTools: Set<String>? = null,
+    val clientToolsEnabled: Boolean = false,
 )

@@ -88,6 +88,53 @@ class BackendLlmClientFactoryTest {
         )
     }
 
+    @Test
+    fun `legacy giga aliases route to giga provider`() = runTest {
+        val builder = RecordingProviderChatApiBuilder()
+        val factory = BackendLlmClientFactory(
+            credentialResolver = StaticProviderCredentialResolver(
+                serverManaged = mapOf(LlmProvider.GIGA to "server-giga-key"),
+                userManaged = emptyMap(),
+            ),
+            providerClientFactory = builder,
+            localChatApi = NoopChatApi(),
+        )
+
+        factory.create(
+            BackendLlmExecutionContext(
+                userId = "user-a",
+                executionId = "exec-a",
+                settingsProvider = TestSettingsProvider().apply { gigaModel = LLMModel.OpenAIGpt52 },
+            )
+        ).message(sampleRequest("GigaChat-Max"))
+
+        assertEquals(LlmProvider.GIGA, builder.invocations.single().provider)
+    }
+
+    @Test
+    fun `Codex aliases route with the resolved access token`() = runTest {
+        val builder = RecordingProviderChatApiBuilder()
+        val factory = BackendLlmClientFactory(
+            credentialResolver = StaticProviderCredentialResolver(
+                serverManaged = mapOf(LlmProvider.CODEX to "server-codex-access-token"),
+                userManaged = emptyMap(),
+            ),
+            providerClientFactory = builder,
+            localChatApi = NoopChatApi(),
+        )
+
+        factory.create(
+            BackendLlmExecutionContext(
+                userId = "user-a",
+                executionId = "exec-a",
+                settingsProvider = TestSettingsProvider().apply { gigaModel = LLMModel.CodexGpt55 },
+            )
+        ).message(sampleRequest(LLMModel.CodexGpt55.alias))
+
+        assertEquals(LlmProvider.CODEX, builder.invocations.single().provider)
+        assertEquals("server-codex-access-token", builder.invocations.single().apiKey)
+    }
+
     private fun sampleRequest(model: String): LLMRequest.Chat =
         LLMRequest.Chat(
             model = model,
@@ -109,7 +156,10 @@ private class RecordingProviderChatApiBuilder : ProviderChatApiBuilder {
                 invocations += ProviderClientInvocation(
                     userId = executionContext.userId,
                     provider = provider,
-                    apiKey = settingsProvider.openaiKey.orEmpty(),
+                    apiKey = when (provider) {
+                        LlmProvider.CODEX -> settingsProvider.codexAccessToken.orEmpty()
+                        else -> settingsProvider.openaiKey.orEmpty()
+                    },
                     transport = sharedTransport,
                 )
                 return LLMResponse.Chat.Error(499, "recorded only")

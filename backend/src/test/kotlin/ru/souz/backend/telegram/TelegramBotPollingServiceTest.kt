@@ -25,7 +25,6 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import ru.souz.backend.chat.model.ChatMessage
 import ru.souz.backend.chat.model.ChatRole
-import ru.souz.backend.chat.service.ChatService
 import ru.souz.backend.chat.service.SendMessageResult
 import ru.souz.backend.execution.model.AgentExecution
 import ru.souz.backend.execution.model.AgentExecutionStatus
@@ -34,7 +33,6 @@ import ru.souz.backend.salute.SaluteDeviceBindingRepository
 import ru.souz.backend.salute.SaluteDeviceBindingService
 import ru.souz.backend.settings.service.UserSettingsOverrides
 import ru.souz.backend.testutil.repository.MemoryChatRepository
-import ru.souz.backend.testutil.repository.MemoryMessageRepository
 import ru.souz.backend.testutil.repository.MemorySaluteDeviceBindingRepository
 import ru.souz.backend.testutil.repository.MemoryTelegramBotBindingRepository
 
@@ -905,7 +903,7 @@ private fun testSaluteBindingService(
     bindingRepository: SaluteDeviceBindingRepository = MemorySaluteDeviceBindingRepository(),
 ): SaluteDeviceBindingService = SaluteDeviceBindingService(
     bindingRepository = bindingRepository,
-    chatService = ChatService(MemoryChatRepository(), MemoryMessageRepository()),
+    chatRepository = MemoryChatRepository(),
     clock = Clock.fixed(Instant.parse("2026-05-04T10:00:00Z"), ZoneOffset.UTC),
 )
 

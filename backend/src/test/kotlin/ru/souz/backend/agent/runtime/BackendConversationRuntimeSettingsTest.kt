@@ -14,9 +14,12 @@ import ru.souz.agent.AgentId
 import ru.souz.agent.runtime.AgentRuntimeEventSink
 import ru.souz.backend.TestSettingsProvider
 import ru.souz.backend.TestConversationKnowledgeStore
+import ru.souz.backend.testCoreTool
+import ru.souz.backend.testSearchMemoryTool
 import ru.souz.backend.testSkillCoreToolsFactory
 import ru.souz.backend.agent.model.AgentConversationKey
 import ru.souz.backend.agent.model.BackendConversationTurnRequest
+import ru.souz.backend.agent.runtime.conversation.BackendConversationRuntimeFactory
 import ru.souz.backend.agent.session.AgentConversationSession
 import ru.souz.backend.agent.session.InMemoryAgentSessionRepository
 import ru.souz.llms.LLMChatAPI
@@ -59,6 +62,7 @@ class BackendConversationRuntimeSettingsTest {
                 "GetSkillsNamesByCategory",
                 "GetKnowledge",
                 "SearchKnowledge",
+                "SearchMemory",
                 "RunSkillCommand",
             ),
             api.finalRequests.single().functions.map { it.name },
@@ -276,6 +280,9 @@ private fun runtimeFactory(
         configuredAgentId = configuredAgentId,
         toolCatalog = toolCatalog,
         skillCoreToolsFactory = testSkillCoreToolsFactory(),
+        getKnowledgeTool = testCoreTool("GetKnowledge"),
+        searchKnowledgeTool = testCoreTool("SearchKnowledge"),
+        searchMemoryTool = testSearchMemoryTool(),
         knowledgeStore = TestConversationKnowledgeStore,
         agentBackgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     )
@@ -305,6 +312,7 @@ private val CLASSIC_SKILL_CORE_TOOLS = listOf(
     "GetSkillByName",
     "GetKnowledge",
     "SearchKnowledge",
+    "SearchMemory",
     "RunSkillCommand",
 )
 

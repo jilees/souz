@@ -5,6 +5,7 @@ import org.kodein.di.bindSingleton
 import org.kodein.di.instance
 import org.kodein.di.instanceOrNull
 import ru.souz.agent.knowledge.ConversationKnowledgeStore
+import ru.souz.agent.skills.registry.SkillRegistryRepository
 import ru.souz.agent.skills.validation.SkillApprovalGate
 import ru.souz.agent.spi.AgentToolCatalog
 import ru.souz.agent.spi.AgentToolsFilter
@@ -13,6 +14,8 @@ import ru.souz.llms.LLMToolSetup
 import ru.souz.llms.giga.toGiga
 import ru.souz.knowledge.SandboxConversationKnowledgeStore
 import ru.souz.skilloauth.SkillOAuthApi
+import ru.souz.memory.ConversationMemoryRuntime
+import ru.souz.memory.NoopConversationMemoryRuntime
 import ru.souz.runtime.files.FilesToolUtil
 import ru.souz.runtime.sandbox.FactoryBackedToolInvocationRuntimeSandboxResolver
 import ru.souz.runtime.sandbox.RuntimeSandboxFactory
@@ -37,6 +40,7 @@ import ru.souz.tool.knowledge.ToolGetKnowledge
 import ru.souz.tool.knowledge.ToolSearchKnowledge
 import ru.souz.tool.skills.ToolCheckOAuthStatus
 import ru.souz.tool.skills.ToolConnectOAuthProvider
+import ru.souz.tool.memory.ToolSearchMemory
 import ru.souz.tool.skills.ToolGetSkillByName
 import ru.souz.tool.skills.ToolGetSkillsByCategory
 import ru.souz.tool.skills.ToolGetSkillsNamesByCategory
@@ -129,7 +133,7 @@ fun portableSkillToolsDiModule(
         ToolGetSkillByName(
             toolCatalog = instance(),
             toolsFilter = instance(),
-            repository = instance(),
+            skillBundleProvider = instance<SkillRegistryRepository>(),
             legacyCommandTool = instance(tag = SkillToolBindingTags.COMMAND_TOOL),
             approvalGate = instanceOrNull<SkillApprovalGate>(),
         )
@@ -162,11 +166,14 @@ fun portableSkillToolsDiModule(
     bindSingleton<LLMToolSetup>(tag = SkillToolBindingTags.SEARCH_KNOWLEDGE_TOOL) {
         ToolSearchKnowledge(retriever = instance())
     }
+    bindSingleton<LLMToolSetup>(tag = SkillToolBindingTags.SEARCH_MEMORY_TOOL) {
+        ToolSearchMemory(instanceOrNull<ConversationMemoryRuntime>() ?: NoopConversationMemoryRuntime)
+    }
     bindSingleton {
         ToolInvokeSkill(
             toolCatalog = instance(),
             toolsFilter = instance(),
-            repository = instance(),
+            skillBundleProvider = instance<SkillRegistryRepository>(),
             commandTool = instance(),
             approvalGate = instanceOrNull<SkillApprovalGate>(),
         )

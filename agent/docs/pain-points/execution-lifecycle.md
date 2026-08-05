@@ -4,6 +4,12 @@
 
 `AgentFacade` is the long-lived, stateful entry point for one conversation and one active execution. Starting a turn or changing its agent/context cancels the previous graph job. `GraphSessionService` is thread-safe for callbacks but records only one task at a time.
 
+`submitToActiveRun` is an explicit continuation path for an open agent execution. It does not start a second facade task or alter the existing new-turn cancellation behavior. Agents advertise this capability through `supportsActiveRunInput`; submission returns `false` when the selected agent does not support it, no run is open, or the run has sealed before finalization.
+
+The mailbox-backed continuation implementation gives each Skills execution `Open(queue, streamRevision, reservations)` and `Closed` states guarded by one coroutine mutex. Submission, reserved publication, FIFO draining, final sealing, and closing use that mutex, so accepted input has one ordering point relative to closure. A reservation keeps final sealing open while a host commits durable state, then either publishes the input or releases the reservation without notification. Once the host reports a successful commit, publication is non-cancellable and caller cancellation propagates after the mailbox is synchronized. `SteerableChat` separately owns the active LLM child: it selects between child completion and the mailbox notification, cancels only that child when input wins, and lets parent or provider cancellation propagate. Started tools remain non-interruptible; their results precede queued user input. A provisional tool call is committed only after checking the queue, and a final response is committed only when the queue and reservations are empty. Queued input returns directly to the main LLM without repeating turn setup. Explicit cancellation closes the mailbox before cancelling the graph job.
+
+Each accepted continuation advances an execution-scoped stream revision under the mailbox mutex. Every replacement LLM request captures that revision before its provider child starts, and every streamed text chunk carries the captured value. Consumers discard chunks from older revisions; they do not infer chunk ownership from collection time.
+
 Server-side and other concurrent callers must create an `AgentExecutionKernel` per request or isolated execution scope instead of sharing a facade, graph agent, or session service.
 
 ## Why this is fragile
@@ -13,6 +19,11 @@ The facade owns mutable context, execution state, active-agent routing, and sess
 ## Safe changes
 
 - Keep `executeForResult` cancellation, generation capture, session start, and session finish as one lifecycle.
+- Route mid-run input only through `submitToActiveRun`; do not reinterpret `executeForResult` as enqueueing.
+- Keep continuation state execution-scoped. Serialize submission, draining, final sealing, and closing through the mailbox mutex; never hold it while calling a provider or executing a tool.
+- Discard provisional LLM responses when queued input wins a tool or final boundary, and seal before memory-aware finalization.
+- Advance the stream revision with accepted input and attach the captured revision where `NodesLLM` produces each chunk.
+- Keep mailbox closure suspending and serialized before explicit graph cancellation. Do not reintroduce a separate job-based acceptance gate.
 - Update facade context only from the current execution and restore the facade's base invocation metadata after per-call overrides.
 - Preserve cancellation propagation through `AgentExecutor`, `TraceableAgent`, and `GraphExecutionDelegate`.
 - Do not make `GraphSessionService` multi-task by adding more shared mutable state. Introduce an explicit execution/session object if parallel tracing becomes a requirement.

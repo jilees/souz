@@ -106,6 +106,29 @@ data class AmbientSuggestionUiModel(
     }
 }
 
+data class ChatInputSubmissionFeedback(
+    val revision: Long = 0L,
+    val input: String = "",
+    val accepted: Boolean = false,
+)
+
+data class PendingVoiceInputDraft(
+    val text: String,
+    val token: Long,
+    val submitAsVoice: Boolean,
+)
+
+internal data class PendingChatInputSubmission(
+    val input: String,
+    val afterRevision: Long,
+)
+
+internal fun ChatInputSubmissionFeedback.acceptanceFor(
+    pending: PendingChatInputSubmission,
+): Boolean? = accepted.takeIf {
+    revision > pending.afterRevision && input == pending.input
+}
+
 /**
  * State for the main screen that mirrors the floating glass panel experience.
  */
@@ -118,6 +141,8 @@ data class MainState(
     val lastKnownAgentContext: AgentContext<String>? = null,
     val userExpectCloseOnX: Boolean = false,
     val isProcessing: Boolean = false,
+    val supportsActiveRunInput: Boolean = false,
+    val chatInputSubmissionFeedback: ChatInputSubmissionFeedback = ChatInputSubmissionFeedback(),
     val agentHistory: List<LLMRequest.Message> = emptyList(),
     val isThinkingPanelOpen: Boolean = false,
     val chatMessages: List<ChatMessage> = emptyList(),
@@ -134,8 +159,7 @@ data class MainState(
     val localModelDownloadPrompt: LocalModelDownloadPromptUi? = null,
     val localModelDownloadState: LocalModelDownloadStateUi? = null,
     val attachedFiles: List<ChatAttachedFile> = emptyList(),
-    val pendingVoiceInputDraft: String? = null,
-    val pendingVoiceInputDraftToken: Long = 0L,
+    val pendingVoiceInputDraft: PendingVoiceInputDraft? = null,
     val chatSearch: ChatSearchState = ChatSearchState(),
     val ambientMode: AmbientModeState = AmbientModeState(),
     val ambientSuggestions: List<AmbientSuggestionUiModel> = emptyList(),
@@ -151,7 +175,6 @@ data class MainState(
 sealed interface MainEvent : VMEvent {
     data object StartListening : MainEvent
     data object StopListening : MainEvent
-    data class ConsumePendingVoiceInputDraft(val token: Long) : MainEvent
     data object RequestNewConversation : MainEvent
     data object ConfirmNewConversation : MainEvent
     data object DismissNewConversationDialog : MainEvent
@@ -167,7 +190,10 @@ sealed interface MainEvent : VMEvent {
     data object PickChatAttachments : MainEvent
     data class AttachDroppedFiles(val paths: List<String>) : MainEvent
     data class RemoveChatAttachment(val path: String) : MainEvent
-    data class SendChatMessage(val text: String) : MainEvent
+    data class SendChatMessage(
+        val text: String,
+        val isVoice: Boolean = false,
+    ) : MainEvent
     data class OpenPath(val path: String) : MainEvent
     data class UpdateChatSearchQuery(val query: String) : MainEvent
     data object SelectNextChatSearchResult : MainEvent

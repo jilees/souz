@@ -7,6 +7,7 @@ import ru.souz.agent.spi.AgentToolCatalog
 import ru.souz.backend.common.backendSafeToolNames
 import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.keys.repository.UserProviderKeyRepository
+import ru.souz.backend.llm.hasCompleteCodexOAuthCredentials
 import ru.souz.backend.settings.model.EffectiveUserSettings
 import ru.souz.backend.settings.model.ToolPermission
 import ru.souz.backend.settings.model.UserMcpServer
@@ -43,6 +44,13 @@ class EffectiveSettingsResolver(
     private val toolCatalog: AgentToolCatalog,
     private val localModelAvailability: LocalModelAvailability,
 ) {
+    suspend fun isSelectableDefaultModel(
+        userId: String,
+        model: LLMModel,
+        userManagedProviders: Set<LlmProvider>? = null,
+    ): Boolean =
+        isSelectableModel(userId, model, userManagedProviders)
+
     suspend fun resolve(
         userId: String,
         requestOverrides: UserSettingsOverrides? = null,
@@ -162,6 +170,7 @@ class EffectiveSettingsResolver(
     ): Boolean =
         when (provider) {
             LlmProvider.LOCAL -> localModelAvailability.isProviderAvailable()
+            LlmProvider.CODEX -> baseSettingsProvider.hasCompleteCodexOAuthCredentials()
             else -> baseSettingsProvider.hasKey(provider) || provider in (userManagedProviders ?: loadUserManagedProviders(userId))
         }
 

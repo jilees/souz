@@ -2,6 +2,7 @@ package ru.souz.ui.android
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -33,6 +34,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,18 +65,23 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import org.kodein.di.DI
+import org.kodein.di.instance
 import org.kodein.di.compose.localDI
 import org.kodein.di.compose.withDI
+import org.jetbrains.compose.resources.stringResource
 import ru.souz.llms.LLMModel
 import ru.souz.tool.files.ToolModifyApplyStatus
 import ru.souz.tool.files.ToolModifySelectionAction
 import ru.souz.ui.AppTheme
+import ru.souz.ui.ThemeMode
 import ru.souz.ui.main.ChatMessage
 import ru.souz.ui.main.MainEffect
 import ru.souz.ui.main.MainEvent
 import ru.souz.ui.main.MainState
+import ru.souz.ui.main.PendingChatInputSubmission
 import ru.souz.ui.main.ToolModifyReviewItemUi
 import ru.souz.ui.main.ToolModifyReviewUi
+import ru.souz.ui.main.acceptanceFor
 import ru.souz.ui.main.createMainViewModel
 import ru.souz.ui.settings.SettingsEffect
 import ru.souz.ui.settings.SettingsEvent
@@ -83,11 +90,19 @@ import ru.souz.ui.settings.HIDDEN_API_KEY_MASK
 import ru.souz.ui.settings.SettingsState
 import ru.souz.ui.settings.SettingsViewModel
 import ru.souz.ui.common.ApiKeyField
+import ru.souz.ui.host.SettingsHostPreferences
+import souz.sharedui.generated.resources.Res
+import souz.sharedui.generated.resources.chat_input_active_run_placeholder
 
 @Composable
 fun SouzAndroidSharedUiApp(di: DI) {
     withDI(di) {
-        AppTheme {
+        val settingsHostPreferences: SettingsHostPreferences by localDI().instance()
+        val themeMode by settingsHostPreferences.themeMode.collectAsState()
+        AppTheme(
+            themeMode = themeMode,
+            systemDark = isSystemInDarkTheme(),
+        ) {
             Surface(
                 modifier = Modifier.fillMaxSize(),
                 color = MaterialTheme.colorScheme.background,
@@ -171,7 +186,25 @@ private fun AndroidChatScreen(
     onShowMessage: (String) -> Unit,
 ) {
     var input by remember(state.chatSessionId) { mutableStateOf("") }
-    val canSend = !state.isProcessing && !state.isAwaitingToolReview && input.trim().isNotEmpty()
+    var pendingInputSubmission by remember(state.chatSessionId) {
+        mutableStateOf<PendingChatInputSubmission?>(null)
+    }
+    LaunchedEffect(state.chatInputSubmissionFeedback) {
+        val pending = pendingInputSubmission ?: return@LaunchedEffect
+        val feedback = state.chatInputSubmissionFeedback
+        val accepted = feedback.acceptanceFor(pending) ?: return@LaunchedEffect
+        if (accepted) {
+            input = ""
+        }
+        pendingInputSubmission = null
+    }
+    val allowActiveRunInput =
+        state.isProcessing && state.supportsActiveRunInput && !state.isAwaitingToolReview
+    val canEditInput =
+        pendingInputSubmission == null &&
+            !state.isAwaitingToolReview &&
+            (!state.isProcessing || allowActiveRunInput)
+    val canSend = canEditInput && input.trim().isNotEmpty()
 
     state.toolPermissionDialog?.let { dialog ->
         val paramsText = dialog.params.entries.joinToString("\n") { "${it.key}: ${it.value}" }
@@ -302,33 +335,48 @@ private fun AndroidChatScreen(
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },
-                    enabled = !state.isProcessing && !state.isAwaitingToolReview,
+                    enabled = canEditInput,
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Message") },
+                    placeholder = {
+                        Text(
+                            if (allowActiveRunInput) {
+                                stringResource(Res.string.chat_input_active_run_placeholder)
+                            } else {
+                                "Message"
+                            }
+                        )
+                    },
                     minLines = 1,
                     maxLines = 5,
                 )
                 Spacer(Modifier.width(8.dp))
-                IconButton(
-                    enabled = state.isProcessing || canSend,
-                    onClick = {
-                        when {
-                            state.isProcessing -> onCancel()
-                            state.isAwaitingToolReview -> Unit
-                            else -> {
-                                val text = input.trim()
-                                if (text.isNotEmpty()) {
-                                    input = ""
-                                    onSendMessage(text)
-                                }
+                if (!state.isProcessing || allowActiveRunInput) {
+                    IconButton(
+                        enabled = canSend,
+                        onClick = {
+                            val text = input.trim()
+                            if (text.isNotEmpty()) {
+                                pendingInputSubmission = PendingChatInputSubmission(
+                                    input = text,
+                                    afterRevision = state.chatInputSubmissionFeedback.revision,
+                                )
+                                onSendMessage(text)
                             }
-                        }
-                    },
-                ) {
-                    Icon(
-                        imageVector = if (state.isProcessing) Icons.Rounded.Stop else Icons.Rounded.ArrowUpward,
-                        contentDescription = null,
-                    )
+                        },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.ArrowUpward,
+                            contentDescription = null,
+                        )
+                    }
+                }
+                if (state.isProcessing) {
+                    IconButton(onClick = onCancel) {
+                        Icon(
+                            imageVector = Icons.Rounded.Stop,
+                            contentDescription = null,
+                        )
+                    }
                 }
             }
         }
@@ -604,6 +652,17 @@ private fun AndroidSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            Text("Appearance", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ThemeMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = state.themeMode == mode,
+                        onClick = { onEvent(SettingsEvent.SelectThemeMode(mode)) },
+                        label = { Text(mode.name.lowercase().replaceFirstChar(Char::uppercase)) },
+                    )
+                }
+            }
+
             Text("Models", style = MaterialTheme.typography.titleMedium)
             state.availableLlmModels.forEach { model ->
                 val selected = model == state.gigaModel

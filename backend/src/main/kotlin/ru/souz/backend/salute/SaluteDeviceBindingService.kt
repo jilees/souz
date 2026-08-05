@@ -1,7 +1,9 @@
 package ru.souz.backend.salute
 
 import java.time.Clock
-import ru.souz.backend.chat.service.ChatService
+import java.util.UUID
+import ru.souz.backend.chat.model.Chat
+import ru.souz.backend.chat.repository.ChatRepository
 
 sealed interface SaluteDeviceBindOutcome {
     data class Bound(val binding: SaluteDeviceBinding) : SaluteDeviceBindOutcome
@@ -21,7 +23,7 @@ sealed interface SaluteDeviceBindOutcome {
  */
 class SaluteDeviceBindingService(
     private val bindingRepository: SaluteDeviceBindingRepository,
-    private val chatService: ChatService,
+    private val chatRepository: ChatRepository,
     private val clock: Clock = Clock.systemUTC(),
 ) {
     suspend fun bind(
@@ -35,12 +37,22 @@ class SaluteDeviceBindingService(
                 SaluteDeviceBindOutcome.BoundToAnotherUser
             }
         }
-        val chat = chatService.create(userId = userId, title = "Salute: $deviceId")
+        val now = clock.instant()
+        val chat = chatRepository.create(
+            Chat(
+                id = UUID.randomUUID(),
+                userId = userId,
+                title = "Salute: $deviceId",
+                archived = false,
+                createdAt = now,
+                updatedAt = now,
+            )
+        )
         val binding = bindingRepository.insertIfAbsent(
             deviceId = deviceId,
             userId = userId,
             chatId = chat.id,
-            now = clock.instant(),
+            now = now,
         )
         // insertIfAbsent is race-safe: if another user's claim won the race for the same
         // deviceId between our getByDeviceId check and this insert, it returns their row.

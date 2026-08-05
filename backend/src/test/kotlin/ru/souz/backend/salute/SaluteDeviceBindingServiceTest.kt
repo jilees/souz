@@ -7,9 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlinx.coroutines.test.runTest
-import ru.souz.backend.chat.service.ChatService
 import ru.souz.backend.testutil.repository.MemoryChatRepository
-import ru.souz.backend.testutil.repository.MemoryMessageRepository
 import ru.souz.backend.testutil.repository.MemorySaluteDeviceBindingRepository
 
 class SaluteDeviceBindingServiceTest {
@@ -54,7 +52,7 @@ class SaluteDeviceBindingServiceTest {
         bindingRepository: SaluteDeviceBindingRepository,
     ): SaluteDeviceBindingService = SaluteDeviceBindingService(
         bindingRepository = bindingRepository,
-        chatService = ChatService(MemoryChatRepository(), MemoryMessageRepository()),
+        chatRepository = MemoryChatRepository(),
         clock = Clock.fixed(Instant.parse("2026-07-23T10:00:00Z"), ZoneOffset.UTC),
     )
 }

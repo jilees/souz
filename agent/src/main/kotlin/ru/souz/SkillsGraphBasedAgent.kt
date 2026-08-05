@@ -1,8 +1,13 @@
 package ru.souz
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.getAndUpdate
+import kotlinx.coroutines.withContext
 import ru.souz.agent.AgentExecutionResult
+import ru.souz.agent.AgentStreamChunk
 import ru.souz.agent.GraphStepCallback
 import ru.souz.agent.TraceableAgent
 import ru.souz.agent.graph.Graph
@@ -16,6 +21,8 @@ import ru.souz.agent.nodes.NodesSkillInventory
 import ru.souz.agent.nodes.NodesToolUseWithKnowledge
 import ru.souz.agent.nodes.NodesSummarization
 import ru.souz.agent.nodes.SKILL_INVENTORY_NODE_NAME
+import ru.souz.agent.nodes.SteerableChat
+import ru.souz.agent.runtime.ActiveRunInputController
 import ru.souz.agent.runtime.GraphExecutionDelegate
 import ru.souz.agent.runtime.GraphExecutionDelegateImpl
 import ru.souz.agent.state.AgentContext
@@ -40,14 +47,15 @@ class SkillsGraphBasedAgent internal constructor(
     getSkillsNamesByCategoryTool: LLMToolSetup,
     getKnowledgeTool: LLMToolSetup,
     searchKnowledgeTool: LLMToolSetup,
+    searchMemoryTool: LLMToolSetup,
     runtimeCommandTool: LLMToolSetup,
     private val executionDelegate: GraphExecutionDelegate = GraphExecutionDelegateImpl(
         logObjectMapper = logObjectMapper,
         loggerClass = SkillsGraphBasedAgent::class.java,
     ),
 ) : TraceableAgent {
-    override val sideEffects: Flow<String> = nodesLLM.sideEffects
-
+    override val supportsActiveRunInput: Boolean = true
+    override val sideEffects: Flow<AgentStreamChunk> = nodesLLM.sideEffects
     private val alwaysInlineResultTools = listOf(
         getSkillByNameTool,
         getSkillsByCategoryTool,
@@ -55,8 +63,10 @@ class SkillsGraphBasedAgent internal constructor(
         getKnowledgeTool,
         searchKnowledgeTool,
     )
-    private val coreTools = alwaysInlineResultTools + runtimeCommandTool
-    private val graph: Graph<String, String> = buildGraph(name = "Skills Agent") {
+    private val coreTools = alwaysInlineResultTools + searchMemoryTool + runtimeCommandTool
+    private val activeRun = MutableStateFlow<ActiveRunInputController?>(null)
+
+    private fun graph(controller: ActiveRunInputController): Graph<String, String> = buildGraph(name = "Skills Agent") {
         val inputToHistory = nodesCommon.inputToHistory()
         val memoryRecall = nodesMemory.recall()
         val skillInventory = nodesSkillInventory.node(
@@ -64,7 +74,7 @@ class SkillsGraphBasedAgent internal constructor(
             name = SKILL_INVENTORY_NODE_NAME,
         )
         val contextEnrich = nodesCommon.nodeAppendAdditionalData()
-        val chat = nodesLLM.chat("LLM")
+        val chat = SteerableChat(nodesLLM, controller)
         val chatOk: Node<LLMResponse.Chat, LLMResponse.Chat.Ok> = Node("Chat.Ok") { ctx ->
             ctx.map { ctx.input as LLMResponse.Chat.Ok }
         }
@@ -93,20 +103,41 @@ class SkillsGraphBasedAgent internal constructor(
         chatErrorToFinish.edgeTo(nodeFinish)
     }
 
-    override fun cancelActiveJob() {
+    override suspend fun cancelActiveJob() {
+        activeRun.getAndUpdate { null }?.close()
         executionDelegate.cancelActiveJob()
     }
+
+    override suspend fun submitToActiveRun(input: String): Boolean =
+        activeRun.value?.submit(input) ?: false
+
+    override suspend fun submitToActiveRunAfter(input: String, beforePublish: suspend () -> Boolean): Boolean =
+        activeRun.value?.submitAfter(input, beforePublish) ?: false
 
     override suspend fun execute(ctx: AgentContext<String>): String =
         executeWithTrace(ctx).output
 
     override suspend fun executeWithTrace(
         ctx: AgentContext<String>,
+        onActiveRunReady: suspend () -> Unit,
         onStep: GraphStepCallback?,
     ): AgentExecutionResult {
+        cancelActiveJob()
         val restrictedContext = nodesSkillInventory.restrictToTools(ctx, coreTools)
-        return executionDelegate.executeWithTrace(graph = graph, ctx = restrictedContext, onStep = onStep)
+        val controller = ActiveRunInputController()
+        val executionGraph = graph(controller)
+        activeRun.value = controller
+        return try {
+            onActiveRunReady()
+            executionDelegate.executeWithTrace(graph = executionGraph, ctx = restrictedContext, onStep = onStep)
+        } finally {
+            withContext(NonCancellable) {
+                controller.close()
+                activeRun.compareAndSet(controller, null)
+            }
+        }
     }
 
-    private val LLMResponse.Chat.Ok.isToolUse get() = choices.any { it.message.functionCall != null }
+    private val LLMResponse.Chat.Ok.isToolUse: Boolean
+        get() = choices.any { it.message.functionCall != null }
 }

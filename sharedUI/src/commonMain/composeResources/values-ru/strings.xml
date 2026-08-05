@@ -93,6 +93,10 @@
     <string name="setting_language_profile_title">Региональный профиль</string>
     <string name="setting_language_profile_desc">В России доступны специальные модели</string>
     <string name="setting_interface_language_title">Язык интерфейса</string>
+    <string name="setting_theme_title">Оформление</string>
+    <string name="setting_theme_system">Системная</string>
+    <string name="setting_theme_light">Светлая</string>
+    <string name="setting_theme_dark">Тёмная</string>
     <string name="interface_language_ru_label">Русский</string>
     <string name="interface_language_en_label">English</string>
     <string name="region_profile_ru_label">Русский (RU)</string>
@@ -362,6 +366,8 @@
 
     <!-- Chat Input -->
     <string name="chat_input_placeholder">Введите сообщение...</string>
+    <string name="chat_input_active_run_placeholder">Уточнить текущую задачу...</string>
+    <string name="error_active_run_input_rejected">Текущий ответ уже завершается. Отправьте сообщение ещё раз как новый запрос.</string>
     <string name="tooltip_hold_option">Зажать правый Option</string>
     <string name="tooltip_hold_mic_button">Нажмите и удерживайте кнопку микрофона</string>
     <string name="tooltip_stop_speech">Остановить озвучку</string>
@@ -393,6 +399,7 @@
     <string name="voice_status_processing_input">Обработка входа</string>
     <string name="voice_status_speech_not_recognized">Речь не распознана</string>
     <string name="voice_error_microphone_busy_ambient">Микрофон занят ambient mode.</string>
+    <string name="voice_error_tool_review_pending">Завершите проверку действий инструмента перед использованием голосового ввода.</string>
     <string name="ambient_error_missing_analysis_model">Сначала скачайте ambient модель в настройках.</string>
     <string name="ambient_error_stt_unavailable">Ambient распознавание речи недоступно.</string>
     <string name="ambient_error_microphone_unavailable">Микрофон недоступен для ambient mode.</string>

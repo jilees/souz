@@ -50,6 +50,7 @@ class AgentExecutionKernelFactory(
     private val getSkillsNamesByCategoryTool: LLMToolSetup,
     private val getKnowledgeTool: LLMToolSetup,
     private val searchKnowledgeTool: LLMToolSetup,
+    private val searchMemoryTool: LLMToolSetup,
     private val runtimeCommandTool: LLMToolSetup,
     private val knowledgeStore: ConversationKnowledgeStore,
     private val telemetry: AgentTelemetry,
@@ -77,7 +78,7 @@ class AgentExecutionKernelFactory(
         val nodesSkillInventory = NodesSkillInventory(
             toolCatalog = toolCatalog,
             toolsFilter = toolsFilter,
-            skillRegistryRepository = skillRegistryRepository,
+            skillBundleProvider = skillRegistryRepository,
         )
         val nodesMemory = NodesMemory(memoryRuntime = memoryRuntime, captureScope = captureScope)
         val nodesClassification = NodesClassification(
@@ -111,6 +112,7 @@ class AgentExecutionKernelFactory(
             getSkillByNameTool = getSkillByNameTool,
             getKnowledgeTool = getKnowledgeTool,
             searchKnowledgeTool = searchKnowledgeTool,
+            searchMemoryTool = searchMemoryTool,
             runtimeCommandTool = runtimeCommandTool,
         )
         val skillsGraphAgent = SkillsGraphBasedAgent(
@@ -127,6 +129,7 @@ class AgentExecutionKernelFactory(
             getSkillsNamesByCategoryTool = getSkillsNamesByCategoryTool,
             getKnowledgeTool = getKnowledgeTool,
             searchKnowledgeTool = searchKnowledgeTool,
+            searchMemoryTool = searchMemoryTool,
             runtimeCommandTool = runtimeCommandTool,
         )
         val executor = AgentExecutor(

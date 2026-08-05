@@ -97,6 +97,10 @@
     <string name="setting_language_profile_title">Region profile</string>
     <string name="setting_language_profile_desc">Different models and LLM providers available per region.</string>
     <string name="setting_interface_language_title">Interface language</string>
+    <string name="setting_theme_title">Appearance</string>
+    <string name="setting_theme_system">System</string>
+    <string name="setting_theme_light">Light</string>
+    <string name="setting_theme_dark">Dark</string>
     <string name="interface_language_ru_label">Русский</string>
     <string name="interface_language_en_label">English</string>
     <string name="region_profile_ru_label">Russian (RU)</string>
@@ -366,6 +370,8 @@
 
     <!-- Chat Input -->
     <string name="chat_input_placeholder">Type a message...</string>
+    <string name="chat_input_active_run_placeholder">Guide the current response...</string>
+    <string name="error_active_run_input_rejected">The current response is already finishing. Send the message again as a new request.</string>
     <string name="tooltip_hold_option">Hold right Option</string>
     <string name="tooltip_hold_mic_button">Press and hold the microphone button</string>
     <string name="tooltip_stop_speech">Stop speech</string>
@@ -397,6 +403,7 @@
     <string name="voice_status_processing_input">Processing input</string>
     <string name="voice_status_speech_not_recognized">Speech not recognized</string>
     <string name="voice_error_microphone_busy_ambient">Microphone is used by ambient mode.</string>
+    <string name="voice_error_tool_review_pending">Resolve the pending tool review before using voice input.</string>
     <string name="ambient_error_missing_analysis_model">Download the ambient model in Settings before starting ambient mode.</string>
     <string name="ambient_error_stt_unavailable">Ambient speech recognition is unavailable.</string>
     <string name="ambient_error_microphone_unavailable">Microphone is unavailable for ambient mode.</string>

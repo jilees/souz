@@ -31,6 +31,50 @@ brew install --cask souz-ai
 
 Or download the latest build from [GitHub Releases](https://github.com/D00mch/souz/releases).
 
+## Local backend
+
+Run the backend and PostgreSQL locally with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+The backend listens on `http://127.0.0.1:8080` and PostgreSQL listens on `127.0.0.1:5432`. Override host ports with `SOUZ_BACKEND_HOST_PORT` and `SOUZ_POSTGRES_HOST_PORT` when needed. Local defaults use `SOUZ_MASTER_KEY=local-dev-master-key` and `SOUZ_BACKEND_PROXY_TOKEN=local-dev-proxy-token`.
+
+Protected `/v1` routes expect proxy-injected headers:
+
+```bash
+curl -H 'X-Souz-Proxy-Auth: local-dev-proxy-token' \
+  -H 'X-User-Id: 00000000-0000-0000-0000-000000000001' \
+  http://127.0.0.1:8080/v1/bootstrap
+```
+
+### Local backend model and key setup
+
+The backend stores provider keys and the default chat model per trusted user. Start Docker Compose first, then set both through the `/v1` API with the same `X-User-Id`.
+
+Store an OpenAI API key for the local user:
+
+```bash
+curl -X PUT http://127.0.0.1:8080/v1/me/provider-keys/openai \
+  -H 'Content-Type: application/json' \
+  -H 'X-Souz-Proxy-Auth: local-dev-proxy-token' \
+  -H 'X-User-Id: 00000000-0000-0000-0000-000000000001' \
+  -d '{"apiKey":"sk-..."}'
+```
+
+Set that user's default model to an OpenAI API model:
+
+```bash
+curl -X PATCH http://127.0.0.1:8080/v1/me/settings \
+  -H 'Content-Type: application/json' \
+  -H 'X-Souz-Proxy-Auth: local-dev-proxy-token' \
+  -H 'X-User-Id: 00000000-0000-0000-0000-000000000001' \
+  -d '{"defaultModel":"gpt-5.2"}'
+```
+
+Codex models use one server-managed OAuth session because the refresh token, account ID, and expiry must stay together. Configure `CODEX_ACCESS_TOKEN`, `CODEX_REFRESH_TOKEN`, `CODEX_ACCOUNT_ID`, and `CODEX_EXPIRES_AT` on the backend, then select a Codex alias such as `gpt-5.5` through the settings API. Docker Compose keeps rotated OAuth credentials in the `backend-preferences` volume. Preserve that volume and use the same `SOUZ_MASTER_KEY` when recreating the backend container. The per-user provider-key endpoint does not accept `codex`.
+
 ## Project structure
 
 ```text
@@ -172,35 +216,28 @@ Key behavior:
 ```mermaid
 flowchart TD
     input["User input"] --> boundary["Restrict execution context to fixed core tools"]
-    boundary --> coreTools["Core tools only\nGetSkillByName\nGetSkillsByCategory\nGetSkillsNamesByCategory\nGetKnowledge\nSearchKnowledge\nRunSkillCommand"]
     boundary --> history["Append input to history"]
     history --> memory["Recall scoped memory"]
     memory --> inventory["Append skill_inventory block\nTool-backed IDs by category\nFile-backed IDs only"]
     inventory --> enrich["Append additional context"]
-    enrich --> llm["LLM chat node\nsees only core tools"]
-    llm --> decision{"LLM result"}
+    enrich --> chat["Steerable chat\ninterrupt and replan LLM attempts"]
 
-    decision -->|GetSkillByName| lookup["Load exact Skill\napprove file-backed bundle"]
-    decision -->|GetSkillsByCategory / names| categories["List or load tool-backed category Skills"]
-    decision -->|RunSkillCommand| command["Invoke enabled tool-backed Skill\nor sandboxed file-backed command"]
-    decision -->|GetKnowledge / SearchKnowledge| knowledge["Read conversation Knowledge"]
-    decision -->|final answer| summary["Memory-aware finalization\nsummarize or return"]
-    decision -->|error| errorNode["Map error to user-facing output"]
+    additionalInput["Additional user input"] --> queue["Execution-scoped FIFO queue"]
+    queue -.->|cancel active LLM child only| chat
 
-    lookup --> append["Append inline function result"]
-    categories --> append
-    knowledge --> append
-    command --> offload{"Non-exempt result > 8 KiB?"}
-    offload -->|yes| reference["Store Knowledge\nappend compact reference"]
-    offload -->|no| append
-    reference --> llm
-    append --> llm
+    chat -->|accepted core tool calls| tools["Execute complete tool batch\noffload oversized results"]
+    tools --> chat
+    queue -.->|tools keep running; drain on re-entry| tools
 
+    chat -->|final response and queue atomically sealed| summary["Memory-aware finalization\nsummarize or return"]
+    chat -->|error and queue atomically sealed| errorNode["Map error to user-facing output"]
     summary --> finish["Finish"]
     errorNode --> finish
 ```
 
 The skills-oriented graph exposes exactly `GetSkillByName`, `GetSkillsByCategory`, `GetSkillsNamesByCategory`, `GetKnowledge`, `SearchKnowledge`, and `RunSkillCommand` to the LLM throughout a turn. Its execution boundary replaces both advertised functions and executable tool lookup with that fixed core tool set before the graph starts. It does not run direct-tool classification or MCP injection.
+
+Additional input can be submitted only to an open Skills run. It cancels an active LLM request without cancelling the graph, waits for an already-started tool batch, and is appended after all tool results. Finalization begins only after an empty queue atomically seals the run.
 
 Both graph agents append compact Skill inventory to the effective system message while preserving the configured `AgentContext.systemPrompt`. The inventory lists enabled tool-backed Skill IDs grouped by category plus user-scoped file-backed Skill IDs as opaque escaped identifiers only. File-backed instructions, manifest text, supporting files, bundle hashes, storage paths, and active-skill internals are not embedded in the prompt. Full file-backed bundles are loaded only through exact `GetSkillByName` lookup or `RunSkillCommand` execution, and both paths require cached or fresh `SkillApprovalGate` approval.
 
@@ -397,11 +434,12 @@ Ambient mode is a local-first proactive-help flow. It listens only after the use
 
 ### Backend safety model
 
-- `/v1/**` trusts identity only from proxy-managed headers:
+- Most `/v1/**` routes trust identity only from proxy-managed headers:
   - `X-User-Id`
   - `X-Souz-Proxy-Auth`
 - `X-User-Id` is treated as opaque and provisioned through `UserRepository.ensureUser(userId)`.
-- Request bodies are never trusted for user identity.
+- `POST /v1/chats`, `GET /v1/chats/{chatId}/ws`, and `GET /v1/chats/{chatId}/threads/{threadId}` are credential-free Client-Souz exceptions for trusted environments. Chat creation accepts trusted UUID `userId` from the body, and WebSocket `message.submit.payload.device.userId` must match the stored chat owner.
+- Other request bodies are never trusted for user identity.
 - Each chat, execution, option, and setting is scoped to the trusted user.
 - Backend host adapters replace desktop-only services with no-op implementations.
 - The backend uses the same shared agent execution kernel as desktop.
@@ -420,7 +458,19 @@ SOUZ_BACKEND_HOST=127.0.0.1
 SOUZ_BACKEND_PORT=8080
 SOUZ_BACKEND_PROXY_TOKEN=replace-with-shared-proxy-secret
 SOUZ_MASTER_KEY=replace-with-settings-secret
-SOUZ_BACKEND_AGENT=graph # graph or skills
+SOUZ_BACKEND_AGENT=skills # graph or skills; WebSocket events require skills
+
+# Server-managed provider keys, optional. Docker Compose local setup
+# usually uses /v1/me/provider-keys/{provider} instead.
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+QWEN_KEY=...
+GIGA_KEY=...
+AITUNNEL_KEY=...
+CODEX_ACCESS_TOKEN=...
+CODEX_REFRESH_TOKEN=...
+CODEX_ACCOUNT_ID=...
+CODEX_EXPIRES_AT=... # Unix epoch seconds
 
 # Feature flags
 SOUZ_FEATURE_WS_EVENTS=true
@@ -450,7 +500,7 @@ SOUZ_BACKEND_DB_MAX_POOL_SIZE=10
 SOUZ_BACKEND_DB_CONNECTION_TIMEOUT_MS=30000
 ```
 
-The server host must not be blank, and the port must be between `1` and `65535`; invalid values fail configuration validation during startup. `SOUZ_MASTER_KEY` is required for backend startup. `TELEGRAM_TOKEN_ENCRYPTION_KEY` is required when the Telegram bot feature is enabled and must be Base64 that decodes to exactly 32 bytes; generate one with `openssl rand -base64 32`. `SOUZ_BACKEND_AGENT` and `souz.backend.agent` select `graph` or `skills` for new conversations and default to `graph`; persisted conversations retain their stored agent. Without `SOUZ_BACKEND_PROXY_TOKEN`, public routes remain available but `/v1/**` requests return `backend_misconfigured`.
+The server host must not be blank, and the port must be between `1` and `65535`; invalid values fail configuration validation during startup. `SOUZ_MASTER_KEY` is required for backend startup. `TELEGRAM_TOKEN_ENCRYPTION_KEY` is required when the Telegram bot feature is enabled and must be Base64 that decodes to exactly 32 bytes; generate one with `openssl rand -base64 32`. `SOUZ_BACKEND_AGENT` and `souz.backend.agent` select `graph` or `skills` for new conversations and default to `graph`; persisted conversations retain their stored agent. WebSocket events require `skills`. Without `SOUZ_BACKEND_PROXY_TOKEN`, public routes remain available but `/v1/**` requests return `backend_misconfigured`.
 
 Backend executions snapshot each user's effective `enabledTools`. The snapshot controls direct-tool classification, tool-backed Skill inventory/category discovery, and generic `RunSkillCommand` delegation, and is retained when an execution resumes from an option. Core Skill/Knowledge tools and user-installed file-backed skills remain available.
 
@@ -514,6 +564,8 @@ Souz supports:
 - Local llama.cpp models through `:native`.
 
 Provider/model selection is key-aware: chat, embeddings, and voice-recognition model lists are filtered by configured provider keys or Codex OAuth state, and invalid saved selections are normalized to available providers.
+
+The backend supports API-key providers, server-managed Codex OAuth models, and local models for chat execution. Per-user provider keys do not represent Codex OAuth sessions.
 
 ## Local models
 

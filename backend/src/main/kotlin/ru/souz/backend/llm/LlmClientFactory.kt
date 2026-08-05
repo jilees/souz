@@ -12,6 +12,7 @@ import ru.souz.llms.LLMRequest
 import ru.souz.llms.LLMResponse
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.VoiceRecognitionModel
+import ru.souz.llms.findLLMModel
 
 data class BackendLlmExecutionContext(
     val userId: String,
@@ -90,22 +91,15 @@ private class RoutingLlmChatApi(
         apis[provider]?.let { return it }
         return mutex.withLock {
             apis[provider]?.let { return@withLock it }
-            // Codex is OAuth-authenticated (device flow, token refresh), not a static
-            // per-provider API key, so it has no ResolvedProviderCredential to resolve.
-            val settingsProvider = if (provider == LlmProvider.CODEX) {
-                context.settingsProvider
-            } else {
-                val credential = credentialResolver.resolve(context.userId, provider)
-                    ?: error("Missing configured credential for provider $provider.")
-                CredentialOverrideSettingsProvider(
+            val credential = credentialResolver.resolve(context.userId, provider)
+                ?: error("Missing configured credential for provider $provider.")
+            providerClientFactory.build(
+                provider = provider,
+                settingsProvider = CredentialOverrideSettingsProvider(
                     delegate = context.settingsProvider,
                     overrideProvider = provider,
                     apiKey = credential.apiKey,
-                )
-            }
-            providerClientFactory.build(
-                provider = provider,
-                settingsProvider = settingsProvider,
+                ),
                 sharedTransport = transports.getValue(provider),
                 executionContext = context,
             ).also { api ->
@@ -115,9 +109,7 @@ private class RoutingLlmChatApi(
     }
 
     private fun providerFor(model: String): LlmProvider =
-        LLMModel.entries.firstOrNull { candidate ->
-            candidate.alias.equals(model, ignoreCase = true) || candidate.name.equals(model, ignoreCase = true)
-        }?.provider ?: context.settingsProvider.gigaModel.provider
+        findLLMModel(model)?.provider ?: context.settingsProvider.gigaModel.provider
 }
 
 private class CredentialOverrideSettingsProvider(
@@ -153,6 +145,12 @@ private class CredentialOverrideSettingsProvider(
         get() = if (overrideProvider == LlmProvider.OPENAI) apiKey else delegate.openaiKey
         set(value) {
             delegate.openaiKey = value
+        }
+
+    override var codexAccessToken: String?
+        get() = if (overrideProvider == LlmProvider.CODEX) apiKey else delegate.codexAccessToken
+        set(value) {
+            delegate.codexAccessToken = value
         }
 
     override var saluteSpeechKey: String?

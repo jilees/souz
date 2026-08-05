@@ -134,6 +134,11 @@ data class BackendAppConfig(
         // validated here — it is unconditionally wired in BackendDiModule (no feature flag), but
         // each value is only required lazily at the point it's actually used there, so that
         // config-validation tests unrelated to OAuth don't all need to supply Yandex credentials.
+        if (featureFlags.wsEvents && agentId != AgentId.SKILLS_GRAPH) {
+            throw BackendConfigurationException(
+                "SOUZ_FEATURE_WS_EVENTS requires SOUZ_BACKEND_AGENT=skills."
+            )
+        }
         llmLimits.validate()
         providerRetryPolicy.validate()
         return this
