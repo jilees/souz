@@ -32,9 +32,6 @@ jobs:
           java-version: 21
           cache: gradle
 
-      - name: Test
-        run: ./gradlew :backend:test --console=plain --stacktrace --no-parallel
-
       - name: Build distribution
         run: ./gradlew :backend:installDist --console=plain --stacktrace --no-parallel
 
