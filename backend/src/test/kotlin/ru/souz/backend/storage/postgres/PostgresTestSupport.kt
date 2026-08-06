@@ -21,8 +21,19 @@ internal object SharedPostgresContainer {
     }
 }
 
-internal fun newPostgresSchema(prefix: String): String =
-    "${prefix}_${UUID.randomUUID().toString().replace("-", "")}"
+// Postgres silently truncates identifiers longer than NAMEDATALEN-1 (63 bytes); a full 32-hex-char
+// UUID suffix can push a long test-name prefix past that, creating a schema under a truncated name
+// while Hikari/Flyway keep using the untruncated (never-actually-created) name and fail deep inside
+// migration. 12 hex chars (48 bits) is still effectively collision-free for one test run's worth of
+// schemas, and capping the prefix defends the same way against any future longer name.
+private const val MAX_SCHEMA_NAME_LENGTH = 63
+private const val SCHEMA_SUFFIX_LENGTH = 12
+
+internal fun newPostgresSchema(prefix: String): String {
+    val suffix = UUID.randomUUID().toString().replace("-", "").take(SCHEMA_SUFFIX_LENGTH)
+    val safePrefix = prefix.take(MAX_SCHEMA_NAME_LENGTH - 1 - SCHEMA_SUFFIX_LENGTH)
+    return "${safePrefix}_$suffix"
+}
 
 internal fun postgresAppConfig(
     schema: String,
