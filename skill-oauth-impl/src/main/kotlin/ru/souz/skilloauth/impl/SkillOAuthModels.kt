@@ -37,4 +37,14 @@ interface SkillOAuthPendingStateRepository {
 
     /** Atomically deletes and returns the pending state if present and not expired as of [now]. */
     suspend fun consume(state: String, now: Instant): SkillOAuthPendingState?
+
+    /**
+     * Atomically deletes and returns any still-unexpired pending state(s) for this
+     * `(userId, provider)` pair as of [now]. Used by [SkillOAuthApiImpl.startAuthorization] to
+     * collapse two overlapping connect attempts into one active flow — without this, starting a
+     * second authorization while a first one is still pending would leave two live `state` tokens
+     * for the same pair, and whichever callback lands last would silently overwrite the scopes the
+     * other one just granted.
+     */
+    suspend fun consumeActiveForUserAndProvider(userId: String, provider: String, now: Instant): List<SkillOAuthPendingState>
 }

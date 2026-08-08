@@ -17,7 +17,7 @@ interface OAuthProviderClient {
 
     /**
      * Exact hosts [SkillOAuthApiImpl.callAuthorizedApi] is allowed to attach this provider's bearer
-     * token to. Skills supply an arbitrary full URL (`ApiCallRequest.path`) — without this allowlist
+     * token to. Skills supply an arbitrary full URL (`ApiCallRequest.url`) — without this allowlist
      * a hijacked model turn (e.g. via indirect prompt injection from content the skill legitimately
      * processes) could redirect the token to an attacker-controlled or internal host.
      */

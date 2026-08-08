@@ -7,10 +7,12 @@ import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.config.SystemBackendConfigSource
 import ru.souz.skilloauth.impl.OAuthProviderCatalog
 
-/** Credentials for one [OAuthProviderCatalog] entry — read from `<NAME>_OAUTH_CLIENT_ID` /
- *  `_CLIENT_SECRET` / `_REDIRECT_URI` env vars, `NAME` being the catalog entry's name upper-cased
- *  (e.g. `YANDEX_OAUTH_CLIENT_ID`). A provider only ends up in `BackendAppConfig.skillOAuthProviderCredentials`
- *  if all three are set. */
+/**
+ * Credentials for one [OAuthProviderCatalog] entry — read from `<NAME>_OAUTH_CLIENT_ID` /
+ * `_CLIENT_SECRET` / `_REDIRECT_URI` env vars, `NAME` being the catalog entry's name upper-cased
+ * (e.g. `YANDEX_OAUTH_CLIENT_ID`). A provider only ends up in `BackendAppConfig.skillOAuthProviderCredentials`
+ * if all three are set.
+ */
 data class SkillOAuthProviderCredentials(
     val clientId: String,
     val clientSecret: String,

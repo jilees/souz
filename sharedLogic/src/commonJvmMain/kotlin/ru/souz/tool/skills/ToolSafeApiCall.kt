@@ -19,7 +19,7 @@ import ru.souz.tool.ToolSetup
  * active Skill's own manifest, loaded (and approval-gated, see [loadApprovedOAuthSkillBundle])
  * fresh on every call. The backend injects the Authorization header itself (mirroring
  * `McpHttpSession`'s pattern) — the raw access token never enters this tool's input/output, the
- * LLM's context, or the skill's sandboxed process. `path` is still a model-supplied full URL, so
+ * LLM's context, or the skill's sandboxed process. `url` is still a model-supplied full URL, so
  * the provider layer (`SkillOAuthApiImpl.requireAllowedApiUrl`) enforces HTTPS + a per-provider
  * host allowlist before attaching the token — this tool must not be trusted to police that itself.
  */
@@ -29,19 +29,22 @@ class ToolSafeApiCall(
     private val approvalGate: SkillApprovalGate? = null,
 ) : ToolSetup<ToolSafeApiCall.Input> {
     data class Input(
-        @InputParamDescription("Activated Skill ID that declares an oauthProvider in its manifest.")
+        @InputParamDescription("Skill ID whose approved manifest declares the OAuth provider and scopes for this operation.")
         val skillId: String,
         @InputParamDescription("HTTP method, e.g. GET, POST, PUT, DELETE.")
         val method: String,
         @InputParamDescription("Full request URL, as documented by the target provider's API.")
-        val path: String,
+        val url: String,
         @InputParamDescription("Optional request body.")
         val body: String? = null,
+        @InputParamDescription("Optional extra request headers, e.g. Content-Type overrides. Cannot be used to set Authorization — that header is always injected by the backend.")
+        val headers: Map<String, String> = emptyMap(),
     )
 
     data class Output(
         val statusCode: Int,
         val body: String,
+        val headers: Map<String, String> = emptyMap(),
     )
 
     override val name: String = "SafeApiCall"
@@ -57,7 +60,7 @@ class ToolSafeApiCall(
             params = mapOf(
                 "skillId" to "skill-id",
                 "method" to "GET",
-                "path" to "https://login.yandex.ru/info",
+                "url" to "https://login.yandex.ru/info",
             ),
         )
     )
@@ -66,6 +69,7 @@ class ToolSafeApiCall(
         properties = mapOf(
             "statusCode" to ReturnProperty("number", "HTTP status code returned by the provider."),
             "body" to ReturnProperty("string", "Response body returned by the provider."),
+            "headers" to ReturnProperty("object", "Response headers returned by the provider."),
         )
     )
 
@@ -84,8 +88,8 @@ class ToolSafeApiCall(
             provider = provider,
             skillId = skillId,
             requiredScopes = bundle.manifest.oauthScopes,
-            request = ApiCallRequest(method = input.method, path = input.path, body = input.body),
+            request = ApiCallRequest(method = input.method, url = input.url, body = input.body, headers = input.headers),
         )
-        return restJsonMapper.writeValueAsString(Output(response.statusCode, response.body))
+        return restJsonMapper.writeValueAsString(Output(response.statusCode, response.body, response.headers))
     }
 }

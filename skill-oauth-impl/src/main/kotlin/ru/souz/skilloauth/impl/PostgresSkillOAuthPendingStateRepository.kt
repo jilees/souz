@@ -41,6 +41,32 @@ class PostgresSkillOAuthPendingStateRepository(
             }
         }
 
+    override suspend fun consumeActiveForUserAndProvider(
+        userId: String,
+        provider: String,
+        now: Instant,
+    ): List<SkillOAuthPendingState> =
+        dataSource.write { connection ->
+            connection.prepareStatement(
+                """
+                delete from skill_oauth_pending_states
+                where user_id = ? and provider = ? and expires_at >= ?
+                returning *
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, userId)
+                statement.setString(2, provider)
+                statement.setInstant(3, now)
+                statement.executeQuery().use { resultSet ->
+                    val results = mutableListOf<SkillOAuthPendingState>()
+                    while (resultSet.next()) {
+                        results += resultSet.toPendingState()
+                    }
+                    results
+                }
+            }
+        }
+
     private fun java.sql.ResultSet.toPendingState(): SkillOAuthPendingState =
         SkillOAuthPendingState(
             state = getString("state"),

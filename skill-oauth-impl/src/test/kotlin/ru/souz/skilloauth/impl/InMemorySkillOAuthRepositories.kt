@@ -30,4 +30,16 @@ internal class InMemorySkillOAuthPendingStateRepository : SkillOAuthPendingState
         val found = pending.remove(state) ?: return null
         return if (found.expiresAt.isBefore(now)) null else found
     }
+
+    override suspend fun consumeActiveForUserAndProvider(
+        userId: String,
+        provider: String,
+        now: Instant,
+    ): List<SkillOAuthPendingState> {
+        val matches = pending.values.filter {
+            it.userId == userId && it.provider == provider && !it.expiresAt.isBefore(now)
+        }
+        matches.forEach { pending.remove(it.state) }
+        return matches
+    }
 }

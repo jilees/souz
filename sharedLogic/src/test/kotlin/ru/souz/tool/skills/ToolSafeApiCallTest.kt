@@ -90,7 +90,7 @@ class ToolSafeApiCallTest {
         val tool = ToolSafeApiCall(skillRegistryRepository = repository, skillOAuthApi = api)
 
         val result = tool.suspendInvoke(
-            ToolSafeApiCall.Input(skillId = "skill-1", method = "GET", path = "https://login.yandex.ru/info"),
+            ToolSafeApiCall.Input(skillId = "skill-1", method = "GET", url = "https://login.yandex.ru/info"),
             ToolInvocationMeta(userId = "user-1"),
         )
 
@@ -107,7 +107,7 @@ class ToolSafeApiCallTest {
 
         assertFailsWith<BadInputException> {
             tool.suspendInvoke(
-                ToolSafeApiCall.Input(skillId = "skill-1", method = "GET", path = "https://example.com"),
+                ToolSafeApiCall.Input(skillId = "skill-1", method = "GET", url = "https://example.com"),
                 ToolInvocationMeta(userId = "user-1"),
             )
         }
@@ -120,7 +120,7 @@ class ToolSafeApiCallTest {
 
         assertFailsWith<BadInputException> {
             tool.suspendInvoke(
-                ToolSafeApiCall.Input(skillId = "skill-1", method = "GET", path = "https://example.com"),
+                ToolSafeApiCall.Input(skillId = "skill-1", method = "GET", url = "https://example.com"),
                 ToolInvocationMeta(userId = "user-1"),
             )
         }
@@ -144,7 +144,7 @@ class ToolSafeApiCallTest {
 
         assertFailsWith<BadInputException> {
             tool.suspendInvoke(
-                ToolSafeApiCall.Input(skillId = "skill-1", method = "GET", path = "https://login.yandex.ru/info"),
+                ToolSafeApiCall.Input(skillId = "skill-1", method = "GET", url = "https://login.yandex.ru/info"),
                 ToolInvocationMeta(userId = "user-1"),
             )
         }

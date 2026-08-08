@@ -54,13 +54,21 @@ data class AuthorizationUrl(
 
 data class ApiCallRequest(
     val method: String,
-    val path: String,
+    val url: String,
     val body: String? = null,
+    /**
+     * Extra headers to forward with the outbound call, e.g. `Content-Type` overrides or
+     * provider-specific headers. The implementation injects its own `Authorization` header with
+     * the real access token, which callers can never see or override — see
+     * `SkillOAuthApiImpl.callAuthorizedApi`.
+     */
+    val headers: Map<String, String> = emptyMap(),
 )
 
 data class ApiCallResponse(
     val statusCode: Int,
     val body: String,
+    val headers: Map<String, String> = emptyMap(),
 )
 
 class SkillOAuthException(message: String) : Exception(message)

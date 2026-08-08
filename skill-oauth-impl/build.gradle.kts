@@ -17,6 +17,7 @@ dependencies {
     testImplementation(libs.kotlin.testJunit5)
     testImplementation(libs.kotlinx.coroutinesTest)
     testImplementation(libs.mockk)
+    testImplementation(libs.ktor.clientMock)
     testImplementation(libs.testcontainers.junitJupiter)
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.hikari.cp)

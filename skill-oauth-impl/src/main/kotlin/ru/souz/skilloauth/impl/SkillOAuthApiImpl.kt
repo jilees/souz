@@ -26,7 +26,7 @@ import ru.souz.skilloauth.SkillOAuthException
  * appears as a map key supplied at DI-wiring time in `:backend`, not in any logic here. Adding a
  * second provider means adding another `providers` entry, not touching this class.
  *
- * `apiRequest.path` is a full URL supplied by the skill (a single provider can expose multiple API
+ * `apiRequest.url` is a full URL supplied by the skill (a single provider can expose multiple API
  * hosts, e.g. Yandex's login.yandex.ru vs. cloud-api.yandex.net) — validated against
  * [OAuthProviderClient.allowedApiHosts] (HTTPS + host allowlist) before this class injects the
  * Authorization header and forwards the call; see [requireAllowedApiUrl].
@@ -63,6 +63,17 @@ class SkillOAuthApiImpl(
         scopes: List<String>,
     ): AuthorizationUrl {
         val providerClient = requireProviderClient(provider)
+        val now = clock.instant()
+        // Supersede any still-pending flow for this exact (userId, provider) instead of letting a
+        // second one run alongside it: two live `state` tokens would mean two eventual callbacks,
+        // and whichever lands last would upsert its own requestedScopes over the first one's,
+        // silently dropping scopes the first flow just had the user grant. Folding the old pending
+        // scopes into this new request keeps the link the user ends up completing (whichever one
+        // that is) always asking for the full set requested so far; the superseded link, if opened
+        // afterwards, fails cleanly as an invalid/expired state rather than corrupting the grant.
+        val supersededScopes = pendingStateRepository.consumeActiveForUserAndProvider(userId, provider, now)
+            .flatMap { it.requestedScopes }
+        val mergedScopes = (supersededScopes + scopes).distinct()
         val state = generateState()
         pendingStateRepository.create(
             SkillOAuthPendingState(
@@ -70,11 +81,11 @@ class SkillOAuthApiImpl(
                 userId = userId,
                 skillId = skillId,
                 provider = provider,
-                requestedScopes = scopes,
-                expiresAt = clock.instant().plusSeconds(PENDING_STATE_TTL_SECONDS),
+                requestedScopes = mergedScopes,
+                expiresAt = now.plusSeconds(PENDING_STATE_TTL_SECONDS),
             )
         )
-        return AuthorizationUrl(providerClient.buildAuthorizeUrl(state = state, scopes = scopes))
+        return AuthorizationUrl(providerClient.buildAuthorizeUrl(state = state, scopes = mergedScopes))
     }
 
     override suspend fun callAuthorizedApi(
@@ -96,23 +107,35 @@ class SkillOAuthApiImpl(
                     "Use ConnectOAuthProvider first."
             )
         }
-        requireAllowedApiUrl(providerClient, request.path)
+        requireAllowedApiUrl(providerClient, request.url)
         val accessToken = ensureFreshAccessToken(credential, providerClient)
         val apiRequest = request
-        val response = httpClient.request(apiRequest.path) {
+        val response = httpClient.request(apiRequest.url) {
             method = HttpMethod.parse(apiRequest.method.uppercase())
-            header("Authorization", "Bearer $accessToken")
+            // Caller-supplied headers are applied first so the Authorization header we inject
+            // below always wins — a skill/LLM must never be able to smuggle in its own bearer
+            // token or overwrite the real one via a same-named header in `request.headers`.
+            apiRequest.headers.forEach { (name, value) ->
+                if (!name.equals(HttpHeaders.Authorization, ignoreCase = true)) {
+                    header(name, value)
+                }
+            }
+            header(HttpHeaders.Authorization, "Bearer $accessToken")
             apiRequest.body?.let {
                 header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
                 setBody(it)
             }
         }
-        return ApiCallResponse(statusCode = response.status.value, body = response.bodyAsText())
+        return ApiCallResponse(
+            statusCode = response.status.value,
+            body = response.bodyAsText(),
+            headers = response.headers.entries().associate { (name, values) -> name to values.joinToString(", ") },
+        )
     }
 
     /**
      * Rejects anything but an HTTPS URL on one of the provider's own declared
-     * [OAuthProviderClient.allowedApiHosts]. `ApiCallRequest.path` is a model-supplied full URL — a
+     * [OAuthProviderClient.allowedApiHosts]. `ApiCallRequest.url` is a model-supplied full URL — a
      * hijacked model turn (e.g. via indirect prompt injection) could otherwise redirect the bearer
      * token to an attacker-controlled or internal host.
      */
