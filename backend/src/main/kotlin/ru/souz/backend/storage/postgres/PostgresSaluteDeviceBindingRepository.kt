@@ -20,6 +20,32 @@ class PostgresSaluteDeviceBindingRepository(
         }
     }
 
+    override suspend fun getByChatId(chatId: UUID): SaluteDeviceBinding? = dataSource.read { connection ->
+        connection.prepareStatement(
+            "select * from salute_device_bindings where chat_id = ?"
+        ).use { statement ->
+            statement.setObject(1, chatId)
+            statement.executeQuery().use { resultSet ->
+                if (resultSet.next()) resultSet.toSaluteDeviceBinding() else null
+            }
+        }
+    }
+
+    override suspend fun listForUser(userId: String): List<SaluteDeviceBinding> = dataSource.read { connection ->
+        connection.prepareStatement(
+            "select * from salute_device_bindings where user_id = ? order by updated_at desc"
+        ).use { statement ->
+            statement.setString(1, userId)
+            statement.executeQuery().use { resultSet ->
+                buildList {
+                    while (resultSet.next()) {
+                        add(resultSet.toSaluteDeviceBinding())
+                    }
+                }
+            }
+        }
+    }
+
     override suspend fun insertIfAbsent(
         deviceId: String,
         userId: String,

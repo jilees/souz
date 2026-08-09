@@ -222,6 +222,10 @@ class ToolsFactory(di: DI) : AgentToolCatalog {
             toolStartScreenRecording.toGiga(),
         )
 
+        // Channel messaging targets backend-hosted channels (Telegram bot bindings, Salute
+        // devices), which desktop has no connection to — see backend/channels.
+        ToolCategory.CHANNEL_MESSAGING -> listOf()
+
     }.map {
         object : LLMToolSetup by it {
             override val fn: LLMRequest.Function =

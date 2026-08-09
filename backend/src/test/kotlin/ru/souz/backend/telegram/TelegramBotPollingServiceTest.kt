@@ -1212,6 +1212,8 @@ private class FlakyListEnabledTelegramBindingRepository : TelegramBotBindingRepo
 
     override suspend fun findByTokenHash(botTokenHash: String): TelegramBotBinding? = null
 
+    override suspend fun listForUser(userId: String): List<TelegramBotBinding> = emptyList()
+
     override suspend fun listEnabled(): List<TelegramBotBinding> {
         listEnabledCalls += 1
         if (listEnabledCalls == 1) {

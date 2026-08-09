@@ -278,6 +278,7 @@ class PortableRuntimeToolsFactory(
         ToolCategory.CHAT,
         ToolCategory.TELEGRAM,
         ToolCategory.DESKTOP,
-        ToolCategory.HELP -> emptyList()
+        ToolCategory.HELP,
+        ToolCategory.CHANNEL_MESSAGING -> emptyList()
     }
 }

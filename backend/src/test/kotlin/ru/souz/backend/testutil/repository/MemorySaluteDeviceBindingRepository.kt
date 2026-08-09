@@ -11,6 +11,14 @@ class MemorySaluteDeviceBindingRepository : SaluteDeviceBindingRepository {
 
     override suspend fun getByDeviceId(deviceId: String): SaluteDeviceBinding? = bindingsByDeviceId[deviceId]
 
+    override suspend fun getByChatId(chatId: UUID): SaluteDeviceBinding? =
+        bindingsByDeviceId.values.firstOrNull { it.chatId == chatId }
+
+    override suspend fun listForUser(userId: String): List<SaluteDeviceBinding> =
+        bindingsByDeviceId.values
+            .filter { it.userId == userId }
+            .sortedByDescending { it.updatedAt }
+
     override suspend fun insertIfAbsent(
         deviceId: String,
         userId: String,

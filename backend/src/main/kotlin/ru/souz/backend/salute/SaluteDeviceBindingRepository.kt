@@ -6,6 +6,10 @@ import java.util.UUID
 interface SaluteDeviceBindingRepository {
     suspend fun getByDeviceId(deviceId: String): SaluteDeviceBinding?
 
+    suspend fun getByChatId(chatId: UUID): SaluteDeviceBinding?
+
+    suspend fun listForUser(userId: String): List<SaluteDeviceBinding>
+
     /**
      * Inserts a new binding for [deviceId] pointing at a freshly created [chatId], unless a
      * binding for this device already exists (race-safe via `on conflict (device_id) do
