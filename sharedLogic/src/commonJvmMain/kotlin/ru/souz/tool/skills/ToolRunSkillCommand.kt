@@ -4,7 +4,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.util.Base64
 import kotlinx.coroutines.runBlocking
-import ru.souz.agent.skills.activation.SkillId
+import ru.souz.agent.skills.SkillId
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.runtime.sandbox.RuntimeSandbox
 import ru.souz.runtime.sandbox.SandboxCommandRequest
@@ -34,7 +34,7 @@ class ToolRunSkillCommand(
     data class Input(
         @InputParamDescription("Activated Skill ID whose bundle contains the script/supporting file to use.")
         val skillId: String,
-        @InputParamDescription("Runtime to execute: BASH, PYTHON, NODE, or PROCESS. Use BASH for shell scripts and PROCESS for argv commands. Android maps BASH to POSIX /system/bin/sh, so Android skill scripts must avoid GNU Bash-only syntax.")
+        @InputParamDescription("Runtime to execute: BASH, PYTHON, NODE, or PROCESS. Use BASH for shell scripts and PROCESS for argv commands.")
         val runtime: SandboxCommandRuntime = SandboxCommandRuntime.BASH,
         @InputParamDescription("Command argv for PROCESS runtime, for example [\"bash\", \"scripts/run.sh\"]. Leave empty for BASH/PYTHON/NODE.")
         val command: List<String> = emptyList(),
