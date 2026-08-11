@@ -13,13 +13,11 @@ import org.kodein.di.instanceOrNull
 import ru.souz.agent.knowledge.ConversationKnowledgeStore
 import ru.souz.agent.skills.registry.SkillRegistryRepository
 import ru.souz.agent.spi.SkillToolBindingTags
-import ru.souz.backend.agent.session.AgentStateBackedSessionRepository
-import ru.souz.backend.app.BackendAppConfig
 import ru.souz.backend.agent.runtime.BackendSandboxScopeResolver
 import ru.souz.backend.agent.runtime.BackendConversationRuntimeTurnRunner
-import ru.souz.backend.agent.runtime.BackendSkillCoreToolsFactory
 import ru.souz.backend.agent.runtime.conversation.BackendConversationRuntimeFactory
 import ru.souz.backend.agent.runtime.conversation.BackendMergedToolCatalog
+import ru.souz.backend.agent.session.AgentStateBackedSessionRepository
 import ru.souz.backend.agent.session.AgentStateRepository
 import ru.souz.backend.agent.session.AgentSessionRepository
 import ru.souz.backend.bootstrap.BackendBootstrapService
@@ -34,7 +32,7 @@ import ru.souz.backend.chat.repository.ChatRepository
 import ru.souz.backend.chat.repository.MessageRepository
 import ru.souz.backend.chat.service.ChatService
 import ru.souz.backend.chat.service.MessageService
-import ru.souz.backend.client.BackendClientToolCatalogFactory
+import ru.souz.backend.client.BackendClientSkills
 import ru.souz.backend.client.ClientThreadRuntimeRegistry
 import ru.souz.backend.client.PublicClientService
 import ru.souz.backend.client.ClientThreadRecoveryService
@@ -96,14 +94,13 @@ import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.local.LocalProviderAvailability
 import ru.souz.runtime.di.runtimeCoreDiModule
 import ru.souz.runtime.di.runtimeLlmDiModule
+import ru.souz.skills.registry.fileSystemSkillRegistryDiModule
 import ru.souz.backend.telegram.HttpTelegramBotApi
 import ru.souz.backend.telegram.TelegramBotApi
 import ru.souz.backend.telegram.TelegramBotBindingRepository
 import ru.souz.backend.telegram.TelegramBotBindingService
 import ru.souz.backend.telegram.TelegramBotPollingService
 import ru.souz.backend.telegram.TelegramBotTokenCrypto
-import ru.souz.skills.registry.FileSystemSkillRegistryConfig
-import ru.souz.skills.registry.SkillStorageScope
 import ru.souz.skilloauth.SkillOAuthApi
 import ru.souz.skilloauth.impl.AuthorizationCodeOAuthClient
 import ru.souz.skilloauth.impl.AuthorizationCodeOAuthConfig
@@ -111,15 +108,14 @@ import ru.souz.skilloauth.impl.OAuthProviderCatalog
 import ru.souz.skilloauth.impl.OAuthProviderClient
 import ru.souz.skilloauth.impl.PostgresSkillOAuthCredentialRepository
 import ru.souz.skilloauth.impl.PostgresSkillOAuthPendingStateRepository
-import ru.souz.skilloauth.impl.PostgresSkillOAuthRequestedScopesRepository
 import ru.souz.skilloauth.impl.SkillOAuthApiImpl
 import ru.souz.skilloauth.impl.SkillOAuthCredentialRepository
 import ru.souz.skilloauth.impl.SkillOAuthPendingStateRepository
-import ru.souz.skilloauth.impl.SkillOAuthRequestedScopesRepository
 import ru.souz.skilloauth.impl.SkillOAuthTokenCrypto
 import ru.souz.tool.RuntimeToolsFactory
 import ru.souz.tool.runtimeToolsDiModule
-import ru.souz.tool.skills.ToolRunSkillCommand
+import ru.souz.tool.portableSkillRuntimeToolsDiModule
+import ru.souz.tool.skills.SkillCommandExecutor
 
 private object BackendDiTags {
     const val LOG_OBJECT_MAPPER = "backendLogObjectMapper"
@@ -138,19 +134,16 @@ fun backendDiModule(
             .enable(SerializationFeature.INDENT_OUTPUT)
     }
 
-    import(
-        runtimeCoreDiModule(
-            skillRegistryConfig = FileSystemSkillRegistryConfig(scope = SkillStorageScope.USER_SCOPED)
-        )
-    )
+    import(runtimeCoreDiModule())
     import(
         runtimeToolsDiModule(
             includeWebImageSearch = false,
-            skillStorageScope = SkillStorageScope.USER_SCOPED,
             scopeResolver = BackendSandboxScopeResolver,
         )
     )
     import(runtimeLlmDiModule(logObjectMapperTag = BackendDiTags.LOG_OBJECT_MAPPER))
+    import(fileSystemSkillRegistryDiModule())
+    import(portableSkillRuntimeToolsDiModule())
 
     bindSingleton { BackendApplicationScope() }
     bindSingleton<Clock> { Clock.systemUTC() }
@@ -174,7 +167,6 @@ fun backendDiModule(
     bindSingleton<SaluteDeviceBindingRepository> { PostgresSaluteDeviceBindingRepository(instance()) }
     bindSingleton<SkillOAuthCredentialRepository> { PostgresSkillOAuthCredentialRepository(instance()) }
     bindSingleton<SkillOAuthPendingStateRepository> { PostgresSkillOAuthPendingStateRepository(instance()) }
-    bindSingleton<SkillOAuthRequestedScopesRepository> { PostgresSkillOAuthRequestedScopesRepository(instance()) }
     // Not gated by a feature flag, but genuinely optional: a fresh backend deployment has no
     // registered OAuth provider apps yet, and skill OAuth must never be able to take the whole
     // process down over that (see incident where a missing SKILL_OAUTH_TOKEN_ENCRYPTION_KEY threw
@@ -207,7 +199,6 @@ fun backendDiModule(
             SkillOAuthApiImpl(
                 credentialRepository = instance(),
                 pendingStateRepository = instance(),
-                requestedScopesRepository = instance(),
                 crypto = instance(),
                 providers = skillOAuthProviders,
             )
@@ -319,40 +310,31 @@ fun backendDiModule(
         )
     }
     bindSingleton {
-        BackendSkillCoreToolsFactory(
-            skillBundleProvider = instance<SkillRegistryRepository>(),
-            legacyCommandTool = instance(tag = SkillToolBindingTags.COMMAND_TOOL),
-            commandTool = if (appConfig.featureFlags.saluteVoice) {
-                instance(tag = BackendDiTags.SALUTE_AWARE_COMMAND_TOOL)
-            } else {
-                instance<ToolRunSkillCommand>()
-            },
-        )
-    }
-    bindSingleton {
-        BackendClientToolCatalogFactory(
+        BackendClientSkills(
             registry = instance(),
             toolCallRepository = instance(),
             eventService = instance(),
         )
     }
     bindSingleton {
-        val clientToolCatalogFactory = instance<BackendClientToolCatalogFactory>()
         BackendConversationRuntimeFactory(
             baseSettingsProvider = instance(),
             llmApiFactory = { executionContext -> instance<LlmClientFactory>().create(executionContext) },
             sessionRepository = instance(),
             logObjectMapper = instance(BackendDiTags.LOG_OBJECT_MAPPER),
             systemPrompt = systemPrompt,
-            configuredAgentId = appConfig.agentId,
             toolCatalog = instance<BackendMergedToolCatalog>(),
-            clientToolCatalogProvider = { userId -> clientToolCatalogFactory.create(userId) },
-            skillCoreToolsFactory = instance(),
+            clientToolCatalog = instance<BackendClientSkills>(),
+            skillBundleProvider = instance<SkillRegistryRepository>(),
+            commandExecutor = if (appConfig.featureFlags.saluteVoice) {
+                instance(tag = BackendDiTags.SALUTE_AWARE_COMMAND_TOOL)
+            } else {
+                instance<SkillCommandExecutor>()
+            },
             getKnowledgeTool = instance(tag = SkillToolBindingTags.GET_KNOWLEDGE_TOOL),
             searchKnowledgeTool = instance(tag = SkillToolBindingTags.SEARCH_KNOWLEDGE_TOOL),
             searchMemoryTool = instance(tag = SkillToolBindingTags.SEARCH_MEMORY_TOOL),
             knowledgeStore = instance<ConversationKnowledgeStore>(),
-            skillRegistryRepository = instance(),
             agentBackgroundScope = instance<BackendApplicationScope>(),
         )
     }
@@ -456,14 +438,13 @@ fun backendDiModule(
                 execRequestRegistry = instance(),
             )
         }
-        bindSingleton<ToolRunSkillCommand>(tag = BackendDiTags.SALUTE_AWARE_COMMAND_TOOL) {
-            ToolRunSkillCommand(
+        bindSingleton<SkillCommandExecutor>(tag = BackendDiTags.SALUTE_AWARE_COMMAND_TOOL) {
+            SkillCommandExecutor(
                 sandboxResolver = BackendSaluteAwareToolInvocationRuntimeSandboxResolver(
                     fallback = instance(),
                     deviceResolver = instance(),
                     saluteSandboxes = instance(),
                 ),
-                skillStorageScope = SkillStorageScope.USER_SCOPED,
             )
         }
         bindSingleton {
