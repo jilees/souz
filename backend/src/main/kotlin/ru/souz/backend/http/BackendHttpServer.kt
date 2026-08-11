@@ -183,7 +183,7 @@ internal fun Application.configureBackendHttpServer(dependencies: BackendHttpDep
         if (dependencies.featureFlags.saluteVoice) {
             saluteRoutes(dependencies)
         }
-        dependencies.skillOAuthApiImpl?.let { installSkillOAuthRoutes(it, BackendHttpRoutes.OAUTH_CALLBACK) }
+        dependencies.skillOAuthGatewayImpl?.let { installSkillOAuthRoutes(it, BackendHttpRoutes.OAUTH_CALLBACK) }
 
         swaggerUI(BackendHttpRoutes.DOCS) {
             openapiVersion = "3.1.1"

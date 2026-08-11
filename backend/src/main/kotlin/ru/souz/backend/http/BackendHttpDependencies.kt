@@ -16,7 +16,7 @@ import ru.souz.backend.salute.SaluteExecRequestRegistry
 import ru.souz.backend.salute.SaluteWebhookService
 import ru.souz.backend.settings.service.UserSettingsService
 import ru.souz.backend.telegram.TelegramBotBindingService
-import ru.souz.skilloauth.impl.SkillOAuthApiImpl
+import ru.souz.skilloauth.impl.SkillOAuthGatewayImpl
 
 internal data class BackendHttpDependencies(
     val bootstrapService: BackendBootstrapService,
@@ -37,7 +37,7 @@ internal data class BackendHttpDependencies(
     val saluteExecRequestRegistry: SaluteExecRequestRegistry? = null,
     // Always wired in real DI (see BackendDiModule) — nullable only so unrelated test fixtures
     // that construct this data class directly don't all need to supply one.
-    val skillOAuthApiImpl: SkillOAuthApiImpl? = null,
+    val skillOAuthGatewayImpl: SkillOAuthGatewayImpl? = null,
     val featureFlags: BackendFeatureFlags = BackendFeatureFlags(),
     val trustedProxyToken: () -> String? = { null },
     val ensureTrustedUser: suspend (String) -> Unit = { _ -> },

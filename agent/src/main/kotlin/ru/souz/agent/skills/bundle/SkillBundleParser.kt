@@ -48,7 +48,7 @@ object SkillBundleParser {
             version = parsedMap["version"]?.takeIf { it.isNotBlank() },
             runsOnDevice = parseRunsOnDevice(parsedMap["runsOnDevice"]),
             oauthProvider = parsedMap["oauthProvider"]?.takeIf { it.isNotBlank() },
-            oauthScopes = parseIndentedList(frontmatter, "oauthScopes"),
+            oauthScopes = parseScopesList(frontmatter, "oauthScopes"),
             metadata = metadata,
             rawFrontmatter = frontmatter,
         )
@@ -60,20 +60,56 @@ object SkillBundleParser {
             ?: throw SkillBundleException("SKILL.md frontmatter field 'runsOnDevice' must be 'true' or 'false', got: $trimmed")
     }
 
-    private fun parseIndentedList(frontmatter: String, key: String): List<String> {
+    /**
+     * Accepts both YAML list shapes: inline (`oauthScopes: [a, b]`) and block (`oauthScopes:`
+     * followed by indented `- item` lines, with blank lines/comments tolerated before the first
+     * item). Unlike a plain "doesn't match, so empty" fallback, a key present but in neither shape
+     * is a manifest authoring mistake and must fail loudly — a skill silently ending up with zero
+     * declared scopes would fail closed on OAuth calls, hiding the real problem instead of
+     * surfacing it.
+     */
+    private fun parseScopesList(frontmatter: String, key: String): List<String> {
         val lines = frontmatter.lines()
-        val startIndex = lines.indexOfFirst { it.trim() == "$key:" }
-        if (startIndex < 0) return emptyList()
+        val keyLineIndex = lines.indexOfFirst { line ->
+            !line.startsWith(" ") && !line.startsWith("\t") && line.trim().startsWith("$key:")
+        }
+        if (keyLineIndex < 0) return emptyList()
+
+        val inlineValue = lines[keyLineIndex].trim().removePrefix("$key:").trim()
+        if (inlineValue.isNotEmpty()) {
+            return parseInlineScopeList(key, inlineValue)
+        }
 
         val values = mutableListOf<String>()
-        for (lineIndex in startIndex + 1 until lines.size) {
+        var lineIndex = keyLineIndex + 1
+        while (lineIndex < lines.size) {
             val line = lines[lineIndex]
-            if (!line.startsWith("  ")) break
             val trimmed = line.trim()
-            if (!trimmed.startsWith("- ")) break
-            values += trimmed.removePrefix("-").trim().trim('"', '\'')
+            when {
+                trimmed.isEmpty() || trimmed.startsWith("#") -> lineIndex++
+                !line.startsWith("  ") -> return values
+                trimmed.startsWith("- ") -> {
+                    values += trimmed.removePrefix("-").trim().trim('"', '\'')
+                    lineIndex++
+                }
+                else -> throw SkillBundleException(
+                    "SKILL.md frontmatter field '$key' has a malformed list item: '$trimmed'"
+                )
+            }
         }
         return values
+    }
+
+    private fun parseInlineScopeList(key: String, inlineValue: String): List<String> {
+        if (!inlineValue.startsWith("[") || !inlineValue.endsWith("]")) {
+            throw SkillBundleException(
+                "SKILL.md frontmatter field '$key' must be a YAML list — either '$key: [a, b]' or a " +
+                    "'- item' block — got: '$inlineValue'"
+            )
+        }
+        val inner = inlineValue.removeSurrounding("[", "]").trim()
+        if (inner.isEmpty()) return emptyList()
+        return inner.split(",").map { it.trim().trim('"', '\'') }
     }
 
     private fun parseYamlLikeMap(frontmatter: String): Map<String, String> {
