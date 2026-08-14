@@ -26,7 +26,7 @@ fun interface SaluteTurnExecutor {
     ): SendMessageResult
 }
 
-private class AgentExecutionSaluteTurnExecutor(
+internal class AgentExecutionSaluteTurnExecutor(
     private val executionService: AgentExecutionService,
 ) : SaluteTurnExecutor {
     override suspend fun execute(
@@ -37,7 +37,7 @@ private class AgentExecutionSaluteTurnExecutor(
         requestOverrides: UserSettingsOverrides,
         attributes: Map<String, String>,
     ): SendMessageResult =
-        executionService.executeChatTurn(
+        executionService.executeChatTurnAndAwaitCompletion(
             userId = userId,
             chatId = chatId,
             content = content,

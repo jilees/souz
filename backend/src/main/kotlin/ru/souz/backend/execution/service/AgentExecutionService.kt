@@ -174,6 +174,7 @@ class AgentExecutionService internal constructor(
         content: String,
         clientMessageId: String? = null,
         requestOverrides: UserSettingsOverrides = UserSettingsOverrides(),
+        attributes: Map<String, String> = emptyMap(),
     ): SendMessageResult {
         val started = executeChatTurn(
             userId = userId,
@@ -181,6 +182,7 @@ class AgentExecutionService internal constructor(
             content = content,
             clientMessageId = clientMessageId,
             requestOverrides = requestOverrides,
+            attributes = attributes,
         )
         launcher.join(started.execution.id)
         val finishedExecution = executionRepository.getByChat(userId, chatId, started.execution.id)
