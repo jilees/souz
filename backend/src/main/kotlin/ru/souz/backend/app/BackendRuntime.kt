@@ -9,7 +9,6 @@ import ru.souz.backend.http.BackendHttpDependencies
 import ru.souz.backend.telegram.TelegramBotPollingService
 import ru.souz.backend.client.ClientThreadRecoveryService
 import ru.souz.db.SettingsProvider
-import ru.souz.llms.local.LocalLlamaRuntime
 
 private val log = LoggerFactory.getLogger("SouzBackendRuntime")
 
@@ -24,7 +23,6 @@ class BackendRuntime private constructor(
     private val resources: BackendRuntimeResources by lazy { di.direct.instance() }
     private val applicationScope: BackendApplicationScope by lazy { di.direct.instance() }
     private val clientThreadRecoveryService: ClientThreadRecoveryService by lazy { di.direct.instance() }
-    private val localRuntime: LocalLlamaRuntime by lazy { di.direct.instance() }
 
     fun startBackgroundServices() {
         if (httpDependencies.featureFlags.wsEvents) {
@@ -35,8 +33,11 @@ class BackendRuntime private constructor(
     }
 
     override fun close() {
-        localRuntime.close()
-        resources.close()
+        runBlocking { shutdown() }
+    }
+
+    suspend fun shutdown() {
+        resources.shutdown()
     }
 
     companion object {

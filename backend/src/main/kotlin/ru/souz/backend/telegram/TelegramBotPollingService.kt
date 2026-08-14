@@ -48,7 +48,7 @@ private class AgentExecutionTelegramTurnExecutor(
         clientMessageId: String,
         requestOverrides: UserSettingsOverrides,
     ): SendMessageResult =
-        executionService.executeChatTurn(
+        executionService.executeChatTurnAndAwaitCompletion(
             userId = userId,
             chatId = chatId,
             content = content,
@@ -355,11 +355,18 @@ class TelegramBotPollingService(
         chatId: Long,
         result: SendMessageResult,
     ) {
-        if (result.assistantMessage == null && result.execution.status != AgentExecutionStatus.COMPLETED) {
-            sendReplySafely(bindingId, token, chatId, ACTIVE_EXECUTION_REPLY)
-            return
+        val responseText = when {
+            result.assistantMessage != null -> result.assistantMessage.content
+            result.execution.status == AgentExecutionStatus.COMPLETED -> FALLBACK_ASSISTANT_REPLY
+            result.execution.status == AgentExecutionStatus.RUNNING -> {
+                sendReplySafely(bindingId, token, chatId, ACTIVE_EXECUTION_REPLY)
+                return
+            }
+            else -> {
+                sendReplySafely(bindingId, token, chatId, GENERIC_FAILURE_REPLY)
+                return
+            }
         }
-        val responseText = result.assistantMessage?.content.orEmpty()
         val chunks = telegramTextChunks(
             text = responseText.ifBlank { FALLBACK_ASSISTANT_REPLY },
             maxLength = TELEGRAM_TEXT_LIMIT,
