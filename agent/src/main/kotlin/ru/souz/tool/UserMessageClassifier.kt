@@ -159,6 +159,7 @@ object LocalRegexClassifier : UserMessageClassifier {
             WeightedRegex(Regex("список .*каналов|доступные каналы"), 1.2),
         )
 
+
         ToolCategory.HELP -> listOf(
             WeightedRegex(Regex("что (ты )?(умеешь|можешь|знаешь делать)|что ты делаешь|какие .* функци|какие .* возможност"), 2.0),
             WeightedRegex(Regex("как (тебя |тобой )?пользоваться|что ты за приложение|чем .* помочь"), 1.5),

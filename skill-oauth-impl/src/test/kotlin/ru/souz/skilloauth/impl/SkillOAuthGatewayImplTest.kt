@@ -46,6 +46,8 @@ class SkillOAuthGatewayImplTest {
                     clientSecret = "secret-1",
                     redirectUri = "https://backend.example/oauth/callback",
                     allowedApiHosts = setOf("login.yandex.ru"),
+                    extraAuthorizeParams = emptyMap(),
+                    authorizationScheme = "Bearer",
                 ),
             )
         ),
@@ -63,6 +65,7 @@ class SkillOAuthGatewayImplTest {
     private class FakeOAuthProviderClient(
         override val name: String = "yandex",
         override val allowedApiHosts: Set<String> = setOf("login.yandex.ru"),
+        override val authorizationScheme: String = "Bearer",
         private val exchangeResults: Map<String, OAuthTokenResult> = emptyMap(),
         private val refreshException: Throwable? = null,
     ) : OAuthProviderClient {
@@ -457,6 +460,79 @@ class SkillOAuthGatewayImplTest {
     }
 
     @Test
+    fun `losing a concurrent refresh race reuses the winner's credential instead of reporting reconnectRequired`() = runTest {
+        // Two overlapping refreshes of the same expired credential against a provider that rotates
+        // refresh tokens: the winner commits first (bumping revision), so the loser's own provider
+        // round-trip comes back invalid_grant (its refresh token was just invalidated by the
+        // rotation) and its own upsert(refreshTokenEncrypted = null) loses the CAS. That must not
+        // discard the winner's still-valid credential and force a needless reconnect.
+        val credentialRepository = InMemorySkillOAuthCredentialRepository()
+        credentialRepository.upsert(
+            SkillOAuthCredential(
+                userId = "user-1",
+                provider = "yandex",
+                accessTokenEncrypted = testCrypto.encrypt("expired-token"),
+                refreshTokenEncrypted = testCrypto.encrypt("stale-refresh-token"),
+                grantedScopes = listOf("login:info"),
+                expiresAt = fixedClock.instant().minusSeconds(60),
+                generation = 1,
+                createdAt = Instant.now(),
+                updatedAt = Instant.now(),
+            )
+        )
+        var capturedAuthorization: String? = null
+        val provider = object : OAuthProviderClient {
+            override val name = "yandex"
+            override val allowedApiHosts = setOf("login.yandex.ru")
+            override val authorizationScheme = "Bearer"
+
+            override fun buildAuthorizeUrl(state: String, scopes: List<String>) =
+                "https://fake.example/authorize?state=$state"
+
+            override suspend fun exchangeCode(code: String) =
+                throw SkillOAuthException("Not used in this test.")
+
+            override suspend fun refresh(refreshToken: String): OAuthTokenResult {
+                // Simulates the winner's own refresh landing (and rotating the refresh token)
+                // while this loser's network round-trip to the provider is still in flight.
+                val stale = credentialRepository.find("user-1", "yandex")!!
+                credentialRepository.upsert(
+                    stale.copy(
+                        accessTokenEncrypted = testCrypto.encrypt("winner-access-token"),
+                        refreshTokenEncrypted = testCrypto.encrypt("winner-refresh-token"),
+                        expiresAt = fixedClock.instant().plusSeconds(3600),
+                        updatedAt = fixedClock.instant(),
+                    )
+                )
+                throw OAuthProviderErrorException(errorCode = "invalid_grant", message = "rotated refresh token")
+            }
+        }
+        val httpClientWithCapture = HttpClient(MockEngine { request ->
+            capturedAuthorization = request.headers[HttpHeaders.Authorization]
+            respond(content = "{}", status = HttpStatusCode.OK)
+        })
+        val api = newApi(
+            credentialRepository = credentialRepository,
+            providers = mapOf("yandex" to provider),
+            httpClient = httpClientWithCapture,
+        )
+
+        val outcome = api.call(
+            userId = "user-1",
+            provider = "yandex",
+            requiredScopes = setOf("login:info"),
+            request = ApiCallRequest(method = "GET", url = "https://login.yandex.ru/info"),
+        )
+
+        assertEquals(200, (outcome as ApiCallResponse).statusCode)
+        assertEquals("Bearer winner-access-token", capturedAuthorization)
+        assertEquals(
+            "winner-refresh-token",
+            testCrypto.decrypt(credentialRepository.find("user-1", "yandex")!!.refreshTokenEncrypted!!),
+        )
+    }
+
+    @Test
     fun `a non-invalid_grant refresh error does not clear the refresh token and does not report reconnectRequired`() = runTest {
         // D00mch: toTokenResult() throws the same exception type for every OAuth error code —
         // invalid_client, invalid_scope, server_error, etc. are not evidence the refresh token
@@ -694,6 +770,44 @@ class SkillOAuthGatewayImplTest {
         )
 
         assertEquals("Bearer real-access-token", capturedAuthorization)
+    }
+
+    @Test
+    fun `call sends the provider's own authorization scheme instead of hardcoding Bearer`() = runTest {
+        // Regression test: Yandex's APIs expect `Authorization: OAuth <token>` and reject a
+        // `Bearer`-prefixed token with 401 even when the token itself is valid.
+        var capturedAuthorization: String? = null
+        val mockEngine = MockEngine { request ->
+            capturedAuthorization = request.headers[HttpHeaders.Authorization]
+            respond(content = "{}", status = HttpStatusCode.OK)
+        }
+        val provider = AuthorizationCodeOAuthClient(
+            config = AuthorizationCodeOAuthConfig(
+                name = "yandex",
+                authorizeEndpoint = "https://oauth.yandex.ru/authorize",
+                tokenEndpoint = "https://oauth.yandex.ru/token",
+                clientId = "client-1",
+                clientSecret = "secret-1",
+                redirectUri = "https://backend.example/oauth/callback",
+                allowedApiHosts = setOf("login.yandex.ru"),
+                extraAuthorizeParams = emptyMap(),
+                authorizationScheme = "OAuth",
+            ),
+        )
+        val api = newApi(
+            credentialRepository = connectedCredentialRepository(listOf("login:info")),
+            httpClient = HttpClient(mockEngine),
+            providers = mapOf("yandex" to provider),
+        )
+
+        api.call(
+            userId = "user-1",
+            provider = "yandex",
+            requiredScopes = setOf("login:info"),
+            request = ApiCallRequest(method = "GET", url = "https://login.yandex.ru/info"),
+        )
+
+        assertEquals("OAuth real-access-token", capturedAuthorization)
     }
 
     @Test
