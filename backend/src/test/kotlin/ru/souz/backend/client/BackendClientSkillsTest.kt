@@ -37,8 +37,11 @@ class BackendClientSkillsTest {
         val openMedia = clientSkills.toolsByCategory
             .getValue(ToolCategory.APPLICATIONS)
             .getValue("device.media.open")
+        val exec = clientSkills.toolsByCategory
+            .getValue(ToolCategory.APPLICATIONS)
+            .getValue("device.exec")
         assertEquals(
-            setOf("user.ask", "device.media.open"),
+            setOf("user.ask", "device.media.open", "device.exec"),
             clientSkills.toolsByCategory.values.flatMap { it.keys }.toSet(),
         )
         assertContains(ask.fn.description, "Ask the user")
@@ -50,6 +53,10 @@ class BackendClientSkillsTest {
         assertEquals("object", openMedia.fn.parameters.type)
         assertTrue(openMedia.fn.parameters.properties.isEmpty())
         assertTrue(openMedia.fn.parameters.required.isEmpty())
+        assertContains(exec.fn.description, "Run a command on the device")
+        assertEquals("object", exec.fn.parameters.type)
+        assertTrue(exec.fn.parameters.properties.isEmpty())
+        assertTrue(exec.fn.parameters.required.isEmpty())
     }
 
     @Test

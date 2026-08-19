@@ -1,2 +1,3 @@
 user-ask
 device-media-open
+device-exec
