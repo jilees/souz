@@ -34,7 +34,6 @@ import ru.souz.llms.restJsonMapper
 import ru.souz.knowledge.SandboxConversationKnowledgeStore
 import ru.souz.runtime.sandbox.SandboxCommandRuntime
 import ru.souz.runtime.sandbox.SandboxScope
-import ru.souz.runtime.sandbox.SkillCommandSandboxAttributes
 import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.runtime.sandbox.local.LocalRuntimeSandbox
 import ru.souz.tool.BadInputException
@@ -339,43 +338,6 @@ class SkillRuntimeToolsTest {
     }
 
     @Test
-    fun `command executor surfaces the manifest's runsOnDevice to the sandbox resolver`() = runTest {
-        // Regression test: the resolver (BackendSaluteAwareToolInvocationRuntimeSandboxResolver)
-        // decides Local/Docker vs. a Salute device purely from
-        // SkillCommandSandboxAttributes.RUNS_ON_DEVICE on the meta it's given — it never inspects
-        // the bundle itself. Losing this line silently routes every "runs on device" skill to the
-        // fallback sandbox instead of the real device, with no error to signal it.
-        val home = createTempDirectory("skill-command-device-home-")
-        val stateRoot = home.resolve("state").createDirectories()
-        stateRoot.resolve("skills/device-skill").createDirectories()
-        val deviceBundle = bundle("device-skill", runsOnDevice = true)
-        val localBundle = bundle("local-skill", runsOnDevice = false)
-        var lastResolvedMeta: ToolInvocationMeta? = null
-        val resolver = ToolInvocationRuntimeSandboxResolver { meta ->
-            lastResolvedMeta = meta
-            localSandbox(home, stateRoot)
-        }
-        val executor = SkillCommandExecutor(resolver)
-
-        executor.execute(
-            bundle = deviceBundle,
-            bundleHash = SkillBundleHasher.hash(deviceBundle),
-            arguments = SkillCommandExecutor.Args(runtime = SandboxCommandRuntime.BASH, script = "true"),
-            meta = ToolInvocationMeta(userId = USER_ID),
-        )
-        assertEquals("true", lastResolvedMeta?.attributes?.get(SkillCommandSandboxAttributes.RUNS_ON_DEVICE))
-
-        stateRoot.resolve("skills/local-skill").createDirectories()
-        executor.execute(
-            bundle = localBundle,
-            bundleHash = SkillBundleHasher.hash(localBundle),
-            arguments = SkillCommandExecutor.Args(runtime = SandboxCommandRuntime.BASH, script = "true"),
-            meta = ToolInvocationMeta(userId = USER_ID),
-        )
-        assertEquals("false", lastResolvedMeta?.attributes?.get(SkillCommandSandboxAttributes.RUNS_ON_DEVICE))
-    }
-
-    @Test
     fun `command executor rejects script path outside skill root`() = runTest {
         val home = createTempDirectory("skill-command-escape-home-")
         val stateRoot = home.resolve("state").createDirectories()
@@ -674,7 +636,6 @@ private fun bundle(
     skillId: String,
     body: String = "Follow these instructions.",
     supportingFiles: Map<String, String> = emptyMap(),
-    runsOnDevice: Boolean = false,
 ): SkillBundle = SkillBundle.fromFiles(
     skillId = SkillId(skillId),
     files = buildList {
@@ -687,7 +648,6 @@ private fun bundle(
                     appendLine("description: Description $skillId")
                     appendLine("author: Test Author")
                     appendLine("version: 1.0")
-                    appendLine("runsOnDevice: $runsOnDevice")
                     appendLine("---")
                     append(body)
                 }.toByteArray(),

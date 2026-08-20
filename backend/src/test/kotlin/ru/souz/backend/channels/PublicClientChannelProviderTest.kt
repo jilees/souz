@@ -48,10 +48,10 @@ class PublicClientChannelProviderTest {
     }
 
     @Test
-    fun `listChannels excludes backend and archived chats`() = runTest {
+    fun `listChannels includes backend chats but excludes archived chats`() = runTest {
         val chatRepository = MemoryChatRepository()
         val mobile = chat("mobile_app")
-        val backend = chat("backend")
+        val backend = chat("backend", title = "Backend")
         val archived = chat("mobile_app", archived = true)
         chatRepository.create(mobile)
         chatRepository.create(backend)
@@ -60,7 +60,13 @@ class PublicClientChannelProviderTest {
 
         val channels = provider.listChannels(userId)
 
-        assertEquals(listOf(ChannelDescriptor("mobile_app", mobile.id.toString(), "Mobile")), channels)
+        assertEquals(
+            setOf(
+                ChannelDescriptor("mobile_app", mobile.id.toString(), "Mobile"),
+                ChannelDescriptor("backend", backend.id.toString(), "Backend"),
+            ),
+            channels.toSet(),
+        )
     }
 
     @Test

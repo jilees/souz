@@ -14,13 +14,9 @@ internal object BackendHttpRoutes {
     const val CHATS = "$V1/chats"
     const val OPTIONS = "$V1/options"
 
-    // Outside /v1/ on purpose — Salute (Sber) calls the webhook without the trusted-proxy
-    // headers, and RequestIdentityPlugin only guards paths under /v1/ (see security/RequestIdentity.kt).
-    const val SALUTE_WEBHOOK = "/salute/webhook"
-    const val SALUTE_WS = "/salute/ws"
-
-    // Outside /v1/ for the same reason as Salute's webhook above: the OAuth provider's redirect
-    // never carries our trusted-proxy headers, so it cannot land under /v1/.
+    // Outside /v1/ on purpose — the OAuth provider's redirect never carries our trusted-proxy
+    // headers, and RequestIdentityPlugin only guards paths under /v1/ (see security/RequestIdentity.kt),
+    // so it cannot land under /v1/.
     const val OAUTH_CALLBACK = "/oauth/callback"
 
     private const val PROVIDER_PARAMETER = "{provider}"

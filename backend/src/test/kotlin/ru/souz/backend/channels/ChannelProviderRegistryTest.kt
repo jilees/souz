@@ -27,15 +27,15 @@ class ChannelProviderRegistryTest {
     @Test
     fun `listAll flattens channels from all providers`() = runTest {
         val telegram = FakeProvider("telegram", listOf(ChannelDescriptor("telegram", "1", "Telegram")))
-        val salute = FakeProvider("salute", listOf(ChannelDescriptor("salute", "dev-1", "Kitchen")))
-        val registry = ChannelProviderRegistry(listOf(telegram, salute))
+        val webchat = FakeProvider("webchat", listOf(ChannelDescriptor("webchat", "dev-1", "Kitchen")))
+        val registry = ChannelProviderRegistry(listOf(telegram, webchat))
 
         val channels = registry.listAll("user-1")
 
         assertEquals(
             setOf(
                 ChannelDescriptor("telegram", "1", "Telegram"),
-                ChannelDescriptor("salute", "dev-1", "Kitchen"),
+                ChannelDescriptor("webchat", "dev-1", "Kitchen"),
             ),
             channels.toSet(),
         )
@@ -44,13 +44,13 @@ class ChannelProviderRegistryTest {
     @Test
     fun `send routes to the provider that supports the channel type`() = runTest {
         val telegram = FakeProvider("telegram")
-        val salute = FakeProvider("salute")
-        val registry = ChannelProviderRegistry(listOf(telegram, salute))
+        val webchat = FakeProvider("webchat")
+        val registry = ChannelProviderRegistry(listOf(telegram, webchat))
 
-        registry.send("user-1", "salute", "dev-1", "hi")
+        registry.send("user-1", "webchat", "dev-1", "hi")
 
         assertEquals(0, telegram.sendCalls)
-        assertEquals(1, salute.sendCalls)
+        assertEquals(1, webchat.sendCalls)
     }
 
     @Test

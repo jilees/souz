@@ -56,8 +56,6 @@ data class SkillManifest(
     val description: String,
     val author: String? = null,
     val version: String? = null,
-    /** Declares that this skill's scripts must run on the user's own physical device (e.g. a connected Salute speaker) rather than the server-side Local/Docker sandbox. */
-    val runsOnDevice: Boolean = false,
     /** Declares the OAuth provider this skill needs (e.g. "yandex"). Null means the skill does not use OAuth. */
     val oauthProvider: String? = null,
     /** OAuth scopes this skill requires from [oauthProvider]. Ignored when [oauthProvider] is null. */

@@ -16,9 +16,8 @@ import ru.souz.tool.ToolSetup
 
 /**
  * The `provider` is never a caller-supplied argument: it is read fresh from the active Skill's own
- * manifest ([SkillBundleProvider.loadSkillBundle]) on every call, the same way
- * [ToolInvokeSkill] re-derives `runsOnDevice` rather than trusting anything the caller supplied.
- * This is what makes the tool resistant to indirect prompt injection — there is no field in [Input]
+ * manifest ([SkillBundleProvider.loadSkillBundle]) on every call, never trusted from anything the
+ * caller supplied. This is what makes the tool resistant to indirect prompt injection — there is no field in [Input]
  * a hijacked model turn could use to redirect the call to a different provider's connection. The
  * bundle lookup goes through the same [SkillApprovalGate] as [ToolGetSkillByName]/[ToolInvokeSkill]
  * so a stored-but-unapproved bundle can't drive a real OAuth connection either — [approvalGate] must

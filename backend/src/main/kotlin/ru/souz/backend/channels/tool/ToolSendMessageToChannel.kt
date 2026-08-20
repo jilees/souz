@@ -16,7 +16,7 @@ class ToolSendMessageToChannel(
     private val registry: ChannelProviderRegistry,
 ) : ToolSetup<ToolSendMessageToChannel.Input> {
     data class Input(
-        @InputParamDescription("Channel type from ListActiveChannels, e.g. telegram or salute.")
+        @InputParamDescription("Channel type from ListActiveChannels, e.g. telegram.")
         val channelType: String,
         @InputParamDescription("Channel id from ListActiveChannels.")
         val channelId: String,

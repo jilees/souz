@@ -8,7 +8,6 @@ import ru.souz.runtime.sandbox.RuntimeSandbox
 import ru.souz.runtime.sandbox.SandboxCommandRequest
 import ru.souz.runtime.sandbox.SandboxCommandResult
 import ru.souz.runtime.sandbox.SandboxCommandRuntime
-import ru.souz.runtime.sandbox.SkillCommandSandboxAttributes
 import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.tool.BadInputException
 import ru.souz.tool.InputParamDescription
@@ -51,14 +50,7 @@ class SkillCommandExecutor(
         arguments: Args,
         meta: ToolInvocationMeta,
     ): SandboxCommandResult {
-        // The resolver decides Local/Docker vs. a Salute device purely from this attribute (see
-        // BackendSaluteAwareToolInvocationRuntimeSandboxResolver) — it never inspects the bundle
-        // itself, so the manifest's own runsOnDevice must be surfaced here on every call rather
-        // than trusted from any caller-supplied meta.
-        val resolverMeta = meta.copy(
-            attributes = meta.attributes + (SkillCommandSandboxAttributes.RUNS_ON_DEVICE to bundle.manifest.runsOnDevice.toString()),
-        )
-        val sandbox = sandboxResolver.resolve(resolverMeta)
+        val sandbox = sandboxResolver.resolve(meta)
         val skillRoot = resolveSkillRoot(sandbox, bundle.skillId, bundleHash)
         val workingDirectory = resolveWorkingDirectory(skillRoot, arguments.workingDirectory)
         val scriptPath = resolveScriptPath(sandbox, skillRoot, arguments.scriptPath)

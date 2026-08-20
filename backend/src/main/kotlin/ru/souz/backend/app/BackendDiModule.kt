@@ -23,7 +23,6 @@ import ru.souz.backend.agent.session.AgentSessionRepository
 import ru.souz.backend.bootstrap.BackendBootstrapService
 import ru.souz.backend.channels.ChannelProviderRegistry
 import ru.souz.backend.channels.PublicClientChannelProvider
-import ru.souz.backend.channels.SaluteChannelProvider
 import ru.souz.backend.channels.TelegramChannelProvider
 import ru.souz.backend.channels.tool.BackendChannelToolCatalog
 import ru.souz.backend.channels.tool.ToolListActiveChannels
@@ -43,15 +42,6 @@ import ru.souz.backend.common.BackendAvailableToolNames
 import ru.souz.backend.common.BackendLlmSupport
 import ru.souz.backend.options.repository.OptionRepository
 import ru.souz.backend.options.service.OptionService
-import ru.souz.backend.salute.SaluteDeviceBindingRepository
-import ru.souz.backend.salute.SaluteDeviceBindingService
-import ru.souz.backend.salute.SaluteDeviceConnectionRegistry
-import ru.souz.backend.salute.SaluteExecRequestRegistry
-import ru.souz.backend.salute.SaluteWebhookService
-import ru.souz.backend.salute.sandbox.BackendSaluteAwareToolInvocationRuntimeSandboxResolver
-import ru.souz.backend.salute.sandbox.RegistryBackedSaluteConnectedDeviceResolver
-import ru.souz.backend.salute.sandbox.SaluteConnectedDeviceResolver
-import ru.souz.backend.salute.sandbox.SaluteRuntimeSandboxProvider
 import ru.souz.backend.events.repository.AgentEventRepository
 import ru.souz.backend.events.bus.AgentEventBus
 import ru.souz.backend.events.service.AgentEventService
@@ -80,7 +70,6 @@ import ru.souz.backend.storage.postgres.PostgresOptionRepository
 import ru.souz.backend.storage.postgres.PostgresDataSourceFactory
 import ru.souz.backend.storage.postgres.PostgresMessageRepository
 import ru.souz.backend.storage.postgres.PostgresToolCallRepository
-import ru.souz.backend.storage.postgres.PostgresSaluteDeviceBindingRepository
 import ru.souz.backend.storage.postgres.PostgresTelegramBotBindingRepository
 import ru.souz.backend.storage.postgres.PostgresUserRepository
 import ru.souz.backend.storage.postgres.PostgresUserProviderKeyRepository
@@ -112,7 +101,6 @@ import ru.souz.tool.web.internal.WebResearchClient
 
 private object BackendDiTags {
     const val LOG_OBJECT_MAPPER = "backendLogObjectMapper"
-    const val SALUTE_AWARE_COMMAND_TOOL = "saluteAwareSkillCommandTool"
 }
 
 /** Backend Kodein module that wires HTTP services to the shared JVM runtime. */
@@ -160,7 +148,6 @@ fun backendDiModule(
     bindSingleton<UserSettingsRepository> { PostgresUserSettingsRepository(instance()) }
     bindSingleton<UserProviderKeyRepository> { PostgresUserProviderKeyRepository(instance()) }
     bindSingleton<TelegramBotBindingRepository> { PostgresTelegramBotBindingRepository(instance()) }
-    bindSingleton<SaluteDeviceBindingRepository> { PostgresSaluteDeviceBindingRepository(instance()) }
     bindSingleton {
         // Each AuthorizationCodeOAuthClient and SkillOAuthGatewayImpl owns its own Ktor CIO
         // HttpClient (a selector-manager thread pool each); without closing them here they leak
@@ -193,7 +180,6 @@ fun backendDiModule(
     }
     bindSingleton {
         val telegramBindingRepository = instance<TelegramBotBindingRepository>()
-        val saluteDeviceBindingRepository = instance<SaluteDeviceBindingRepository>()
         PublicClientChannelProvider(
             chatRepository = instance(),
             messageRepository = instance(),
@@ -202,8 +188,7 @@ fun backendDiModule(
                 // Only an active Telegram binding actually claims the chat away from the public-client
                 // provider — a pending (not yet /start-linked) or disabled binding must not hide the
                 // chat from ListActiveChannels, since TelegramChannelProvider itself won't list it either.
-                telegramBindingRepository.getByChat(chatId)?.let { it.enabled && it.linked } == true ||
-                    saluteDeviceBindingRepository.getByChatId(chatId) != null
+                telegramBindingRepository.getByChat(chatId)?.let { it.enabled && it.linked } == true
             },
         )
     }
@@ -250,13 +235,6 @@ fun backendDiModule(
         )
     }
     bindSingleton {
-        SaluteDeviceBindingService(
-            bindingRepository = instance(),
-            chatRepository = instance(),
-            clock = instance(),
-        )
-    }
-    bindSingleton {
         BackendClientSkills(
             registry = instance(),
             toolCallRepository = instance(),
@@ -277,11 +255,7 @@ fun backendDiModule(
             toolCatalog = instance<BackendMergedToolCatalog>(),
             clientToolCatalog = instance<BackendClientSkills>(),
             skillBundleProvider = instance<SkillRegistryRepository>(),
-            commandExecutor = if (appConfig.featureFlags.saluteVoice) {
-                instance(tag = BackendDiTags.SALUTE_AWARE_COMMAND_TOOL)
-            } else {
-                instance<SkillCommandExecutor>()
-            },
+            commandExecutor = instance<SkillCommandExecutor>(),
             filesToolUtil = instance<FilesToolUtil>(),
             webResearchClient = instance<WebResearchClient>(),
             getKnowledgeTool = instance(tag = SkillToolBindingTags.GET_KNOWLEDGE_TOOL),
@@ -351,7 +325,6 @@ fun backendDiModule(
                 botApi = instance(),
                 executionService = instance(),
                 tokenCrypto = instance(),
-                saluteBindingService = instance(),
                 scope = instance<BackendApplicationScope>(),
                 maxConcurrency = appConfig.telegramPollingMaxConcurrency,
             )
@@ -367,53 +340,10 @@ fun backendDiModule(
             )
         }
     }
-    if (appConfig.featureFlags.saluteVoice) {
-        bindSingleton { SaluteDeviceConnectionRegistry() }
-        bindSingleton { SaluteExecRequestRegistry() }
-        bindSingleton {
-            SaluteWebhookService(
-                bindingRepository = instance(),
-                connectionRegistry = instance(),
-                executionService = instance(),
-                applicationScope = instance<BackendApplicationScope>(),
-                execRequestRegistry = instance(),
-                clock = instance(),
-            )
-        }
-        bindSingleton<SaluteConnectedDeviceResolver> {
-            RegistryBackedSaluteConnectedDeviceResolver(registry = instance())
-        }
-        bindSingleton {
-            SaluteRuntimeSandboxProvider(
-                settingsProvider = instance(),
-                devicePusher = instance<SaluteDeviceConnectionRegistry>(),
-                execRequestRegistry = instance(),
-            )
-        }
-        bindSingleton<SkillCommandExecutor>(tag = BackendDiTags.SALUTE_AWARE_COMMAND_TOOL) {
-            SkillCommandExecutor(
-                sandboxResolver = BackendSaluteAwareToolInvocationRuntimeSandboxResolver(
-                    fallback = instance(),
-                    deviceResolver = instance(),
-                    saluteSandboxes = instance(),
-                ),
-            )
-        }
-        bindSingleton {
-            SaluteChannelProvider(
-                bindingRepository = instance(),
-                chatRepository = instance(),
-                messageRepository = instance(),
-                eventService = instance(),
-                devicePusher = instance<SaluteDeviceConnectionRegistry>(),
-            )
-        }
-    }
     bindSingleton {
         ChannelProviderRegistry(
             providers = listOfNotNull(
                 if (appConfig.featureFlags.telegramBot) instance<TelegramChannelProvider>() else null,
-                if (appConfig.featureFlags.saluteVoice) instance<SaluteChannelProvider>() else null,
                 instance<PublicClientChannelProvider>(), // registered last: defers to the others for chats they claim
             )
         )
@@ -483,10 +413,6 @@ fun backendDiModule(
             eventService = instance(),
             publicClientService = instance(),
             telegramBotBindingService = if (featureFlags.telegramBot) instance() else null,
-            saluteWebhookService = if (featureFlags.saluteVoice) instance() else null,
-            saluteDeviceConnectionRegistry = if (featureFlags.saluteVoice) instance() else null,
-            saluteDeviceBindingRepository = if (featureFlags.saluteVoice) instance() else null,
-            saluteExecRequestRegistry = if (featureFlags.saluteVoice) instance() else null,
             featureFlags = featureFlags,
             selectedModel = {
                 settingsProvider.gigaModel

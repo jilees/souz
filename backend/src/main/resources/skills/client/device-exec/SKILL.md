@@ -5,7 +5,7 @@ metadata:
   souz.skill-id: device.exec
   souz.transport: client-websocket
   souz.category: APPLICATIONS
-  souz.timeout: PT1M
+  souz.timeout: PT5M
 ---
 
 # Run a command on the device
@@ -17,7 +17,7 @@ Invoke `RunSkillCommand` with `skillId` set to `device.exec`. Arguments:
 - `command`: argv list — required for `PROCESS`, ignored otherwise
 - `script`: inline POSIX shell text — required for `SH`, ignored for `PROCESS`
 - `args`: optional extra arguments appended after the script/command
-- `timeoutMs`: optional, defaults to 60000
+- `timeoutMs`: optional, defaults to 60000, capped at 300000 (5 minutes, the overall deadline for this tool call)
 
 ```json
 {"skillId":"device.exec","arguments":{"runtime":"SH","script":"echo hello","timeoutMs":10000}}

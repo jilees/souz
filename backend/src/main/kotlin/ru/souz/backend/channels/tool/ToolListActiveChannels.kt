@@ -19,7 +19,7 @@ class ToolListActiveChannels(
 
     override val name: String = "ListActiveChannels"
     override val description: String =
-        "Lists the calling user's other configured communication channels (e.g. Telegram, Salute) " +
+        "Lists the calling user's other configured communication channels (e.g. Telegram) " +
             "that a message from the current conversation can be forwarded to. Returns an empty list " +
             "if the user has no other configured channels."
 

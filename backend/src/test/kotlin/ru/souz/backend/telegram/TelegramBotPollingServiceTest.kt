@@ -29,11 +29,7 @@ import ru.souz.backend.chat.service.SendMessageResult
 import ru.souz.backend.execution.model.AgentExecution
 import ru.souz.backend.execution.model.AgentExecutionStatus
 import ru.souz.backend.http.BackendV1Exception
-import ru.souz.backend.salute.SaluteDeviceBindingRepository
-import ru.souz.backend.salute.SaluteDeviceBindingService
 import ru.souz.backend.settings.service.UserSettingsOverrides
-import ru.souz.backend.testutil.repository.MemoryChatRepository
-import ru.souz.backend.testutil.repository.MemorySaluteDeviceBindingRepository
 import ru.souz.backend.testutil.repository.MemoryTelegramBotBindingRepository
 
 class TelegramBotPollingServiceTest {
@@ -231,7 +227,6 @@ class TelegramBotPollingServiceTest {
             botApi = botApi,
             turnExecutor = executor,
             tokenCrypto = TelegramBotTokenCrypto(TEST_TELEGRAM_TOKEN_ENCRYPTION_KEY),
-            saluteBindingService = testSaluteBindingService(),
             scope = backgroundScope,
         )
         botApi.enqueueSingleTextUpdate(
@@ -276,7 +271,6 @@ class TelegramBotPollingServiceTest {
             botApi = botApi,
             turnExecutor = executor,
             tokenCrypto = TelegramBotTokenCrypto(TEST_TELEGRAM_TOKEN_ENCRYPTION_KEY),
-            saluteBindingService = testSaluteBindingService(),
             scope = backgroundScope,
         )
         botApi.enqueueSingleTextUpdate(
@@ -711,7 +705,6 @@ class TelegramBotPollingServiceTest {
             botApi = botApi,
             turnExecutor = executor,
             tokenCrypto = TelegramBotTokenCrypto(TEST_TELEGRAM_TOKEN_ENCRYPTION_KEY),
-            saluteBindingService = testSaluteBindingService(),
             scope = scope,
             pollLoopDelayMs = 50L,
         )
@@ -743,7 +736,6 @@ class TelegramBotPollingServiceTest {
             botApi = botApi,
             turnExecutor = firstExecutor,
             tokenCrypto = TelegramBotTokenCrypto(TEST_TELEGRAM_TOKEN_ENCRYPTION_KEY),
-            saluteBindingService = testSaluteBindingService(),
             scope = backgroundScope,
             clock = clock,
             instanceId = "instance-a",
@@ -754,7 +746,6 @@ class TelegramBotPollingServiceTest {
             botApi = botApi,
             turnExecutor = secondExecutor,
             tokenCrypto = TelegramBotTokenCrypto(TEST_TELEGRAM_TOKEN_ENCRYPTION_KEY),
-            saluteBindingService = testSaluteBindingService(),
             scope = backgroundScope,
             clock = clock,
             instanceId = "instance-b",
@@ -826,93 +817,12 @@ class TelegramBotPollingServiceTest {
         assertEquals(0L, repository.getByChat(binding.chatId)?.lastUpdateId)
     }
 
-    @Test
-    fun `salute_bind command claims device and replies without executing agent`() = runTest {
-        val repository = MemoryTelegramBotBindingRepository()
-        val botApi = FakePollingTelegramBotApi()
-        val executor = RecordingTelegramTurnExecutor()
-        val saluteBindingRepository = MemorySaluteDeviceBindingRepository()
-        val service = pollingService(repository, botApi, executor, testSaluteBindingService(saluteBindingRepository))
-        linkedBinding(repository)
-        botApi.enqueueSingleTextUpdate(
-            token = "123456:linked-token",
-            updateId = 60L,
-            chatId = 777L,
-            userId = 555L,
-            text = "/salute_bind speaker-42",
-        )
-
-        service.pollEnabledOnce()
-
-        assertTrue(executor.calls.isEmpty(), "salute_bind must not trigger an agent turn")
-        assertEquals(
-            listOf(SentTelegramMessage(777L, "Колонка «speaker-42» привязана к этому чату.")),
-            botApi.sentMessages,
-        )
-        assertEquals("user-a", saluteBindingRepository.getByDeviceId("speaker-42")?.userId)
-    }
-
-    @Test
-    fun `salute_bind for a device already claimed by another user is rejected`() = runTest {
-        val repository = MemoryTelegramBotBindingRepository()
-        val botApi = FakePollingTelegramBotApi()
-        val executor = RecordingTelegramTurnExecutor()
-        val saluteBindingRepository = MemorySaluteDeviceBindingRepository()
-        saluteBindingRepository.insertIfAbsent(
-            deviceId = "speaker-42",
-            userId = "someone-else",
-            chatId = UUID.randomUUID(),
-            now = Instant.parse("2026-05-04T09:00:00Z"),
-        )
-        val service = pollingService(repository, botApi, executor, testSaluteBindingService(saluteBindingRepository))
-        linkedBinding(repository)
-        botApi.enqueueSingleTextUpdate(
-            token = "123456:linked-token",
-            updateId = 60L,
-            chatId = 777L,
-            userId = 555L,
-            text = "/salute_bind speaker-42",
-        )
-
-        service.pollEnabledOnce()
-
-        assertTrue(executor.calls.isEmpty())
-        assertEquals(
-            listOf(SentTelegramMessage(777L, "Это устройство уже привязано к другому пользователю.")),
-            botApi.sentMessages,
-        )
-    }
-
-    @Test
-    fun `salute_bind without a device id replies with usage`() = runTest {
-        val repository = MemoryTelegramBotBindingRepository()
-        val botApi = FakePollingTelegramBotApi()
-        val executor = RecordingTelegramTurnExecutor()
-        val service = pollingService(repository, botApi, executor)
-        linkedBinding(repository)
-        botApi.enqueueSingleTextUpdate(
-            token = "123456:linked-token",
-            updateId = 60L,
-            chatId = 777L,
-            userId = 555L,
-            text = "/salute_bind",
-        )
-
-        service.pollEnabledOnce()
-
-        assertTrue(executor.calls.isEmpty())
-        assertEquals(
-            listOf(SentTelegramMessage(777L, "Укажи идентификатор устройства: /salute_bind <deviceId>.")),
-            botApi.sentMessages,
-        )
-    }
 }
 
 private fun pollingService(
     repository: TelegramBotBindingRepository,
     botApi: FakePollingTelegramBotApi,
     executor: RecordingTelegramTurnExecutor,
-    saluteBindingService: SaluteDeviceBindingService = testSaluteBindingService(),
 ): TelegramBotPollingService {
     executor.repository = repository
     return TelegramBotPollingService(
@@ -920,18 +830,9 @@ private fun pollingService(
         botApi = botApi,
         turnExecutor = executor,
         tokenCrypto = TelegramBotTokenCrypto(TEST_TELEGRAM_TOKEN_ENCRYPTION_KEY),
-        saluteBindingService = saluteBindingService,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     )
 }
-
-private fun testSaluteBindingService(
-    bindingRepository: SaluteDeviceBindingRepository = MemorySaluteDeviceBindingRepository(),
-): SaluteDeviceBindingService = SaluteDeviceBindingService(
-    bindingRepository = bindingRepository,
-    chatRepository = MemoryChatRepository(),
-    clock = Clock.fixed(Instant.parse("2026-05-04T10:00:00Z"), ZoneOffset.UTC),
-)
 
 private suspend fun pendingBinding(
     repository: TelegramBotBindingRepository,

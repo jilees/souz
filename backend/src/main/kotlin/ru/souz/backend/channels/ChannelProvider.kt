@@ -7,7 +7,7 @@ import ru.souz.backend.events.model.AgentEventType
 import ru.souz.backend.events.model.MessageCreatedPayload
 import ru.souz.backend.events.service.AgentEventService
 
-/** A user-facing communication channel a message can be forwarded to (Telegram, Salute device, a public-client chat, ...). */
+/** A user-facing communication channel a message can be forwarded to (Telegram, a public-client chat, ...). */
 data class ChannelDescriptor(
     val channelType: String,
     val channelId: String,

@@ -33,7 +33,6 @@ import ru.souz.llms.LLMResponse
 import ru.souz.llms.LLMToolSetup
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.runtime.sandbox.SandboxScope
-import ru.souz.runtime.sandbox.SkillCommandSandboxAttributes
 import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.runtime.sandbox.local.LocalRuntimeSandbox
 import ru.souz.skills.registry.FileSystemSkillRegistryRepository
@@ -277,10 +276,6 @@ class BackendConversationRuntimeSettingsTest {
                 requestId = request.executionId,
                 locale = request.locale,
                 timeZone = request.timeZone,
-                // SkillCommandExecutor surfaces the bundle's own runsOnDevice on every call so the
-                // Salute-aware sandbox resolver can route device-targeted skills correctly; this
-                // bundle doesn't declare it, so it defaults to false rather than being absent.
-                attributes = mapOf(SkillCommandSandboxAttributes.RUNS_ON_DEVICE to "false"),
             )
             assertEquals("done", result.output)
             assertEquals(3, api.requests.size)
