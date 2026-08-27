@@ -37,6 +37,7 @@ import ru.souz.llms.runtime.LLMCapabilityResolver
 import ru.souz.memory.ConversationMemoryRuntime
 import ru.souz.memory.NoopConversationMemoryRuntime
 import ru.souz.runtime.files.FilesToolUtil
+import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.tool.RuntimePassThroughToolsFilter
 import ru.souz.tool.LlmBackedToolCatalog
 import ru.souz.tool.skills.SkillCommandExecutor
@@ -61,7 +62,7 @@ internal class BackendConversationRuntimeFactory(
     private val toolCatalog: AgentToolCatalog = BackendNoopAgentToolCatalog,
     private val clientToolCatalog: AgentToolCatalog,
     private val skillBundleProvider: SkillBundleProvider,
-    private val commandExecutor: SkillCommandExecutor,
+    private val sandboxResolver: ToolInvocationRuntimeSandboxResolver,
     private val filesToolUtil: FilesToolUtil,
     private val webResearchClient: WebResearchClient,
     private val getKnowledgeTool: LLMToolSetup,
@@ -149,6 +150,15 @@ internal class BackendConversationRuntimeFactory(
             includeFewShotExamples = settingsProvider.useFewShotExamples,
         )
         val requestToolsFilter = RuntimePassThroughToolsFilter
+        // Built fresh per turn against executionToolCatalog (not injected as a DI singleton) so a
+        // Skill's tool-call bridge can resolve client-websocket tools like device.mcp.call_tool —
+        // those only exist in this request-composed catalog, not in the narrower static one a
+        // singleton would otherwise capture at DI-graph-build time.
+        val commandExecutor = SkillCommandExecutor(
+            sandboxResolver = sandboxResolver,
+            toolCatalog = executionToolCatalog,
+            toolsFilter = requestToolsFilter,
+        )
         val getSkillByNameTool = ToolGetSkillByName(
             toolCatalog = executionToolCatalog,
             toolsFilter = requestToolsFilter,

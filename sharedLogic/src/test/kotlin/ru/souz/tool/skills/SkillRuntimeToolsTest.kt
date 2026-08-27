@@ -376,6 +376,223 @@ class SkillRuntimeToolsTest {
     }
 
     @Test
+    fun `bridge lets a skill script call an allow-listed tool without a visible turn`() = runTest {
+        val home = createTempDirectory("bridge-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        stateRoot.resolve("skills/bridge-skill").createDirectories()
+        val target = RecordingTool("target-tool")
+        val catalog = catalog(ToolCategory.FILES to listOf(target))
+        val executor = SkillCommandExecutor(
+            sandboxResolver = ToolInvocationRuntimeSandboxResolver.fixed(localSandbox(home, stateRoot)),
+            toolCatalog = catalog,
+            toolsFilter = TestToolsFilter(),
+        )
+        val skillBundle = bundle("bridge-skill", metadata = mapOf("souz.bridge-tools" to "target-tool"))
+        val meta = ToolInvocationMeta(userId = USER_ID, conversationId = "conversation-1")
+
+        val result = executor.execute(
+            bundle = skillBundle,
+            bundleHash = SkillBundleHasher.hash(skillBundle),
+            arguments = SkillCommandExecutor.Args(
+                runtime = SandboxCommandRuntime.PYTHON,
+                script = bridgeCallScript("target-tool", """{"value": 7}"""),
+                timeoutMillis = 10_000,
+            ),
+            meta = meta,
+        )
+
+        assertEquals(0, result.exitCode)
+        assertEquals("delegated-content", result.stdout.trim())
+        assertEquals(mapOf("value" to 7), target.lastArguments)
+        assertEquals(meta, target.lastMeta)
+    }
+
+    @Test
+    fun `bridge writes a log envelope without touching the tool catalog`() = runTest {
+        val home = createTempDirectory("bridge-log-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        stateRoot.resolve("skills/bridge-skill").createDirectories()
+        val executor = SkillCommandExecutor(
+            sandboxResolver = ToolInvocationRuntimeSandboxResolver.fixed(localSandbox(home, stateRoot)),
+            toolCatalog = catalog(),
+            toolsFilter = TestToolsFilter(),
+        )
+        val skillBundle = bundle("bridge-skill", metadata = mapOf("souz.bridge-tools" to "target-tool"))
+
+        val result = executor.execute(
+            bundle = skillBundle,
+            bundleHash = SkillBundleHasher.hash(skillBundle),
+            arguments = SkillCommandExecutor.Args(
+                runtime = SandboxCommandRuntime.PYTHON,
+                script = bridgeLogScript("INFO", "hello from the skill"),
+                timeoutMillis = 10_000,
+            ),
+            meta = ToolInvocationMeta(userId = USER_ID),
+        )
+
+        assertEquals(0, result.exitCode)
+        assertEquals("""{"ok":true}""", result.stdout.trim())
+    }
+
+    @Test
+    fun `bridge rejects an unknown envelope type`() = runTest {
+        val home = createTempDirectory("bridge-unknown-type-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        stateRoot.resolve("skills/bridge-skill").createDirectories()
+        val executor = SkillCommandExecutor(
+            sandboxResolver = ToolInvocationRuntimeSandboxResolver.fixed(localSandbox(home, stateRoot)),
+            toolCatalog = catalog(),
+            toolsFilter = TestToolsFilter(),
+        )
+        val skillBundle = bundle("bridge-skill", metadata = mapOf("souz.bridge-tools" to "target-tool"))
+
+        val result = executor.execute(
+            bundle = skillBundle,
+            bundleHash = SkillBundleHasher.hash(skillBundle),
+            arguments = SkillCommandExecutor.Args(
+                runtime = SandboxCommandRuntime.PYTHON,
+                script = bridgeRawEnvelopeScript("""{"type": "something-else"}"""),
+                timeoutMillis = 10_000,
+            ),
+            meta = ToolInvocationMeta(userId = USER_ID),
+        )
+
+        assertEquals(0, result.exitCode)
+        assertEquals("invalid_request", restJsonMapper.readTree(result.stdout.trim())["error"]["code"].asText())
+    }
+
+    @Test
+    fun `bridge refuses a tool name outside the skill's declared allowlist`() = runTest {
+        val home = createTempDirectory("bridge-denied-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        stateRoot.resolve("skills/bridge-skill").createDirectories()
+        val target = RecordingTool("other-tool")
+        val catalog = catalog(ToolCategory.FILES to listOf(target))
+        val executor = SkillCommandExecutor(
+            sandboxResolver = ToolInvocationRuntimeSandboxResolver.fixed(localSandbox(home, stateRoot)),
+            toolCatalog = catalog,
+            toolsFilter = TestToolsFilter(),
+        )
+        val skillBundle = bundle("bridge-skill", metadata = mapOf("souz.bridge-tools" to "target-tool"))
+
+        val result = executor.execute(
+            bundle = skillBundle,
+            bundleHash = SkillBundleHasher.hash(skillBundle),
+            arguments = SkillCommandExecutor.Args(
+                runtime = SandboxCommandRuntime.PYTHON,
+                script = bridgeCallScript("other-tool", "{}"),
+                timeoutMillis = 10_000,
+            ),
+            meta = ToolInvocationMeta(userId = USER_ID),
+        )
+
+        assertEquals(0, result.exitCode)
+        assertEquals("tool_not_allowed", restJsonMapper.readTree(result.stdout.trim())["error"]["code"].asText())
+        assertNull(target.lastArguments)
+    }
+
+    @Test
+    fun `bridge does not start when the skill declares no allowlist`() = runTest {
+        val home = createTempDirectory("bridge-none-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        stateRoot.resolve("skills/plain-skill").createDirectories()
+        val executor = SkillCommandExecutor(
+            sandboxResolver = ToolInvocationRuntimeSandboxResolver.fixed(localSandbox(home, stateRoot)),
+            toolCatalog = catalog(),
+            toolsFilter = TestToolsFilter(),
+        )
+        val skillBundle = bundle("plain-skill")
+
+        val result = executor.execute(
+            bundle = skillBundle,
+            bundleHash = SkillBundleHasher.hash(skillBundle),
+            arguments = SkillCommandExecutor.Args(
+                runtime = SandboxCommandRuntime.BASH,
+                script = "printf 'present:%s' \"\${SOUZ_TOOL_BRIDGE_SOCK:-absent}\"",
+            ),
+            meta = ToolInvocationMeta(userId = USER_ID),
+        )
+
+        assertEquals(0, result.exitCode)
+        assertEquals("present:absent", result.stdout)
+    }
+
+    @Test
+    fun `bridge socket is removed after execute returns`() = runTest {
+        val home = createTempDirectory("bridge-cleanup-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        stateRoot.resolve("skills/bridge-skill").createDirectories()
+        val catalog = catalog(ToolCategory.FILES to listOf(RecordingTool("target-tool")))
+        val executor = SkillCommandExecutor(
+            sandboxResolver = ToolInvocationRuntimeSandboxResolver.fixed(localSandbox(home, stateRoot)),
+            toolCatalog = catalog,
+            toolsFilter = TestToolsFilter(),
+        )
+        val skillBundle = bundle("bridge-skill", metadata = mapOf("souz.bridge-tools" to "target-tool"))
+
+        executor.execute(
+            bundle = skillBundle,
+            bundleHash = SkillBundleHasher.hash(skillBundle),
+            arguments = SkillCommandExecutor.Args(
+                runtime = SandboxCommandRuntime.PYTHON,
+                script = bridgeCallScript("target-tool", "{}"),
+                timeoutMillis = 10_000,
+            ),
+            meta = ToolInvocationMeta(userId = USER_ID),
+        )
+
+        val leftoverSockets = Files.walk(stateRoot).use { paths ->
+            paths.filter { it.toString().endsWith(".sock") }.toList()
+        }
+        assertTrue(leftoverSockets.isEmpty())
+    }
+
+    @Test
+    fun `souz max-timeout metadata lowers the coercion ceiling`() = runTest {
+        val home = createTempDirectory("timeout-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        stateRoot.resolve("skills/timeout-skill").createDirectories()
+        val executor = SkillCommandExecutor(ToolInvocationRuntimeSandboxResolver.fixed(localSandbox(home, stateRoot)))
+        val skillBundle = bundle("timeout-skill", metadata = mapOf("souz.max-timeout" to "PT1S"))
+
+        val result = executor.execute(
+            bundle = skillBundle,
+            bundleHash = SkillBundleHasher.hash(skillBundle),
+            arguments = SkillCommandExecutor.Args(
+                runtime = SandboxCommandRuntime.BASH,
+                script = "sleep 5",
+                timeoutMillis = 60_000,
+            ),
+            meta = ToolInvocationMeta(userId = USER_ID),
+        )
+
+        assertTrue(result.timedOut)
+    }
+
+    @Test
+    fun `malformed souz max-timeout falls back to the default ceiling instead of failing`() = runTest {
+        val home = createTempDirectory("timeout-malformed-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        stateRoot.resolve("skills/timeout-skill").createDirectories()
+        val executor = SkillCommandExecutor(ToolInvocationRuntimeSandboxResolver.fixed(localSandbox(home, stateRoot)))
+        val skillBundle = bundle("timeout-skill", metadata = mapOf("souz.max-timeout" to "not-a-duration"))
+
+        val result = executor.execute(
+            bundle = skillBundle,
+            bundleHash = SkillBundleHasher.hash(skillBundle),
+            arguments = SkillCommandExecutor.Args(
+                runtime = SandboxCommandRuntime.BASH,
+                script = "printf ok",
+                timeoutMillis = 200,
+            ),
+            meta = ToolInvocationMeta(userId = USER_ID),
+        )
+
+        assertEquals(0, result.exitCode)
+        assertEquals("ok", result.stdout)
+    }
+
+    @Test
     fun `portable composition exposes tagged runtime tools outside the catalog`() {
         val home = createTempDirectory("skill-di-home-")
         val stateRoot = home.resolve("state").createDirectories()
@@ -636,6 +853,7 @@ private fun bundle(
     skillId: String,
     body: String = "Follow these instructions.",
     supportingFiles: Map<String, String> = emptyMap(),
+    metadata: Map<String, String> = emptyMap(),
 ): SkillBundle = SkillBundle.fromFiles(
     skillId = SkillId(skillId),
     files = buildList {
@@ -648,6 +866,10 @@ private fun bundle(
                     appendLine("description: Description $skillId")
                     appendLine("author: Test Author")
                     appendLine("version: 1.0")
+                    if (metadata.isNotEmpty()) {
+                        appendLine("metadata:")
+                        metadata.forEach { (key, value) -> appendLine("  \"$key\": \"$value\"") }
+                    }
                     appendLine("---")
                     append(body)
                 }.toByteArray(),
@@ -658,3 +880,45 @@ private fun bundle(
         }
     },
 )
+
+/**
+ * Inline python client for [SkillToolBridgeServer] — one connection, one call, matching the
+ * reference `tool-call.py` in `docs/skill-tool-bridge.md`.
+ */
+internal fun bridgeCallScript(toolName: String, argumentsJson: String): String = """
+    import json, os, socket
+    sock_path = os.environ["SOUZ_TOOL_BRIDGE_SOCK"]
+    request = json.dumps({"type": "tool.call", "name": "$toolName", "arguments": $argumentsJson}).encode("utf-8")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.connect(sock_path)
+        sock.sendall(request)
+        sock.shutdown(socket.SHUT_WR)
+        chunks = []
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    print(b"".join(chunks).decode("utf-8"))
+""".trimIndent()
+
+internal fun bridgeLogScript(level: String, message: String): String =
+    bridgeRawEnvelopeScript("""{"type": "log", "level": "$level", "message": "$message"}""")
+
+/** Sends [envelopeJson] verbatim as the bridge request body — it's already valid JSON text. */
+internal fun bridgeRawEnvelopeScript(envelopeJson: String): String = """
+    import os, socket
+    sock_path = os.environ["SOUZ_TOOL_BRIDGE_SOCK"]
+    request = '''$envelopeJson'''.encode("utf-8")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.connect(sock_path)
+        sock.sendall(request)
+        sock.shutdown(socket.SHUT_WR)
+        chunks = []
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    print(b"".join(chunks).decode("utf-8"))
+""".trimIndent()
