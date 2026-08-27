@@ -96,6 +96,7 @@ import ru.souz.backend.telegram.TelegramBotBindingRepository
 import ru.souz.backend.telegram.TelegramBotBindingService
 import ru.souz.backend.telegram.TelegramBotPollingService
 import ru.souz.backend.telegram.TelegramBotTokenCrypto
+import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.skilloauth.impl.SkillOAuthGatewayImpl
 import ru.souz.tool.RuntimeToolsFactory
 import ru.souz.tool.composeToolCatalogs
@@ -104,7 +105,6 @@ import ru.souz.tool.portableSkillRuntimeToolsDiModule
 import ru.souz.tool.knowledge.ToolGetKnowledge
 import ru.souz.tool.knowledge.ToolSearchKnowledge
 import ru.souz.tool.memory.ToolSearchMemory
-import ru.souz.tool.skills.SkillCommandExecutor
 import ru.souz.tool.web.internal.WebResearchClient
 
 private object BackendDiTags {
@@ -274,7 +274,7 @@ fun backendDiModule(
             toolCatalog = instance<AgentToolCatalog>(tag = BackendDiTags.MERGED_TOOL_CATALOG),
             clientToolCatalog = instance<BackendClientSkills>(),
             skillBundleProvider = instance<SkillRegistryRepository>(),
-            commandExecutor = instance<SkillCommandExecutor>(),
+            sandboxResolver = instance<ToolInvocationRuntimeSandboxResolver>(),
             filesToolUtil = instance<FilesToolUtil>(),
             webResearchClient = instance<WebResearchClient>(),
             getKnowledgeTool = instance<ToolGetKnowledge>(),
