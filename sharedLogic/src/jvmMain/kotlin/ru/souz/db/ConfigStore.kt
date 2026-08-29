@@ -166,6 +166,9 @@ internal object SecretPrefsCodec {
     private fun decrypt(payload: String): String {
         val masterSecret = masterSecret()
             ?: throw IllegalStateException("Missing $ENV_MASTER_KEY (env/sysprop) for secret decryption")
+        // AesGcmSecretCodec.decrypt memoizes by ciphertext, so repeated reads of the same
+        // stored payload (e.g. CodexOAuthService.refreshTokenIfNeeded on every LLM call) skip
+        // the >1s PBKDF2 derivation after the first read.
         return AesGcmSecretCodec.decrypt(masterKey = masterSecret, payload = payload)
     }
 
