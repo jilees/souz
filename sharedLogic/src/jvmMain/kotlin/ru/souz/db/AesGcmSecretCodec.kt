@@ -1,6 +1,7 @@
 package ru.souz.db
 
 import java.security.SecureRandom
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
@@ -15,6 +16,13 @@ object AesGcmSecretCodec {
     private const val SALT_SIZE = 16
     private const val IV_SIZE = 12
     private val secureRandom = SecureRandom()
+
+    // PBKDF2 key derivation (PBKDF2_ITERATIONS) costs over a second per call by design. Each
+    // encrypted payload carries its own random salt, so a given payload always decrypts to the
+    // same plaintext; memoize by the exact ciphertext string instead of paying that cost on every
+    // read (e.g. CodexOAuthService.refreshTokenIfNeeded on every LLM call). A write produces a
+    // fresh salt/payload, so stale cache entries just go unused — no invalidation needed.
+    private val decryptedValueCache = ConcurrentHashMap<String, String>()
 
     fun encrypt(
         masterKey: String,
@@ -43,6 +51,10 @@ object AesGcmSecretCodec {
         payload: String,
     ): String {
         require(masterKey.isNotBlank()) { "masterKey must not be blank." }
+        return decryptedValueCache.computeIfAbsent(payload) { decryptUncached(masterKey, payload) }
+    }
+
+    private fun decryptUncached(masterKey: String, payload: String): String {
         val parts = payload.removePrefix(PAYLOAD_PREFIX).split(':')
         require(parts.size == 3) { "Malformed encrypted payload" }
         val salt = b64Decode(parts[0])
