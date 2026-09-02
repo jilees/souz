@@ -2,34 +2,16 @@ package ru.souz.tool.web.internal
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import org.jsoup.Jsoup
 import org.slf4j.LoggerFactory
 import ru.souz.llms.restJsonMapper
-import ru.souz.tool.BadInputException
-import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import kotlin.math.min
 
-private const val WEB_RESEARCH_MIN_REQUEST_INTERVAL_MILLIS = 1_200L
-private const val WEB_RESEARCH_MAX_PACED_HOSTS = 64
 private const val WEB_RESEARCH_MAX_SEARCH_VARIANTS = 2
 private const val WEB_RESEARCH_MAX_IMAGE_VARIANTS = 2
 private const val WEB_RESEARCH_MAX_UNAVAILABLE_VARIANTS_BEFORE_ABORT = 2
-
-enum class WebSearchProviderFailureKind {
-    BLOCKED,
-    UNAVAILABLE,
-}
-
-class WebSearchProviderException(
-    val kind: WebSearchProviderFailureKind,
-    message: String,
-    cause: Throwable? = null,
-) : Exception(message, cause)
 
 /**
  * Shared web research engine used by:
@@ -38,24 +20,17 @@ class WebSearchProviderException(
  * - [ToolWebImageSearch]
  * - [ToolWebPageText]
  *
- * This keeps search/parsing heuristics and HTTP behavior in one place while tool contracts stay simple.
+ * It owns query planning, result aggregation and page-text extraction. Turning one concrete query
+ * into ranked results is delegated to [searchProviders] (Brave first when configured, then
+ * DuckDuckGo); all HTTP goes through the shared [http] client so pacing stays global per host.
  */
 class WebResearchClient(
     private val mapper: ObjectMapper = restJsonMapper,
-    private val httpGet: suspend (String, Long, Boolean) -> WebTextResponse = { url, timeoutMillis, retry ->
-        WebHttpSupport().getText(url, timeoutMillis, retry = retry)
-    },
-    private val currentTimeMillis: () -> Long = System::currentTimeMillis,
-    private val sleepMillis: suspend (Long) -> Unit = { delay(it) },
     private val webToolSupport: WebToolSupport = WebToolSupport(),
+    private val http: PacedWebHttpClient = PacedWebHttpClient(webToolSupport = webToolSupport),
+    private val searchProviders: List<WebSearchProvider> = defaultSearchProviders(http, webToolSupport, mapper),
 ) {
     private val logger = LoggerFactory.getLogger(WebResearchClient::class.java)
-    private val requestPacingMutex = Mutex()
-    private val nextRequestAtMillisByHost = object : LinkedHashMap<String, Long>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
-            return size > WEB_RESEARCH_MAX_PACED_HOSTS
-        }
-    }
 
     suspend fun searchWeb(query: String, limit: Int): List<WebSearchResult> {
         val normalizedQuery = webToolSupport.requireWebQuery(query)
@@ -64,7 +39,7 @@ class WebResearchClient(
         var unavailableFailures = 0
         for (variant in buildQueryVariants(normalizedQuery, imageIntent = false).take(WEB_RESEARCH_MAX_SEARCH_VARIANTS)) {
             val results = try {
-                searchDuckDuckGo(variant, targetCount)
+                searchProviderResults(variant, targetCount)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: WebSearchProviderException) {
@@ -85,7 +60,7 @@ class WebResearchClient(
                 if (unavailableFailures >= WEB_RESEARCH_MAX_UNAVAILABLE_VARIANTS_BEFORE_ABORT) {
                     throw WebSearchProviderException(
                         WebSearchProviderFailureKind.UNAVAILABLE,
-                        "DuckDuckGo is currently unavailable for automated search.",
+                        "Web search is currently unavailable for automated search.",
                         e,
                     )
                 }
@@ -131,11 +106,43 @@ class WebResearchClient(
 
     suspend fun extractPageText(url: String, maxChars: Int): String {
         val normalizedUrl = webToolSupport.requireHttpUrl(url)
-        val html = pacedGetText(normalizedUrl, timeoutMillis = 6_000L)
+        val html = http.getText(normalizedUrl, timeoutMillis = 6_000L)
         val doc = Jsoup.parse(html)
         doc.select("script, style, noscript, svg").remove()
         val normalized = doc.text().replace(Regex("\\s+"), " ").trim()
         return normalized.take(maxChars.coerceIn(500, 20_000))
+    }
+
+    /**
+     * Runs one concrete query through the configured providers in order. The first provider that
+     * returns results wins. Provider errors are non-fatal (the next provider is tried); if every
+     * provider fails and at least one raised a [WebSearchProviderException], the last such error is
+     * surfaced so callers can distinguish "blocked / unavailable" from "no results".
+     */
+    private suspend fun searchProviderResults(query: String, limit: Int): List<WebSearchResult> {
+        var lastProviderError: WebSearchProviderException? = null
+        for (provider in searchProviders) {
+            if (!provider.isConfigured) continue
+            val results = try {
+                provider.search(query, limit)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: WebSearchProviderException) {
+                lastProviderError = e
+                logger.warn("Search provider '{}' failed for query '{}': {}", provider.id, query, e.message)
+                continue
+            } catch (e: Exception) {
+                logger.warn("Search provider '{}' errored for query '{}': {}", provider.id, query, e.message)
+                continue
+            }
+            if (results.isNotEmpty()) {
+                logger.info("Search provider '{}' served query '{}' with {} result(s)", provider.id, query, results.size)
+                return results
+            }
+            logger.info("Search provider '{}' returned no results for query '{}'", provider.id, query)
+        }
+        lastProviderError?.let { throw it }
+        return emptyList()
     }
 
     private suspend fun searchCommonsImages(query: String, limit: Int): List<WebImageResult> {
@@ -156,7 +163,7 @@ class WebResearchClient(
             append("&origin=%2A")
         }
 
-            val body = pacedGetText(url, timeoutMillis = 8_000L)
+        val body = http.getText(url, timeoutMillis = 8_000L)
         val root = mapper.readTree(body)
         val pages = root.path("query").path("pages")
         if (!pages.isObject) return emptyList()
@@ -182,7 +189,7 @@ class WebResearchClient(
         val pageSeeds = LinkedHashMap<String, WebSearchResult>()
         val seedQueries = buildQueryVariants(query, imageIntent = true).take(WEB_RESEARCH_MAX_IMAGE_VARIANTS)
         for (seedQuery in seedQueries) {
-            searchDuckDuckGo(seedQuery, min(MAX_IMAGE_SEED_RESULTS, limit)).forEach { result ->
+            searchProviderResults(seedQuery, min(MAX_IMAGE_SEED_RESULTS, limit)).forEach { result ->
                 if (!isLikelyHtmlPageUrl(result.url)) return@forEach
                 pageSeeds.putIfAbsent(result.url, result)
             }
@@ -192,7 +199,7 @@ class WebResearchClient(
         val results = mutableListOf<WebImageResult>()
         for (page in pageSeeds.values.take(min(limit, MAX_IMAGE_PAGE_FETCHES))) {
             val html = try {
-                pacedGetText(page.url, timeoutMillis = 5_000L)
+                http.getText(page.url, timeoutMillis = 5_000L)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -270,193 +277,6 @@ class WebResearchClient(
         return extensionFromUrl(url) !in blockedDocumentExtensions
     }
 
-    private suspend fun searchDuckDuckGo(query: String, limit: Int): List<WebSearchResult> {
-        val encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8)
-        var lastFailure: Exception? = null
-        var lastDiagnostics: Pair<String, String>? = null
-        for (endpoint in duckDuckGoEndpoints) {
-            val url = "$endpoint?q=$encodedQuery"
-            val html = try {
-                pacedGetText(url, DUCK_DUCK_GO_SEARCH_TIMEOUT_MILLIS, retry = false)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                classifyDuckDuckGoFailure(url, e)?.let { failureKind ->
-                    if (failureKind == WebSearchProviderFailureKind.BLOCKED) {
-                        throw WebSearchProviderException(
-                            kind = failureKind,
-                            message = "DuckDuckGo blocked automated search requests.",
-                            cause = e,
-                        )
-                    }
-                    lastFailure = e
-                    continue
-                }
-                lastFailure = e
-                continue
-            }
-            duckDuckGoChallengeReason(html, url)?.let { reason ->
-                throw WebSearchProviderException(
-                    kind = WebSearchProviderFailureKind.BLOCKED,
-                    message = "DuckDuckGo blocked automated search requests: $reason",
-                )
-            }
-            val parsed = parseDuckDuckGoResults(html, url, limit)
-            if (parsed.isNotEmpty()) return parsed
-            lastDiagnostics = duckDuckGoDiagnostics(html, url)
-        }
-        if (lastDiagnostics != null) {
-            val (title, preview) = lastDiagnostics
-            logger.warn(
-                "DuckDuckGo returned HTML without parsable results for '{}'; title='{}', preview='{}'",
-                query,
-                title,
-                preview,
-            )
-        }
-        if (lastFailure != null) {
-            throw WebSearchProviderException(
-                kind = WebSearchProviderFailureKind.UNAVAILABLE,
-                message = "DuckDuckGo is temporarily unavailable for automated search.",
-                cause = lastFailure,
-            )
-        }
-        return emptyList()
-    }
-
-    private fun decodeDuckDuckGoRedirect(rawHref: String): String {
-        if (rawHref.isBlank()) return ""
-        if (rawHref.startsWith("http://") || rawHref.startsWith("https://")) return rawHref
-
-        val normalized = when {
-            rawHref.startsWith("//") -> "https:$rawHref"
-            rawHref.startsWith("/") -> "https://duckduckgo.com$rawHref"
-            else -> rawHref
-        }
-        if (normalized.contains("/y.js?", ignoreCase = true) || normalized.contains("ad_domain=", ignoreCase = true)) {
-            return ""
-        }
-
-        return runCatching {
-            val query = java.net.URI.create(webToolSupport.toSafeHttpUrl(normalized)).rawQuery ?: return@runCatching normalized
-            query.split('&').asSequence().mapNotNull { part ->
-                val key = part.substringBefore('=', "")
-                val value = part.substringAfter('=', "")
-                if (key == "uddg") URLDecoder.decode(value, StandardCharsets.UTF_8) else null
-            }.firstOrNull().orEmpty().ifBlank { normalized }
-        }.getOrDefault(normalized)
-    }
-
-    private suspend fun pacedGetText(
-        url: String,
-        timeoutMillis: Long,
-        retry: Boolean = true,
-    ): String {
-        val normalizedUrl = webToolSupport.requireHttpUrl(url)
-        awaitRequestSlot(normalizedUrl)
-        val response = httpGet(normalizedUrl, timeoutMillis, retry)
-        if (response.statusCode < 400) {
-            return response.body
-        }
-        val bodyPreview = response.body.take(min(600, response.body.length))
-        throw BadInputException("HTTP ${response.statusCode} for $normalizedUrl: $bodyPreview")
-    }
-
-    private suspend fun awaitRequestSlot(url: String) {
-        val uri = java.net.URI.create(webToolSupport.toSafeHttpUrl(url))
-        val hostKey = uri.host?.lowercase().orEmpty()
-            .ifBlank { uri.authority?.lowercase().orEmpty() }
-            .ifBlank { return }
-        val delayMillis = requestPacingMutex.withLock {
-            val now = currentTimeMillis()
-            val scheduledAt = maxOf(now, nextRequestAtMillisByHost[hostKey] ?: 0L)
-            nextRequestAtMillisByHost[hostKey] = scheduledAt + WEB_RESEARCH_MIN_REQUEST_INTERVAL_MILLIS
-            scheduledAt - now
-        }
-        sleep(delayMillis)
-    }
-
-    private suspend fun sleep(delayMillis: Long) {
-        if (delayMillis <= 0) return
-        sleepMillis(delayMillis)
-    }
-
-    private fun parseDuckDuckGoResults(
-        html: String,
-        baseUrl: String,
-        limit: Int,
-    ): List<WebSearchResult> {
-        val doc = Jsoup.parse(html, baseUrl)
-        val results = LinkedHashMap<String, WebSearchResult>()
-        val containers = doc.select(
-            "div.result, article[data-testid=result], .result.results_links, .result.results_links_deep"
-        )
-
-        containers.forEach { result ->
-            val link = result.selectFirst("a.result__a, .result__title a, a[data-testid=result-title-a], h2 a")
-                ?: return@forEach
-            val title = link.text().trim()
-            val rawHref = link.attr("href").trim()
-            val url = decodeDuckDuckGoRedirect(rawHref)
-            if (title.isBlank() || url.isBlank()) return@forEach
-
-            val snippet = result.selectFirst(".result__snippet, .result-snippet, [data-result=snippet]")
-                ?.text()
-                ?.trim()
-                .orEmpty()
-            results.putIfAbsent(url, WebSearchResult(title = title, url = url, snippet = snippet))
-        }
-
-        if (results.isEmpty()) {
-            doc.select("a.result__a, .result__title a, a[data-testid=result-title-a]").forEach { link ->
-                val title = link.text().trim()
-                val url = decodeDuckDuckGoRedirect(link.attr("href").trim())
-                if (title.isBlank() || url.isBlank()) return@forEach
-                results.putIfAbsent(url, WebSearchResult(title = title, url = url, snippet = ""))
-            }
-        }
-
-        return results.values.take(limit).toList()
-    }
-
-    private fun duckDuckGoDiagnostics(html: String, baseUrl: String): Pair<String, String> {
-        val doc = Jsoup.parse(html, baseUrl)
-        val title = doc.title().trim().ifBlank { "no-title" }
-        val preview = doc.text()
-            .replace(Regex("\\s+"), " ")
-            .trim()
-            .take(DUCK_DUCK_GO_PREVIEW_LENGTH)
-        return title to preview
-    }
-
-    private fun duckDuckGoChallengeReason(html: String, baseUrl: String): String? {
-        val text = Jsoup.parse(html, baseUrl)
-            .text()
-            .replace(Regex("\\s+"), " ")
-            .trim()
-            .lowercase()
-        return when {
-            "bots use duckduckgo too" in text -> "anti-bot challenge page"
-            "select all squares containing a duck" in text -> "captcha challenge page"
-            "please complete the following challenge" in text -> "human verification challenge"
-            else -> null
-        }
-    }
-
-    private fun classifyDuckDuckGoFailure(url: String, error: Exception): WebSearchProviderFailureKind? {
-        val message = error.message.orEmpty().lowercase()
-        if ("duckduckgo" !in url.lowercase()) return null
-        return when {
-            "http 403" in message || "http 429" in message -> WebSearchProviderFailureKind.BLOCKED
-            "timed out" in message ||
-                "http 500" in message ||
-                "http 502" in message ||
-                "http 503" in message ||
-                "http 504" in message -> WebSearchProviderFailureKind.UNAVAILABLE
-            else -> null
-        }
-    }
-
     private fun extensionFromUrl(url: String): String {
         return runCatching {
             java.net.URI.create(webToolSupport.toSafeHttpUrl(url)).path.substringAfterLast('.', "").lowercase()
@@ -510,18 +330,22 @@ class WebResearchClient(
     }
 
     companion object {
-        private const val DUCK_DUCK_GO_SEARCH_TIMEOUT_MILLIS = 8_000L
-        private const val DUCK_DUCK_GO_PREVIEW_LENGTH = 240
         private val blockedDocumentExtensions = setOf("pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx")
-        private val duckDuckGoEndpoints = listOf(
-            "https://duckduckgo.com/html/",
-            "https://html.duckduckgo.com/html/",
-        )
         private const val MAX_IMAGE_SEED_RESULTS = 6
         private const val MAX_IMAGE_PAGE_FETCHES = 5
         private val commonSearchNoiseWords = setOf(
             "the", "and", "for", "with", "from", "into", "about", "overview",
             "это", "как", "что", "для", "про", "или", "обзор", "стратегия", "инновации"
+        )
+
+        /** Provider order: API-based Brave first (when a token is set), DuckDuckGo scraping as fallback. */
+        fun defaultSearchProviders(
+            http: PacedWebHttpClient,
+            webToolSupport: WebToolSupport,
+            mapper: ObjectMapper,
+        ): List<WebSearchProvider> = listOf(
+            BraveWebSearchProvider(http, webToolSupport, mapper),
+            DuckDuckGoWebSearchProvider(http, webToolSupport),
         )
     }
 }

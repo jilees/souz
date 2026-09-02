@@ -1,12 +1,14 @@
 package ru.souz.tool.web
 
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
-import ru.souz.tool.BadInputException
+import ru.souz.tool.web.internal.PacedWebHttpClient
 import ru.souz.tool.web.internal.WebResearchClient
+import ru.souz.tool.web.internal.WebSearchProvider
 import ru.souz.tool.web.internal.WebSearchProviderException
 import ru.souz.tool.web.internal.WebSearchProviderFailureKind
+import ru.souz.tool.web.internal.WebSearchResult
 import ru.souz.tool.web.internal.WebTextResponse
+import ru.souz.tool.web.internal.WebToolSupport
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -14,19 +16,15 @@ import kotlin.test.assertTrue
 
 class WebResearchClientTest {
     @Test
-    fun `spaces sequential requests by minimum interval`() = runTest {
+    fun `spaces sequential requests to one host by the minimum interval`() = runTest {
         var nowMillis = 0L
         val sleeps = mutableListOf<Long>()
         val client = WebResearchClient(
-            httpGet = responsesOf(
-                WebTextResponse(200, "<html><body>Page body</body></html>", emptyMap()),
-                WebTextResponse(200, "<html><body>Page body</body></html>", emptyMap()),
+            http = PacedWebHttpClient(
+                httpGet = { _, _, _, _ -> WebTextResponse(200, "<html><body>Page body</body></html>", emptyMap()) },
+                currentTimeMillis = { nowMillis },
+                sleepMillis = { delayMillis -> sleeps += delayMillis; nowMillis += delayMillis },
             ),
-            currentTimeMillis = { nowMillis },
-            sleepMillis = { delayMillis ->
-                sleeps += delayMillis
-                nowMillis += delayMillis
-            },
         )
 
         client.extractPageText("https://example.com/one", maxChars = 500)
@@ -40,15 +38,11 @@ class WebResearchClientTest {
         var nowMillis = 0L
         val sleeps = mutableListOf<Long>()
         val client = WebResearchClient(
-            httpGet = responsesOf(
-                WebTextResponse(200, "<html><body>Page body</body></html>", emptyMap()),
-                WebTextResponse(200, "<html><body>Page body</body></html>", emptyMap()),
+            http = PacedWebHttpClient(
+                httpGet = { _, _, _, _ -> WebTextResponse(200, "<html><body>Page body</body></html>", emptyMap()) },
+                currentTimeMillis = { nowMillis },
+                sleepMillis = { delayMillis -> sleeps += delayMillis; nowMillis += delayMillis },
             ),
-            currentTimeMillis = { nowMillis },
-            sleepMillis = { delayMillis ->
-                sleeps += delayMillis
-                nowMillis += delayMillis
-            },
         )
 
         client.extractPageText("https://example.com/one", maxChars = 500)
@@ -58,144 +52,130 @@ class WebResearchClientTest {
     }
 
     @Test
-    fun `parses duckduckgo redirects into search results`() = runTest {
-        val responses = ArrayDeque(
-            listOf(
-                WebTextResponse(
-                    statusCode = 200,
-                    body = """
-                        <html>
-                          <body>
-                            <div class="result">
-                              <a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.com%2Freport%3Fref%3Dabc%26lang%3Den">Example report</a>
-                              <div class="result__snippet">Useful snippet</div>
-                            </div>
-                          </body>
-                        </html>
-                    """.trimIndent(),
-                    headers = emptyMap(),
-                ),
-            )
-        )
-        val client = WebResearchClient(
-            httpGet = { _, _, _ -> responses.removeFirst() },
-        )
+    fun `returns the first provider that produces results and skips the rest`() = runTest {
+        val primary = FakeProvider("primary") { _, _ ->
+            listOf(WebSearchResult("Primary", "https://example.com/primary", ""))
+        }
+        val secondary = FakeProvider("secondary") { _, _ -> error("must not be queried") }
+        val client = WebResearchClient(searchProviders = listOf(primary, secondary))
 
-        val results = client.searchWeb("example report", limit = 1)
+        val results = client.searchWeb("query", limit = 3)
 
-        assertEquals(1, results.size)
-        assertEquals("Example report", results.single().title)
-        assertEquals("https://example.com/report?ref=abc&lang=en", results.single().url)
-        assertEquals("Useful snippet", results.single().snippet)
-        assertTrue(responses.isEmpty())
+        assertEquals(listOf("https://example.com/primary"), results.map { it.url })
+        assertEquals(0, secondary.calls)
     }
 
     @Test
-    fun `falls back to html duckduckgo endpoint when primary one fails`() = runTest {
-        val responses = ArrayDeque(
-            listOf(
-                Result.failure<WebTextResponse>(BadInputException("primary endpoint failed")),
-                Result.success(
-                    WebTextResponse(
+    fun `skips unconfigured providers`() = runTest {
+        val disabled = FakeProvider("disabled", isConfigured = false) { _, _ -> error("must not be queried") }
+        val fallback = FakeProvider("fallback") { _, _ ->
+            listOf(WebSearchResult("Fallback", "https://example.com/fallback", ""))
+        }
+        val client = WebResearchClient(searchProviders = listOf(disabled, fallback))
+
+        val results = client.searchWeb("query", limit = 3)
+
+        assertEquals(listOf("https://example.com/fallback"), results.map { it.url })
+        assertEquals(0, disabled.calls)
+    }
+
+    @Test
+    fun `falls through to the next provider when one fails, and surfaces the failure if none recover`() = runTest {
+        val flaky = FakeProvider("flaky") { _, _ ->
+            throw WebSearchProviderException(WebSearchProviderFailureKind.BLOCKED, "blocked")
+        }
+        val alsoEmpty = FakeProvider("also-empty") { _, _ -> emptyList() }
+        val client = WebResearchClient(searchProviders = listOf(flaky, alsoEmpty))
+
+        val error = assertFailsWith<WebSearchProviderException> { client.searchWeb("query", limit = 3) }
+
+        assertEquals(WebSearchProviderFailureKind.BLOCKED, error.kind)
+        assertEquals(1, alsoEmpty.calls)
+    }
+
+    @Test
+    fun `uses Brave as the primary provider end to end when a token is configured`() = runTest {
+        val client = WebResearchClient(
+            webToolSupport = WebToolSupport(braveSearchApiKey = "brave-token"),
+            http = PacedWebHttpClient(httpGet = { url, _, _, _ ->
+                if ("duckduckgo" in url) error("DuckDuckGo must not be queried when Brave answers")
+                WebTextResponse(
+                    statusCode = 200,
+                    body = """{"web":{"results":[{"title":"Brave hit","url":"https://example.com/brave","description":"d"}]}}""",
+                    headers = emptyMap(),
+                )
+            }),
+        )
+
+        val results = client.searchWeb("eclipse", limit = 3)
+
+        assertEquals(listOf("https://example.com/brave"), results.map { it.url })
+    }
+
+    @Test
+    fun `falls back to DuckDuckGo end to end when Brave yields nothing`() = runTest {
+        val client = WebResearchClient(
+            webToolSupport = WebToolSupport(braveSearchApiKey = "brave-token"),
+            http = PacedWebHttpClient(httpGet = { url, _, _, _ ->
+                when {
+                    "api.search.brave.com" in url ->
+                        WebTextResponse(429, """{"error":"rate limited"}""", emptyMap())
+                    else -> WebTextResponse(
                         statusCode = 200,
                         body = """
-                            <html>
-                              <body>
-                                <article data-testid="result">
-                                  <h2><a data-testid="result-title-a" href="/l/?uddg=https%3A%2F%2Fexample.com%2Ffallback">Fallback result</a></h2>
-                                  <div class="result-snippet">Fallback snippet</div>
-                                </article>
-                              </body>
-                            </html>
+                            <html><body>
+                              <div class="result">
+                                <a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.com%2Fddg">DDG fallback</a>
+                              </div>
+                            </body></html>
                         """.trimIndent(),
                         headers = emptyMap(),
                     )
-                ),
-            )
-        )
-        val requestedUrls = mutableListOf<String>()
-        val requestedRetries = mutableListOf<Boolean>()
-        val client = WebResearchClient(
-            httpGet = { url, _, retry ->
-                requestedUrls += url
-                requestedRetries += retry
-                responses.removeFirst().getOrThrow()
-            },
+                }
+            }),
         )
 
-        val results = client.searchWeb("fallback result", limit = 1)
+        val results = client.searchWeb("eclipse", limit = 3)
 
-        assertEquals(listOf("https://example.com/fallback"), results.map { it.url })
-        assertEquals(2, requestedUrls.size)
-        assertEquals(listOf(false, false), requestedRetries)
-        assertTrue(requestedUrls.first().startsWith("https://duckduckgo.com/html/"))
-        assertTrue(requestedUrls.last().startsWith("https://html.duckduckgo.com/html/"))
+        assertEquals(listOf("https://example.com/ddg"), results.map { it.url })
     }
 
     @Test
-    fun `propagates cancellation instead of returning empty results`() = runTest {
+    fun `does not query Brave end to end without a token`() = runTest {
         val client = WebResearchClient(
-            httpGet = { _, _, _ -> throw CancellationException("cancel search") },
-        )
-
-        assertFailsWith<CancellationException> {
-            client.searchWeb("cancelled", limit = 1)
-        }
-    }
-
-    @Test
-    fun `challenge page aborts immediately with provider blocked`() = runTest {
-        val requestedUrls = mutableListOf<String>()
-        val client = WebResearchClient(
-            httpGet = { url, _, _ ->
-                requestedUrls += url
+            webToolSupport = WebToolSupport(braveSearchApiKey = null),
+            http = PacedWebHttpClient(httpGet = { url, _, _, _ ->
+                if ("api.search.brave.com" in url) error("Brave must not be queried without a token")
                 WebTextResponse(
                     statusCode = 200,
                     body = """
-                        <html>
-                          <head><title>DuckDuckGo</title></head>
-                          <body>
-                            Unfortunately, bots use DuckDuckGo too.
-                            Please complete the following challenge to confirm this search was made by a human.
-                            Select all squares containing a duck.
-                          </body>
-                        </html>
+                        <html><body>
+                          <div class="result">
+                            <a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.com%2Fddg-only">DDG only</a>
+                          </div>
+                        </body></html>
                     """.trimIndent(),
                     headers = emptyMap(),
                 )
-            },
+            }),
         )
 
-        val error = assertFailsWith<WebSearchProviderException> {
-            client.searchWeb("blocked", limit = 1)
-        }
+        val results = client.searchWeb("plain query", limit = 3)
 
-        assertEquals(WebSearchProviderFailureKind.BLOCKED, error.kind)
-        assertEquals(1, requestedUrls.size)
+        assertEquals(listOf("https://example.com/ddg-only"), results.map { it.url })
     }
 
-    @Test
-    fun `unavailable provider aborts after short timeout series`() = runTest {
-        val requestedUrls = mutableListOf<String>()
-        val client = WebResearchClient(
-            httpGet = { url, _, _ ->
-                requestedUrls += url
-                throw BadInputException("HTTP request timed out for $url")
-            },
-        )
+    private class FakeProvider(
+        override val id: String,
+        override val isConfigured: Boolean = true,
+        private val behavior: suspend (query: String, limit: Int) -> List<WebSearchResult>,
+    ) : WebSearchProvider {
+        var calls = 0
+            private set
 
-        val error = assertFailsWith<WebSearchProviderException> {
-            client.searchWeb("timeout burst", limit = 1)
-        }
-
-        assertEquals(WebSearchProviderFailureKind.UNAVAILABLE, error.kind)
-        assertEquals(4, requestedUrls.size)
-    }
-
-    private fun responsesOf(vararg items: WebTextResponse): suspend (String, Long, Boolean) -> WebTextResponse {
-        val queue = ArrayDeque(items.toList())
-        return { _, _, _ ->
-            queue.removeFirst()
+        override suspend fun search(query: String, limit: Int): List<WebSearchResult> {
+            calls += 1
+            return behavior(query, limit)
         }
     }
 }

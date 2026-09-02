@@ -40,6 +40,31 @@ class WebHttpSupportTest {
     }
 
     @Test
+    fun `explicit Accept in extra headers replaces the default instead of stacking`() = runTest {
+        var observedAccept: List<String>? = null
+        val webToolSupport = WebToolSupport()
+        val client = HttpClient(
+            MockEngine { request ->
+                observedAccept = request.headers.getAll(HttpHeaders.Accept)
+                respond("{}")
+            },
+        ) {
+            WebHttpSupport.applyDefaults(this, webToolSupport)
+        }
+
+        try {
+            WebHttpSupport(webToolSupport, client).getText(
+                "https://api.search.brave.com/res/v1/web/search?q=test",
+                timeoutMillis = 1_000L,
+                extraHeaders = mapOf("Accept" to "application/json", "X-Subscription-Token" to "tok"),
+            )
+            assertEquals(listOf("application/json"), observedAccept)
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `read limited binary body returns bytes within limit`() = runTest {
         val payload = ByteArray(32 * 1024) { (it % 251).toByte() }
 

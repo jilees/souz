@@ -74,8 +74,9 @@ class WebHttpSupport(
         timeoutMillis: Long,
         accept: String = webToolSupport.acceptHeader,
         retry: Boolean = true,
+        extraHeaders: Map<String, String> = emptyMap(),
     ): WebTextResponse {
-        return executeWebRequest(url, timeoutMillis, accept, retry) { response ->
+        return executeWebRequest(url, timeoutMillis, accept, retry, extraHeaders) { response ->
             WebTextResponse(
                 statusCode = response.status.value,
                 body = response.bodyAsText(),
@@ -138,14 +139,19 @@ class WebHttpSupport(
         timeoutMillis: Long,
         accept: String?,
         retry: Boolean,
+        extraHeaders: Map<String, String> = emptyMap(),
         bodyReader: suspend (HttpResponse) -> T,
     ): T {
         try {
             val response = sharedWebHttpClient.get(webToolSupport.toSafeHttpUrl(url)) {
                 attributes.put(WEB_HTTP_RETRY_ENABLED_KEY, retry)
-                if (!accept.isNullOrBlank()) {
+                // ktor's header() appends, so an explicit Accept in extraHeaders would otherwise be
+                // sent *alongside* the default one — some APIs (Brave) strictly reject that.
+                val overridesAccept = extraHeaders.keys.any { it.equals(HttpHeaders.Accept, ignoreCase = true) }
+                if (!overridesAccept && !accept.isNullOrBlank()) {
                     header(HttpHeaders.Accept, accept)
                 }
+                extraHeaders.forEach { (name, value) -> header(name, value) }
                 timeout {
                     requestTimeoutMillis = timeoutMillis
                     socketTimeoutMillis = timeoutMillis
