@@ -9,6 +9,7 @@ import ru.souz.llms.giga.toGiga
 import ru.souz.runtime.sandbox.DefaultRuntimeSandboxFactory
 import ru.souz.runtime.sandbox.RuntimeSandboxFactory
 import ru.souz.runtime.sandbox.ToolInvocationSandboxScopeResolver
+import ru.souz.tool.browser.ToolBrowser
 import ru.souz.tool.dataAnalytics.ToolCreatePlotFromCsv
 import ru.souz.tool.dataAnalytics.excel.ExcelRead
 import ru.souz.tool.dataAnalytics.excel.ExcelReport
@@ -31,6 +32,10 @@ fun runtimeToolsDiModule(
     )
     bindSingleton { ToolExtractText(instance()) }
     bindSingleton { ToolReadPdfPages(instance()) }
+
+    // Sandbox-hosted browser session (Lightpanda + agent-browser daemon). DOCKER mode only —
+    // no-ops with an error under LOCAL. Backend-only: not wired into the desktop catalog.
+    bindSingleton { ToolBrowser(sandboxResolver = instance()) }
 
     bindSingleton { ToolCreatePlotFromCsv(instance()) }
     bindSingleton { ExcelRead(instance()) }
@@ -57,6 +62,7 @@ fun DI.Builder.bindRuntimeToolsFactory(
             excelRead = instance(),
             excelReport = instance(),
             toolWebImageSearch = if (includeWebImageSearch) instance() else null,
+            toolBrowser = instance(),
         )
     }
 }
@@ -69,6 +75,7 @@ class RuntimeToolsFactory(
     excelRead: ExcelRead,
     excelReport: ExcelReport,
     toolWebImageSearch: ToolWebImageSearch?,
+    toolBrowser: ToolBrowser? = null,
 ) : AgentToolCatalog {
     override val toolsByCategory: Map<ToolCategory, Map<String, LLMToolSetup>> =
         composeToolCatalogs(
@@ -80,6 +87,7 @@ class RuntimeToolsFactory(
                         toolReadPdfPages.toGiga(),
                     ),
                     ToolCategory.WEB_SEARCH to listOfNotNull(toolWebImageSearch?.toGiga()),
+                    ToolCategory.BROWSER to listOfNotNull(toolBrowser?.toGiga()),
                     ToolCategory.DATA_ANALYTICS to listOf(
                         toolCreatePlotFromCsv.toGiga(),
                         excelRead.toGiga(),

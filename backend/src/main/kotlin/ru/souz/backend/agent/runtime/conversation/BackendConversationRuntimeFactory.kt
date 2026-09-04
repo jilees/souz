@@ -39,6 +39,7 @@ import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.tool.RuntimePassThroughToolsFilter
 import ru.souz.tool.LlmBackedToolCatalog
 import ru.souz.tool.skills.SkillCommandExecutor
+import ru.souz.tool.skills.resolveForwardedSandboxEnv
 import ru.souz.tool.skills.ToolGetSkillByName
 import ru.souz.tool.skills.ToolGetSkillsByCategory
 import ru.souz.tool.skills.ToolGetSkillsNamesByCategory
@@ -71,6 +72,9 @@ internal class BackendConversationRuntimeFactory(
     private val memoryRuntime: ConversationMemoryRuntime,
     private val testLlmApiFactory: (suspend (SettingsProvider) -> LLMChatAPI)? = null,
 ) {
+    // Resolved once at boot: the host env is fixed for the process lifetime.
+    private val forwardedSandboxEnv: Map<String, String> = resolveForwardedSandboxEnv(System.getenv())
+
     internal suspend fun create(
         key: AgentConversationKey,
         request: BackendConversationTurnRequest,
@@ -152,6 +156,7 @@ internal class BackendConversationRuntimeFactory(
             sandboxResolver = sandboxResolver,
             toolCatalog = executionToolCatalog,
             toolsFilter = requestToolsFilter,
+            forwardedSandboxEnv = forwardedSandboxEnv,
         )
         val getSkillByNameTool = ToolGetSkillByName(
             toolCatalog = executionToolCatalog,

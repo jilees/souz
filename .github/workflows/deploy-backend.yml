@@ -45,6 +45,27 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
 
+      # Runtime sandbox image: when SOUZ_SANDBOX_MODE=docker, agent tool
+      # execution (shell/file/skill scripts) runs inside
+      # souz-runtime-sandbox:latest. The backend distribution does not carry the
+      # image build context, so ship sharedLogic/Dockerfile + sharedLogic/docker/
+      # and (re)build on the box. Docker layer cache makes this a near-no-op when
+      # nothing in the context changed.
+      - name: Build runtime sandbox image
+        env:
+          SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
+        run: |
+          sshpass -e ssh -o UserKnownHostsFile=~/.ssh/known_hosts "root@${{ secrets.VPS_HOST }}" \
+            'mkdir -p /opt/souz-backend/runtime-sandbox'
+          sshpass -e rsync -az --delete \
+            -e "ssh -o UserKnownHostsFile=~/.ssh/known_hosts" \
+            sharedLogic/Dockerfile sharedLogic/docker \
+            "root@${{ secrets.VPS_HOST }}:/opt/souz-backend/runtime-sandbox/"
+          sshpass -e ssh -o UserKnownHostsFile=~/.ssh/known_hosts "root@${{ secrets.VPS_HOST }}" '
+            set -e
+            docker build -t souz-runtime-sandbox:latest /opt/souz-backend/runtime-sandbox
+          '
+
       # The VPS accepts root password auth only (no SSH key deployed there).
       # sshpass -e reads the password from $SSHPASS instead of argv, so it
       # never shows up in `ps` output or command logs.

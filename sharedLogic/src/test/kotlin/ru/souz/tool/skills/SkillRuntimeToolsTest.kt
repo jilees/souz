@@ -32,7 +32,12 @@ import ru.souz.llms.LLMToolSetup
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.llms.restJsonMapper
 import ru.souz.knowledge.SandboxConversationKnowledgeStore
+import ru.souz.runtime.sandbox.RuntimeSandbox
+import ru.souz.runtime.sandbox.SandboxCommandExecutor
+import ru.souz.runtime.sandbox.SandboxCommandRequest
+import ru.souz.runtime.sandbox.SandboxCommandResult
 import ru.souz.runtime.sandbox.SandboxCommandRuntime
+import ru.souz.runtime.sandbox.SandboxMode
 import ru.souz.runtime.sandbox.SandboxScope
 import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.runtime.sandbox.local.LocalRuntimeSandbox
@@ -593,6 +598,86 @@ class SkillRuntimeToolsTest {
     }
 
     @Test
+    fun `resolveForwardedSandboxEnv keeps only listed host vars that are set`() {
+        val hostEnv = mapOf(
+            SANDBOX_FORWARD_ENV_SPEC to "LLM_KEY, LLM_BASE_URL\tMISSING_VAR $SANDBOX_FORWARD_ENV_SPEC",
+            "LLM_KEY" to "sk-secret",
+            "LLM_BASE_URL" to "https://example/v1",
+            "BLANK_VAR" to "  ",
+            "UNLISTED" to "nope",
+        )
+
+        assertEquals(
+            mapOf("LLM_KEY" to "sk-secret", "LLM_BASE_URL" to "https://example/v1"),
+            resolveForwardedSandboxEnv(hostEnv),
+        )
+    }
+
+    @Test
+    fun `resolveForwardedSandboxEnv is empty when the spec var is absent`() {
+        assertEquals(emptyMap<String, String>(), resolveForwardedSandboxEnv(mapOf("LLM_KEY" to "x")))
+    }
+
+    @Test
+    fun `docker-mode execution forwards the allowlisted host env below fixed and caller vars`() = runTest {
+        val home = createTempDirectory("forward-env-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        stateRoot.resolve("skills/fwd-skill").createDirectories()
+        val recorder = RecordingCommandExecutor()
+        val sandbox = object : RuntimeSandbox by localSandbox(home, stateRoot) {
+            override val mode = SandboxMode.DOCKER
+            override val commandExecutor = recorder
+        }
+        val executor = SkillCommandExecutor(
+            sandboxResolver = ToolInvocationRuntimeSandboxResolver.fixed(sandbox),
+            forwardedSandboxEnv = mapOf("LLM_KEY" to "sk-secret", "SOUZ_SKILL_ID" to "hijack"),
+        )
+        val skillBundle = bundle("fwd-skill")
+
+        executor.execute(
+            bundle = skillBundle,
+            bundleHash = SkillBundleHasher.hash(skillBundle),
+            arguments = SkillCommandExecutor.Args(
+                runtime = SandboxCommandRuntime.BASH,
+                script = "true",
+                environment = mapOf("CALLER" to "wins"),
+            ),
+            meta = ToolInvocationMeta(userId = USER_ID),
+        )
+
+        val env = recorder.lastRequest!!.environment
+        assertEquals("sk-secret", env["LLM_KEY"])
+        assertEquals("wins", env["CALLER"])
+        // a forwarded name that collides with a fixed SOUZ_SKILL_* var never wins
+        assertEquals(skillBundle.skillId.value, env["SOUZ_SKILL_ID"])
+    }
+
+    @Test
+    fun `local-mode execution does not inject the forwarded env`() = runTest {
+        val home = createTempDirectory("forward-env-local-home-")
+        val stateRoot = home.resolve("state").createDirectories()
+        stateRoot.resolve("skills/fwd-skill").createDirectories()
+        val recorder = RecordingCommandExecutor()
+        val sandbox = object : RuntimeSandbox by localSandbox(home, stateRoot) {
+            override val commandExecutor = recorder
+        }
+        val executor = SkillCommandExecutor(
+            sandboxResolver = ToolInvocationRuntimeSandboxResolver.fixed(sandbox),
+            forwardedSandboxEnv = mapOf("LLM_KEY" to "sk-secret"),
+        )
+        val skillBundle = bundle("fwd-skill")
+
+        executor.execute(
+            bundle = skillBundle,
+            bundleHash = SkillBundleHasher.hash(skillBundle),
+            arguments = SkillCommandExecutor.Args(runtime = SandboxCommandRuntime.BASH, script = "true"),
+            meta = ToolInvocationMeta(userId = USER_ID),
+        )
+
+        assertFalse("LLM_KEY" in recorder.lastRequest!!.environment)
+    }
+
+    @Test
     fun `portable composition exposes core runtime tools outside the catalog`() {
         val home = createTempDirectory("skill-di-home-")
         val stateRoot = home.resolve("state").createDirectories()
@@ -720,6 +805,15 @@ private fun rejectingApprovalGate(reason: String): SkillApprovalGate =
             findings = emptyList(),
         )
     }
+
+private class RecordingCommandExecutor : SandboxCommandExecutor {
+    var lastRequest: SandboxCommandRequest? = null
+
+    override suspend fun execute(request: SandboxCommandRequest): SandboxCommandResult {
+        lastRequest = request
+        return SandboxCommandResult(exitCode = 0, stdout = "", stderr = "")
+    }
+}
 
 private class RecordingTool(
     name: String,
