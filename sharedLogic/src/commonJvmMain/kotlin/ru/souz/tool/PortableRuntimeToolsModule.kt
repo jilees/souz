@@ -45,6 +45,7 @@ import ru.souz.tool.skills.ToolGetSkillsByCategory
 import ru.souz.tool.skills.ToolGetSkillsNamesByCategory
 import ru.souz.tool.skills.ToolInvokeSkill
 import ru.souz.tool.skills.SkillCommandExecutor
+import ru.souz.tool.skills.resolveForwardedSandboxEnv
 import ru.souz.tool.skills.ToolConnectOAuthProvider
 import ru.souz.tool.skills.ToolSafeApiCall
 import ru.souz.tool.subagent.SubagentToolFactory
@@ -134,7 +135,10 @@ fun portableSkillRuntimeToolsDiModule(): DI.Module = DI.Module("portableSkillRun
     bindSingleton { SandboxConversationKnowledgeStore(instance()) }
     bindSingleton<ConversationKnowledgeStore> { instance<SandboxConversationKnowledgeStore>() }
     bindSingleton {
-        SkillCommandExecutor(sandboxResolver = instance())
+        SkillCommandExecutor(
+            sandboxResolver = instance(),
+            forwardedSandboxEnv = resolveForwardedSandboxEnv(System.getenv()),
+        )
     }
     bindSingleton { KnowledgeRetriever(instance()) }
     bindSingleton { ToolGetKnowledge(retriever = instance()) }

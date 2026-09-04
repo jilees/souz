@@ -16,7 +16,10 @@ class BackendExecutionToolCatalogTest {
     fun `execution catalog selects compiled tools through the backend capability policy`() {
         val executionTools = toolNames(executionCatalog(enabledCompiledToolNames = null))
 
-        assertEquals(setOf("ReadFile", "WebPageText", "ClientAsk") + LLM_BACKED_TOOL_NAMES, executionTools)
+        assertEquals(
+            setOf("ReadFile", "WebPageText", "ControlBrowser", "ClientAsk") + LLM_BACKED_TOOL_NAMES,
+            executionTools,
+        )
     }
 
     @Test
