@@ -30,6 +30,7 @@ data class UserSettingsOverrides(
     val enabledTools: Set<String>? = null,
     val showToolEvents: Boolean? = null,
     val streamingMessages: Boolean? = null,
+    val narrateSteps: Boolean? = null,
     val interfaceLanguage: String? = null,
     val requestTimeoutMillis: Long? = null,
     val useFewShotExamples: Boolean? = null,
@@ -89,6 +90,7 @@ class EffectiveSettingsResolver(
         val useFewShotExamples = requestOverrides?.useFewShotExamples
             ?: persisted.useFewShotExamples
             ?: DEFAULT_BACKEND_USE_FEW_SHOT_EXAMPLES
+        val narrateSteps = requestOverrides?.narrateSteps ?: persisted.narrateSteps ?: false
 
         return EffectiveUserSettings(
             userId = userId,
@@ -101,6 +103,7 @@ class EffectiveSettingsResolver(
             enabledTools = enabledTools,
             showToolEvents = featureFlags.toolEvents && showToolEventsPreference,
             streamingMessages = featureFlags.streamingMessages && streamingPreference,
+            narrateSteps = narrateSteps,
             interfaceLanguage = interfaceLanguage,
             requestTimeoutMillis = requestTimeoutMillis,
             useFewShotExamples = useFewShotExamples,

@@ -13,6 +13,7 @@ import ru.souz.agent.graph.buildGraph
 import ru.souz.agent.nodes.CLASSIFY_NODE_NAME
 import ru.souz.agent.nodes.NodesClassification
 import ru.souz.agent.nodes.NodesCommon
+import ru.souz.agent.nodes.chatOkNode
 import ru.souz.agent.nodes.NodesErrorHandling
 import ru.souz.agent.nodes.NodesLLM
 import ru.souz.agent.nodes.NodesMCP
@@ -49,9 +50,7 @@ class GraphBasedAgent internal constructor(
 
     private val graph: Graph<String, String> = buildGraph(name = "Agent") {
         val chatSubgraph: Node<String, LLMResponse.Chat> = nodesLLM.chat("LLM")
-        val chatOk: Node<LLMResponse.Chat, LLMResponse.Chat.Ok> = Node("Chat.Ok") { ctx ->
-            ctx.map { ctx.input as LLMResponse.Chat.Ok }
-        }
+        val chatOk: Node<LLMResponse.Chat, LLMResponse.Chat.Ok> = chatOkNode()
         val chatErrorToFinish: Node<LLMResponse.Chat, String> = nodesErrorHandling.chatErrorToFinish()
         val contextEnrich: Node<String, String> = nodesCommon.nodeAppendAdditionalData()
         val memoryRecall: Node<String, String> = nodesMemory.recall()

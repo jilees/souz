@@ -18,4 +18,6 @@ internal data class BackendConversationTurnRequest(
     val useFewShotExamples: Boolean? = null,
     val enabledTools: Set<String>? = null,
     val clientToolsEnabled: Boolean = false,
+    /** Ask the model to narrate each tool-calling turn with a short first-person status line. */
+    val narrateSteps: Boolean = false,
 )

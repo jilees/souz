@@ -63,6 +63,8 @@ internal class BackendAgentRuntimeEventSink(
     private val toolCallPreviewer: ToolCallPreviewer = ToolCallPreviewer(),
     private val beforePublicEvent: suspend () -> Unit = {},
     private val publicClientThread: Boolean = false,
+    private val stepNarrationEnabled: Boolean = false,
+    private val stepNarrationDelivery: StepNarrationDelivery? = null,
 ) : AgentRuntimeEventSink {
     private val emitMutex = Mutex()
     private val finalAssistantMessageId = assistantMessageId ?: UUID.randomUUID()
@@ -80,6 +82,7 @@ internal class BackendAgentRuntimeEventSink(
         when (event) {
             is AgentRuntimeEvent.MemoryPromptAugmented -> Unit
             is AgentRuntimeEvent.LlmMessageDelta -> onLlmMessageDelta(event)
+            is AgentRuntimeEvent.AssistantStepNarration -> onAssistantStepNarration(event)
             is AgentRuntimeEvent.ToolCallStarted -> onToolCallStarted(event)
 
             is AgentRuntimeEvent.ToolCallFinished -> onToolCallFinished(event)
@@ -296,6 +299,18 @@ internal class BackendAgentRuntimeEventSink(
             type = AgentEventType.MESSAGE_DELTA,
             payload = MessageDeltaPayload(finalAssistantMessageId, event.text),
         )
+    }
+
+    /**
+     * Ships every intermediate narration line straight to the channel as it is produced. Pacing
+     * (a min interval), the drop of the turn's last step, and stopping narration once the final
+     * answer lands are all the client's responsibility now — the server does not buffer, throttle,
+     * or hold anything back.
+     */
+    private suspend fun onAssistantStepNarration(event: AgentRuntimeEvent.AssistantStepNarration) {
+        if (!stepNarrationEnabled) return
+        val text = event.text.trim().takeIf { it.isNotEmpty() } ?: return
+        stepNarrationDelivery?.deliver(userId, chatId, executionId, text)
     }
 
     suspend fun emitMessageCreated(message: ChatMessage) {

@@ -27,6 +27,9 @@ class AgentEventPayloadSerializationTest {
                 role = "assistant",
                 content = "Completed",
             ),
+            AgentEventType.ASSISTANT_STEP to AssistantStepPayload(
+                text = "Нашёл дату, создам напоминание в календаре",
+            ),
             AgentEventType.EXECUTION_STARTED to ExecutionStartedPayload(
                 executionId = UUID.fromString("44444444-4444-4444-4444-444444444444"),
                 userMessageId = UUID.fromString("55555555-5555-5555-5555-555555555555"),

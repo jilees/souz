@@ -2,6 +2,7 @@ package ru.souz.agent.nodes
 
 import org.slf4j.LoggerFactory
 import ru.souz.agent.graph.Node
+import ru.souz.agent.runtime.AgentRuntimeEvent
 import ru.souz.agent.runtime.AgentRuntimeEventSink
 import ru.souz.agent.runtime.AgentToolExecutor
 import ru.souz.agent.state.AgentContext
@@ -236,6 +237,30 @@ internal data class ExecutedToolCall(
     val functionCall: LLMResponse.FunctionCall,
     val message: LLMRequest.Message,
 )
+
+/**
+ * Narrows [LLMResponse.Chat] to [LLMResponse.Chat.Ok] and, for intermediate (tool-calling)
+ * turns that carry assistant prose, emits an [AgentRuntimeEvent.AssistantStepNarration] so the
+ * host can surface a short "what the agent is doing now" status into a channel.
+ *
+ * The final turn (no tool calls) produces no narration — it flows through the normal completion
+ * path instead. Kept as a free function (not a [NodesCommon] method) so graph wiring does not
+ * depend on the mocked node surface.
+ */
+internal fun chatOkNode(name: String = "Chat.Ok"): Node<LLMResponse.Chat, LLMResponse.Chat.Ok> =
+    Node(name) { ctx ->
+        val ok = ctx.input as LLMResponse.Chat.Ok
+        if (ok.choices.any { it.message.functionCall != null }) {
+            val narration = ok.choices
+                .mapNotNull { choice -> choice.message.content.takeIf { it.isNotBlank() } }
+                .joinToString(separator = "\n")
+                .trim()
+            if (narration.isNotEmpty()) {
+                ctx.runtimeEventSink.emit(AgentRuntimeEvent.AssistantStepNarration(narration))
+            }
+        }
+        ctx.map { ok }
+    }
 
 internal fun <T> AgentContext<T>.toGigaRequest(history: List<LLMRequest.Message>): LLMRequest.Chat {
     val ctx = this

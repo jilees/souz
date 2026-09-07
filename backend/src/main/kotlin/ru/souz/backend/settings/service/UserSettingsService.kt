@@ -42,6 +42,7 @@ class UserSettingsService(
                 enabledTools = overrides.enabledTools ?: existing?.enabledTools,
                 showToolEvents = overrides.showToolEvents ?: existing?.showToolEvents,
                 streamingMessages = overrides.streamingMessages ?: existing?.streamingMessages,
+                narrateSteps = overrides.narrateSteps ?: existing?.narrateSteps,
                 interfaceLanguage = overrides.interfaceLanguage ?: existing?.interfaceLanguage,
                 requestTimeoutMillis = overrides.requestTimeoutMillis ?: existing?.requestTimeoutMillis,
                 useFewShotExamples = overrides.useFewShotExamples ?: existing?.useFewShotExamples,

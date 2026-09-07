@@ -5,6 +5,7 @@ import java.util.UUID
 import ru.souz.backend.agent.model.AgentConversationKey
 import ru.souz.backend.agent.model.BackendConversationTurnRequest
 import ru.souz.backend.agent.runtime.BackendAgentRuntimeEventSink
+import ru.souz.backend.agent.runtime.StepNarrationDelivery
 import ru.souz.backend.chat.repository.MessageRepository
 import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.events.service.AgentEventService
@@ -37,12 +38,14 @@ internal data class PreparedContinuationTurn(
     val runtimeRequest: BackendConversationTurnRequest,
     val streamingMessagesEnabled: Boolean,
     val toolEventsEnabled: Boolean,
+    val stepNarrationEnabled: Boolean,
 )
 
 internal class AgentExecutionRequestFactory(
     private val effectiveSettingsResolver: EffectiveSettingsResolver,
     private val featureFlags: BackendFeatureFlags,
     private val clientThreadRegistry: ClientThreadRuntimeRegistry? = null,
+    private val stepNarrationDelivery: StepNarrationDelivery? = null,
 ) {
     suspend fun prepareChatTurn(
         userId: String,
@@ -88,6 +91,7 @@ internal class AgentExecutionRequestFactory(
                 requestTimeoutMillis = effectiveSettings.requestTimeoutMillis,
                 useFewShotExamples = effectiveSettings.useFewShotExamples,
                 enabledTools = effectiveSettings.enabledTools,
+                narrateSteps = effectiveSettings.narrateSteps,
             ),
             latestDeviceContextJson = latestDeviceContextJson,
             runtimeOwner = clientThreadRegistry?.runtimeOwner?.takeIf { clientToolsEnabled },
@@ -113,6 +117,7 @@ internal class AgentExecutionRequestFactory(
                 useFewShotExamples = effectiveSettings.useFewShotExamples,
                 enabledTools = effectiveSettings.enabledTools.toSet(),
                 clientToolsEnabled = clientToolsEnabled,
+                narrateSteps = effectiveSettings.narrateSteps,
             ),
             userMessageMetadata = userMessageMetadata(normalizedClientMessageId) + userMessageMetadataExtras,
         )
@@ -128,6 +133,7 @@ internal class AgentExecutionRequestFactory(
             runtimeRequest = runtimeRequest,
             streamingMessagesEnabled = runtimeRequest.streamingMessages == true,
             toolEventsEnabled = executionMetadataBoolean(execution, METADATA_SHOW_TOOL_EVENTS) ?: false,
+            stepNarrationEnabled = runtimeRequest.narrateSteps,
         )
     }
 
@@ -155,6 +161,7 @@ internal class AgentExecutionRequestFactory(
             requestTimeoutMillis = executionMetadataLong(execution, METADATA_REQUEST_TIMEOUT_MILLIS),
             useFewShotExamples = executionMetadataBoolean(execution, METADATA_USE_FEW_SHOT_EXAMPLES),
             enabledTools = executionMetadataStringSet(execution, METADATA_ENABLED_TOOLS),
+            narrateSteps = executionMetadataBoolean(execution, METADATA_NARRATE_STEPS) ?: false,
         )
     }
 
@@ -169,6 +176,7 @@ internal class AgentExecutionRequestFactory(
         toolCallRepository: ToolCallRepository,
         streamingMessagesEnabled: Boolean,
         toolEventsEnabled: Boolean,
+        stepNarrationEnabled: Boolean = false,
     ): BackendAgentRuntimeEventSink =
         BackendAgentRuntimeEventSink(
             userId = userId,
@@ -185,6 +193,8 @@ internal class AgentExecutionRequestFactory(
             assistantMessageId = execution.assistantMessageId,
             beforePublicEvent = { clientThreadRegistry?.awaitAcceptedInputAcks(execution.id) },
             publicClientThread = execution.runtimeOwner != null,
+            stepNarrationEnabled = stepNarrationEnabled,
+            stepNarrationDelivery = stepNarrationDelivery,
         )
 
     private fun userMessageMetadata(clientMessageId: String?): Map<String, String> =
@@ -201,6 +211,7 @@ internal class AgentExecutionRequestFactory(
         requestTimeoutMillis: Long,
         useFewShotExamples: Boolean,
         enabledTools: Set<String>,
+        narrateSteps: Boolean,
     ): Map<String, String> = buildMap {
         put(METADATA_CONTEXT_SIZE, contextSize.toString())
         put(METADATA_TEMPERATURE, temperature.toString())
@@ -211,6 +222,7 @@ internal class AgentExecutionRequestFactory(
         put(METADATA_REQUEST_TIMEOUT_MILLIS, requestTimeoutMillis.toString())
         put(METADATA_USE_FEW_SHOT_EXAMPLES, useFewShotExamples.toString())
         put(METADATA_ENABLED_TOOLS, restJsonMapper.writeValueAsString(enabledTools.sorted()))
+        put(METADATA_NARRATE_STEPS, narrateSteps.toString())
         systemPrompt?.let { put(METADATA_SYSTEM_PROMPT, it) }
     }
 
@@ -287,4 +299,5 @@ private const val METADATA_SHOW_TOOL_EVENTS = "showToolEvents"
 private const val METADATA_REQUEST_TIMEOUT_MILLIS = "requestTimeoutMillis"
 private const val METADATA_USE_FEW_SHOT_EXAMPLES = "useFewShotExamples"
 private const val METADATA_ENABLED_TOOLS = "enabledTools"
+private const val METADATA_NARRATE_STEPS = "narrateSteps"
 private const val OPTION_CONTINUATION_PREFIX = "__option_answer__"

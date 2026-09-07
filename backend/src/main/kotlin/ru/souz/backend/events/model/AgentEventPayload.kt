@@ -53,6 +53,14 @@ data class MessageCompletedPayload(
     val content: String,
 ) : AgentEventPayload
 
+/**
+ * Short human-readable "what the agent is doing now" narration for one intermediate
+ * (tool-calling) loop turn. Live-only — never persisted to the durable event log.
+ */
+data class AssistantStepPayload(
+    val text: String,
+) : AgentEventPayload
+
 data class ExecutionStartedPayload(
     val executionId: UUID,
     val userMessageId: UUID? = null,
@@ -163,6 +171,7 @@ internal object AgentEventPayloadStorageCodec {
                 AgentEventType.MESSAGE_CREATED -> mapper.treeToValue(payload, MessageCreatedPayload::class.java)
                 AgentEventType.MESSAGE_DELTA -> mapper.treeToValue(payload, MessageDeltaPayload::class.java)
                 AgentEventType.MESSAGE_COMPLETED -> mapper.treeToValue(payload, MessageCompletedPayload::class.java)
+                AgentEventType.ASSISTANT_STEP -> mapper.treeToValue(payload, AssistantStepPayload::class.java)
                 AgentEventType.TOOL_CALL_STARTED -> if (payload.has("target")) {
                     mapper.treeToValue(payload, PublicToolCallStartedPayload::class.java)
                 } else {

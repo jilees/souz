@@ -22,6 +22,7 @@ class BackendConversationSettingsProvider(
     requestTimeoutMillis: Long = delegate.requestTimeoutMillis,
 ) : SettingsProvider by delegate {
     private var overrideSystemPrompt: String? = null
+    private var narrateSteps: Boolean = false
 
     override var defaultCalendar: String? = null
     override var regionProfile: String = localeToRegionProfile(locale)
@@ -32,8 +33,10 @@ class BackendConversationSettingsProvider(
     override var contextSize: Int = delegate.contextSize
     override var temperature: Float = delegate.temperature
 
-    override fun getSystemPromptForAgentModel(agentId: AgentId, model: LLMModel): String =
-        overrideSystemPrompt ?: defaultSystemPrompt
+    override fun getSystemPromptForAgentModel(agentId: AgentId, model: LLMModel): String {
+        val base = overrideSystemPrompt ?: defaultSystemPrompt
+        return if (narrateSteps) base + "\n\n" + stepNarrationInstruction(regionProfile) else base
+    }
 
     override fun setSystemPromptForAgentModel(agentId: AgentId, model: LLMModel, prompt: String?) = Unit
 
@@ -54,6 +57,7 @@ class BackendConversationSettingsProvider(
         this.temperature = request.temperature ?: temperature
         this.regionProfile = localeToRegionProfile(request.locale)
         this.overrideSystemPrompt = request.systemPrompt
+        this.narrateSteps = request.narrateSteps
         this.useStreaming = request.streamingMessages == true
         this.useFewShotExamples = request.useFewShotExamples ?: this.useFewShotExamples
         this.requestTimeoutMillis = request.requestTimeoutMillis ?: this.requestTimeoutMillis
@@ -86,6 +90,27 @@ private object SettingsProviderImpl {
     const val REGION_RU = "ru"
     const val REGION_EN = "en"
 }
+
+private const val STEP_NARRATION_INSTRUCTION_RU =
+    "## Озвучивание шагов\n" +
+        "Перед каждым вызовом инструментов напиши ОДНУ короткую фразу от первого лица " +
+        "(до ~120 символов, обычным текстом, без Markdown): что ты только что узнал и что " +
+        "собираешься сделать дальше. Примеры: «Поищу в интернете информацию о концерте», " +
+        "«Нашёл дату, создам напоминание в календаре». Это не финальный ответ, а статус."
+
+private const val STEP_NARRATION_INSTRUCTION_EN =
+    "## Step narration\n" +
+        "Before every tool call, write ONE short first-person sentence (max ~120 characters, " +
+        "plain text, no Markdown): what you just learned and what you are about to do. " +
+        "Examples: \"Let me look up the concert details online\", \"Found the date, I'll add a " +
+        "calendar reminder\". This is a status line, not the final answer."
+
+private fun stepNarrationInstruction(regionProfile: String): String =
+    if (regionProfile.equals(SettingsProviderImpl.REGION_EN, ignoreCase = true)) {
+        STEP_NARRATION_INSTRUCTION_EN
+    } else {
+        STEP_NARRATION_INSTRUCTION_RU
+    }
 
 /** Backend implementation for hosts without desktop indexing. */
 object BackendNoopAgentDesktopInfoRepository : AgentDesktopInfoRepository {

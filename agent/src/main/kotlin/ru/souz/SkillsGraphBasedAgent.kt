@@ -22,6 +22,7 @@ import ru.souz.agent.nodes.NodesLLM
 import ru.souz.agent.nodes.NodesMemory
 import ru.souz.agent.nodes.NodesSkillInventory
 import ru.souz.agent.nodes.NodesToolUseWithKnowledge
+import ru.souz.agent.nodes.chatOkNode
 import ru.souz.agent.nodes.NodesSummarization
 import ru.souz.agent.nodes.SKILL_INVENTORY_NODE_NAME
 import ru.souz.agent.nodes.SteerableChatNode
@@ -63,9 +64,7 @@ class SkillsGraphBasedAgent internal constructor(
         )
         val contextEnrich = nodesCommon.nodeAppendAdditionalData()
         val chat = SteerableChatNode(nodesLLM, controller)
-        val chatOk: Node<LLMResponse.Chat, LLMResponse.Chat.Ok> = Node("Chat.Ok") { ctx ->
-            ctx.map { ctx.input as LLMResponse.Chat.Ok }
-        }
+        val chatOk: Node<LLMResponse.Chat, LLMResponse.Chat.Ok> = chatOkNode()
         val toolUse = nodesToolUseWithKnowledge.node(
             alwaysInlineToolNames = alwaysInlineResultTools.mapTo(mutableSetOf()) { it.fn.name },
         )

@@ -162,6 +162,7 @@ class AgentExecutionService internal constructor(
             toolCallRepository = toolCallRepository,
             streamingMessagesEnabled = prepared.effectiveSettings.streamingMessages,
             toolEventsEnabled = prepared.effectiveSettings.showToolEvents,
+            stepNarrationEnabled = prepared.effectiveSettings.narrateSteps,
         )
         eventSink.emitMessageCreated(userMessage)
         eventSink.emitExecutionStarted(runningExecution)
@@ -276,6 +277,7 @@ class AgentExecutionService internal constructor(
             toolCallRepository = toolCallRepository,
             streamingMessagesEnabled = prepared.streamingMessagesEnabled,
             toolEventsEnabled = prepared.toolEventsEnabled,
+            stepNarrationEnabled = prepared.stepNarrationEnabled,
         )
         launchExecution(
             execution = runningExecution,

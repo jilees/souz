@@ -4,6 +4,7 @@ enum class AgentEventType(val value: String) {
     MESSAGE_CREATED("message.created"),
     MESSAGE_DELTA("message.delta"),
     MESSAGE_COMPLETED("message.completed"),
+    ASSISTANT_STEP("assistant.step"),
     TOOL_CALL_STARTED("tool.call.started"),
     TOOL_CALL_FINISHED("tool.call.finished"),
     TOOL_CALL_FAILED("tool.call.failed"),

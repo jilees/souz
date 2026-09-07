@@ -15,6 +15,7 @@ data class EffectiveUserSettings(
     val enabledTools: Set<String>,
     val showToolEvents: Boolean,
     val streamingMessages: Boolean,
+    val narrateSteps: Boolean,
     val interfaceLanguage: String,
     val requestTimeoutMillis: Long,
     val useFewShotExamples: Boolean,

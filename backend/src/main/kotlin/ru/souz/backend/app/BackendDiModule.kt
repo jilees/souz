@@ -14,6 +14,8 @@ import ru.souz.agent.knowledge.ConversationKnowledgeStore
 import ru.souz.agent.skills.registry.SkillRegistryRepository
 import ru.souz.agent.spi.AgentToolCatalog
 import ru.souz.backend.agent.runtime.BackendSandboxScopeResolver
+import ru.souz.backend.agent.runtime.StepNarrationDelivery
+import ru.souz.backend.agent.runtime.StepNarrationTelegramSender
 import ru.souz.backend.agent.runtime.BackendConversationTurnRunner
 import ru.souz.backend.agent.runtime.BackendConversationRuntimeTurnRunner
 import ru.souz.backend.agent.runtime.conversation.BackendConversationRuntimeFactory
@@ -96,6 +98,7 @@ import ru.souz.backend.telegram.TelegramBotBindingRepository
 import ru.souz.backend.telegram.TelegramBotBindingService
 import ru.souz.backend.telegram.TelegramBotPollingService
 import ru.souz.backend.telegram.TelegramBotTokenCrypto
+import ru.souz.backend.telegram.TelegramStepNarrationSender
 import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.skilloauth.impl.SkillOAuthGatewayImpl
 import ru.souz.tool.RuntimeToolsFactory
@@ -286,10 +289,17 @@ fun backendDiModule(
         )
     }
     bindSingleton {
+        StepNarrationDelivery(
+            eventService = instance(),
+            telegramSender = instanceOrNull(),
+        )
+    }
+    bindSingleton {
         AgentExecutionRequestFactory(
             effectiveSettingsResolver = instance(),
             featureFlags = instance(),
             clientThreadRegistry = instance(),
+            stepNarrationDelivery = instance(),
         )
     }
     bindSingleton<BackendConversationTurnRunner> {
@@ -355,6 +365,13 @@ fun backendDiModule(
             TelegramChannelProvider(
                 bindingRepository = instance(),
                 deliveryService = instance(),
+                telegramBotApi = instance(),
+                tokenCrypto = instance(),
+            )
+        }
+        bindSingleton<StepNarrationTelegramSender> {
+            TelegramStepNarrationSender(
+                bindingRepository = instance(),
                 telegramBotApi = instance(),
                 tokenCrypto = instance(),
             )

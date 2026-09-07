@@ -164,7 +164,13 @@ internal fun Route.eventRoutes(deps: BackendHttpDependencies) {
                     }
                     for (event in stream.liveEvents) {
                         val seq = event.seq
-                        if (seq == null || seq > lastSeq) {
+                        if (seq == null) {
+                            // Live-only event (e.g. assistant.step): no durable row to replay, so
+                            // forward it straight through when the public contract admits it.
+                            if (event.isPublicClientEvent()) sendJson(event.toPublicDto())
+                            continue
+                        }
+                        if (seq > lastSeq) {
                             sendDurableEvents(stream.replayAfter(lastSeq))
                         }
                     }
@@ -274,6 +280,7 @@ private fun rejectedFor(
 internal fun AgentEventEnvelope.isPublicClientEvent(): Boolean =
     when (type) {
         AgentEventType.TOOL_CALL_STARTED -> payload is PublicToolCallStartedPayload
+        AgentEventType.ASSISTANT_STEP -> true
         AgentEventType.THREAD_COMPLETED,
         AgentEventType.THREAD_FAILED,
         AgentEventType.THREAD_CANCELLED -> true

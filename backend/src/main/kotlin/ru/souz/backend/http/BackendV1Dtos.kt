@@ -8,6 +8,7 @@ import ru.souz.backend.options.service.AnswerOptionResult
 import ru.souz.backend.events.model.AgentEventEnvelope
 import ru.souz.backend.events.model.AgentEventPayload
 import ru.souz.backend.events.model.AgentEventType
+import ru.souz.backend.events.model.AssistantStepPayload
 import ru.souz.backend.events.model.ChoiceAnsweredPayload
 import ru.souz.backend.events.model.ChoiceRequestedPayload
 import ru.souz.backend.events.model.ExecutionCancelledPayload
@@ -47,6 +48,7 @@ internal data class BackendV1SettingsPatchRequest(
     val enabledTools: List<String>? = null,
     val showToolEvents: Boolean? = null,
     val streamingMessages: Boolean? = null,
+    val narrateSteps: Boolean? = null,
     val interfaceLanguage: String? = null,
     val requestTimeoutMillis: Long? = null,
     val useFewShotExamples: Boolean? = null,
@@ -74,6 +76,7 @@ internal data class BackendV1SettingsDto(
     val enabledTools: List<String>,
     val showToolEvents: Boolean,
     val streamingMessages: Boolean,
+    val narrateSteps: Boolean,
     val interfaceLanguage: String,
     val requestTimeoutMillis: Long,
     val useFewShotExamples: Boolean,
@@ -243,7 +246,9 @@ internal data class BackendV1EventDto(
 
 internal data class PublicClientEventDto(
     val kind: String = "event",
-    val seq: Long,
+    // Null only for live-only events (e.g. assistant.step) that carry no durable sequence and
+    // are never part of seq-based resume — durable events always set it.
+    val seq: Long?,
     val type: String,
     val chatId: String,
     // Null for out-of-band pushes not tied to any thread the client started — see
@@ -264,6 +269,7 @@ internal fun EffectiveUserSettings.toDto(): BackendV1SettingsDto =
         enabledTools = enabledTools.toList(),
         showToolEvents = showToolEvents,
         streamingMessages = streamingMessages,
+        narrateSteps = narrateSteps,
         interfaceLanguage = interfaceLanguage,
         requestTimeoutMillis = requestTimeoutMillis,
         useFewShotExamples = useFewShotExamples,
@@ -378,14 +384,19 @@ internal fun AgentEventEnvelope.toDto(): BackendV1EventDto =
 
 internal fun AgentEventEnvelope.toPublicDto(): PublicClientEventDto =
     PublicClientEventDto(
-        seq = requireNotNull(seq),
+        // Durable events always carry a seq; live-only events (assistant.step) legitimately do not.
+        seq = seq,
         type = type.value,
         chatId = chatId.toString(),
         // Null only for the out-of-band message.created case admitted by isPublicClientEvent() below.
         // Every other public event type keeps the loud requireNotNull guarantee: a producer bug that
         // emits e.g. THREAD_COMPLETED with no executionId must fail fast, not silently ship threadId:
         // null onto the wire for a schema that still declares it required and non-nullable.
-        threadId = if (type == AgentEventType.MESSAGE_CREATED) executionId?.toString() else requireNotNull(executionId).toString(),
+        threadId = when (type) {
+            AgentEventType.MESSAGE_CREATED -> executionId?.toString()
+            AgentEventType.ASSISTANT_STEP -> executionId?.toString()
+            else -> requireNotNull(executionId).toString()
+        },
         payload = payload.toTransportPayload(type),
         createdAt = createdAt.toString(),
     )
@@ -431,6 +442,8 @@ private fun AgentEventPayload.toTransportPayload(type: AgentEventType): Map<Stri
             "role" to role,
             "content" to content,
         )
+
+        is AssistantStepPayload -> linkedMapOf("text" to text)
 
         is ExecutionStartedPayload -> linkedMapOf<String, Any?>(
             "executionId" to executionId.toString(),
@@ -529,6 +542,10 @@ private fun Map<String, String>.toLegacyTransportPayload(type: AgentEventType): 
             copyIfPresent("messageId")
             copyLongIfPresent("seq")
             copyIfPresent("delta")
+        }
+
+        AgentEventType.ASSISTANT_STEP -> buildLegacyPayload {
+            copyIfPresent("text")
         }
 
         AgentEventType.EXECUTION_STARTED -> buildLegacyPayload {

@@ -27,6 +27,15 @@ sealed interface AgentRuntimeEvent {
         val text: String,
     ) : AgentRuntimeEvent
 
+    /**
+     * Assistant prose produced on an intermediate (tool-calling) turn of the agent loop —
+     * a short "what I'm doing now" narration meant for surfacing into a channel. Never
+     * emitted for the final answer turn.
+     */
+    data class AssistantStepNarration(
+        val text: String,
+    ) : AgentRuntimeEvent
+
     data class ToolCallStarted(
         val toolCallId: String,
         val name: String,

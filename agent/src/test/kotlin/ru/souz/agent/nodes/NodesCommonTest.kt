@@ -7,6 +7,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import ru.souz.agent.graph.GraphRuntime
 import ru.souz.agent.graph.RetryPolicy
+import ru.souz.agent.runtime.AgentRuntimeEvent
 import ru.souz.agent.runtime.AgentRuntimeEventSink
 import ru.souz.agent.runtime.AgentToolExecutor
 import ru.souz.agent.spi.AgentDesktopInfoRepository
@@ -168,6 +169,80 @@ class NodesCommonTest {
         assertEquals("""{"ok":true}""", result.history.last().content)
         assertEquals("call-1", result.history.last().functionsStateId)
     }
+
+    @Test
+    fun `chatOk emits step narration for a tool-calling turn that carries prose`() = runTest {
+        val events = mutableListOf<AgentRuntimeEvent>()
+        val context = chatContext(
+            response = okResponse(
+                content = "Поищу в интернете информацию о концерте",
+                functionCall = LLMResponse.FunctionCall(name = "web.search", arguments = mapOf("q" to "concert")),
+                functionsStateId = "call-1",
+                finishReason = LLMResponse.FinishReason.function_call,
+            ),
+            sink = capturingSink(events),
+        )
+
+        chatOkNode().execute(context, graphRuntime())
+
+        assertEquals(
+            AgentRuntimeEvent.AssistantStepNarration("Поищу в интернете информацию о концерте"),
+            events.single(),
+        )
+    }
+
+    @Test
+    fun `chatOk emits nothing for the final turn`() = runTest {
+        val events = mutableListOf<AgentRuntimeEvent>()
+        val context = chatContext(
+            response = okResponse(content = "Концерт 5 июня в 20:00."),
+            sink = capturingSink(events),
+        )
+
+        chatOkNode().execute(context, graphRuntime())
+
+        assertTrue(events.isEmpty())
+    }
+
+    @Test
+    fun `chatOk emits nothing when the tool-calling turn has no prose`() = runTest {
+        val events = mutableListOf<AgentRuntimeEvent>()
+        val context = chatContext(
+            response = okResponse(
+                content = "   ",
+                functionCall = LLMResponse.FunctionCall(name = "web.search", arguments = emptyMap()),
+                functionsStateId = "call-1",
+                finishReason = LLMResponse.FinishReason.function_call,
+            ),
+            sink = capturingSink(events),
+        )
+
+        chatOkNode().execute(context, graphRuntime())
+
+        assertTrue(events.isEmpty())
+    }
+
+    private fun capturingSink(target: MutableList<AgentRuntimeEvent>): AgentRuntimeEventSink =
+        object : AgentRuntimeEventSink {
+            override suspend fun emit(event: AgentRuntimeEvent) {
+                target += event
+            }
+        }
+
+    private fun chatContext(
+        response: LLMResponse.Chat.Ok,
+        sink: AgentRuntimeEventSink,
+    ): AgentContext<LLMResponse.Chat> = AgentContext(
+        input = response,
+        settings = settings("gpt-5-mini"),
+        history = listOf(
+            "system".toSystemPromptMessage(),
+            LLMRequest.Message(LLMMessageRole.user, "когда концерт?"),
+        ),
+        activeTools = emptyList(),
+        systemPrompt = "system",
+        runtimeEventSink = sink,
+    )
 
     private fun nodesCommon(
         desktopInfoRepository: AgentDesktopInfoRepository,

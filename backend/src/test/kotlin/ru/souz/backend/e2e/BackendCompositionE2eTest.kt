@@ -56,6 +56,7 @@ class BackendCompositionE2eTest {
                       "locale": "iw-IL",
                       "timeZone": "Europe/Amsterdam",
                       "streamingMessages": true,
+                      "narrateSteps": true,
                       "enabledTools": []
                     }
                     """.trimIndent()
@@ -74,6 +75,7 @@ class BackendCompositionE2eTest {
             assertEquals(E2E_LOCAL_MODEL.alias, settings["defaultModel"].asText())
             assertEquals("he-IL", settings["locale"].asText())
             assertEquals("Europe/Amsterdam", settings["timeZone"].asText())
+            assertTrue(settings["narrateSteps"].asBoolean())
             assertEquals(HttpStatusCode.OK, putKey.status)
             assertEquals("qwen", putKey.jsonBody()["providerKey"]["provider"].asText())
             assertEquals(HttpStatusCode.OK, listed.status)
