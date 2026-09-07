@@ -15,5 +15,14 @@
       "access_type": "offline",
       "prompt": "consent"
     }
+  },
+  {
+    "name": "huawei",
+    "authorizeEndpoint": "https://oauth-login.cloud.huawei.com/oauth2/v3/authorize",
+    "tokenEndpoint": "https://oauth-login.cloud.huawei.com/oauth2/v3/token",
+    "allowedApiHosts": ["health-api.cloud.huawei.com"],
+    "extraAuthorizeParams": {
+      "access_type": "offline"
+    }
   }
 ]

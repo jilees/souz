@@ -11,6 +11,7 @@ class OAuthProviderCatalogTest {
 
         assertTrue("yandex" in names)
         assertTrue("google" in names)
+        assertTrue("huawei" in names)
     }
 
     @Test
@@ -42,5 +43,17 @@ class OAuthProviderCatalogTest {
         assertEquals("consent", google.extraAuthorizeParams["prompt"])
         assertEquals(setOf("www.googleapis.com"), google.allowedApiHosts)
         assertEquals("Bearer", google.authorizationScheme)
+    }
+
+    @Test
+    fun `huawei requests offline access and only allows the Health Kit API host`() {
+        // Huawei Account Kit omits the refresh_token unless the authorize URL carries
+        // access_type=offline. The token is only ever attached to the Health Kit REST host —
+        // oauth-login.cloud.huawei.com is the authorization server, never an API target.
+        val huawei = OAuthProviderCatalog.entries.single { it.name == "huawei" }
+
+        assertEquals("offline", huawei.extraAuthorizeParams["access_type"])
+        assertEquals(setOf("health-api.cloud.huawei.com"), huawei.allowedApiHosts)
+        assertEquals("Bearer", huawei.authorizationScheme)
     }
 }
