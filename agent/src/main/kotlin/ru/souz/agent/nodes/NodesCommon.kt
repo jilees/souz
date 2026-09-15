@@ -13,6 +13,7 @@ import ru.souz.db.StorredData
 import ru.souz.db.StorredType
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.LLMRequest
+import ru.souz.llms.LLMResponse
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
@@ -138,11 +139,6 @@ internal class NodesCommon(
     private fun StorredData.readableType(): String =
         type.toString().replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }
 }
-
-internal data class ExecutedToolCall(
-    val functionCall: LLMResponse.FunctionCall,
-    val message: LLMRequest.Message,
-)
 
 /**
  * Narrows [LLMResponse.Chat] to [LLMResponse.Chat.Ok] and, for intermediate (tool-calling)
