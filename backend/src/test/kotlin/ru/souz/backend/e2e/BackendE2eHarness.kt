@@ -48,6 +48,8 @@ import ru.souz.backend.storage.postgres.newPostgresSchema
 import ru.souz.backend.storage.postgres.postgresAppConfig
 import ru.souz.backend.telegram.TelegramBotApi
 import ru.souz.backend.telegram.TelegramBotPollingService
+import ru.souz.backend.vk.VkBotApi
+import ru.souz.backend.vk.VkBotPollingService
 import ru.souz.llms.LLMModel
 import ru.souz.llms.local.LocalChatAPI
 import ru.souz.llms.local.LocalLlamaRuntime
@@ -56,6 +58,7 @@ import kotlin.time.Duration.Companion.milliseconds
 
 internal const val E2E_PROXY_TOKEN = "proxy-secret"
 internal const val E2E_TELEGRAM_TOKEN_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+internal const val E2E_VK_TOKEN_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 internal val E2E_LOCAL_MODEL: LLMModel = LLMModel.LocalQwen3_4B_Instruct_2507
 
 internal fun historyFrame(chatId: String, requestId: String, role: String, text: String): String =
@@ -102,6 +105,7 @@ internal fun backendE2eTest(
     featureFlags: BackendFeatureFlags = BackendFeatureFlags(wsEvents = true),
     llm: E2eLlmApi = E2eLlmApi(),
     telegramApi: TelegramBotApi? = null,
+    vkApi: VkBotApi? = null,
     turnRunnerOverride: BackendConversationTurnRunner? = null,
     startBackgroundServices: Boolean = false,
     block: suspend BackendE2eScope.() -> Unit,
@@ -111,6 +115,7 @@ internal fun backendE2eTest(
         featureFlags = featureFlags,
         llm = llm,
         telegramApi = telegramApi,
+        vkApi = vkApi,
         turnRunnerOverride = turnRunnerOverride,
         startBackgroundServices = startBackgroundServices,
     )
@@ -214,6 +219,7 @@ internal class BackendE2eBackend(
     private val featureFlags: BackendFeatureFlags,
     llm: E2eLlmApi,
     telegramApi: TelegramBotApi?,
+    vkApi: VkBotApi?,
     turnRunnerOverride: BackendConversationTurnRunner?,
     startBackgroundServices: Boolean,
 ) : AutoCloseable {
@@ -222,6 +228,7 @@ internal class BackendE2eBackend(
         featureFlags = featureFlags,
         proxyToken = E2E_PROXY_TOKEN,
         telegramTokenEncryptionKey = E2E_TELEGRAM_TOKEN_KEY.takeIf { featureFlags.telegramBot },
+        vkTokenEncryptionKey = E2E_VK_TOKEN_KEY.takeIf { featureFlags.vkBot },
         includeSkillOAuthConfig = false,
     )
     private val localChatApi = localChatApiBackedBy(llm)
@@ -240,6 +247,9 @@ internal class BackendE2eBackend(
         bindSingleton<LocalChatAPI>(overrides = true) { localChatApi }
         if (telegramApi != null) {
             bindSingleton<TelegramBotApi>(overrides = true) { telegramApi }
+        }
+        if (vkApi != null) {
+            bindSingleton<VkBotApi>(overrides = true) { vkApi }
         }
         if (turnRunnerOverride != null) {
             bindSingleton<BackendConversationTurnRunner>(overrides = true) { turnRunnerOverride }
@@ -261,6 +271,9 @@ internal class BackendE2eBackend(
             if (featureFlags.telegramBot) {
                 di.direct.instance<TelegramBotPollingService>().start()
             }
+            if (featureFlags.vkBot) {
+                di.direct.instance<VkBotPollingService>().start()
+            }
         }
     }
 
@@ -273,6 +286,7 @@ internal class BackendE2eBackend(
             featureFlags = featureFlags,
             llm = llm,
             telegramApi = null,
+            vkApi = null,
             turnRunnerOverride = null,
             startBackgroundServices = false,
         )

@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory
 import kotlinx.coroutines.runBlocking
 import ru.souz.backend.http.BackendHttpDependencies
 import ru.souz.backend.telegram.TelegramBotPollingService
+import ru.souz.backend.vk.VkBotPollingService
 import ru.souz.backend.client.ClientThreadRecoveryService
 import ru.souz.db.SettingsProvider
 
@@ -20,6 +21,9 @@ class BackendRuntime private constructor(
     private val telegramBotPollingService: TelegramBotPollingService? by lazy {
         if (httpDependencies.featureFlags.telegramBot) di.direct.instance() else null
     }
+    private val vkBotPollingService: VkBotPollingService? by lazy {
+        if (httpDependencies.featureFlags.vkBot) di.direct.instance() else null
+    }
     private val resources: BackendRuntimeResources by lazy { di.direct.instance() }
     private val applicationScope: BackendApplicationScope by lazy { di.direct.instance() }
     private val clientThreadRecoveryService: ClientThreadRecoveryService by lazy { di.direct.instance() }
@@ -30,6 +34,7 @@ class BackendRuntime private constructor(
             clientThreadRecoveryService.start(applicationScope)
         }
         telegramBotPollingService?.start()
+        vkBotPollingService?.start()
     }
 
     override fun close() {
