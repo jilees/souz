@@ -49,7 +49,6 @@ import ru.souz.backend.storage.postgres.PostgresUserProviderKeyRepository
 import ru.souz.backend.storage.postgres.PostgresUserSettingsRepository
 import ru.souz.backend.telegram.TelegramBotBindingRepository
 import ru.souz.backend.telegram.TelegramBotBindingService
-import ru.souz.backend.vk.VkBotBindingRepository
 import ru.souz.backend.vk.VkBotBindingService
 import ru.souz.backend.user.repository.UserRepository
 import ru.souz.skills.registry.FileSystemSkillRegistryRepository
@@ -78,7 +77,7 @@ class BackendDiModuleTest {
             assertIs<PostgresUserSettingsRepository>(di.direct.instance<UserSettingsRepository>())
             assertIs<PostgresUserProviderKeyRepository>(di.direct.instance<UserProviderKeyRepository>())
             assertIs<PostgresTelegramBotBindingRepository>(di.direct.instance<TelegramBotBindingRepository>())
-            assertIs<PostgresVkBotBindingRepository>(di.direct.instance<VkBotBindingRepository>())
+            assertIs<PostgresVkBotBindingRepository>(di.direct.instance<PostgresVkBotBindingRepository>())
             assertIs<PostgresBackendServerPreferenceStore>(di.direct.instance<BackendServerPreferenceStore>())
             assertIs<BackendSettingsProvider>(di.direct.instance<ru.souz.db.SettingsProvider>())
             assertIs<UserProviderKeyService>(di.direct.instance<UserProviderKeyService>())

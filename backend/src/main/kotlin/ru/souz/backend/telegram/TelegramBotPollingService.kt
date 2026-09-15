@@ -19,6 +19,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
+import ru.souz.backend.channels.channelTextChunks
 import ru.souz.backend.chat.service.SendMessageResult
 import ru.souz.backend.crypto.sha256Hex
 import ru.souz.backend.execution.model.AgentExecutionStatus
@@ -339,9 +340,8 @@ class TelegramBotPollingService(
                 return
             }
         }
-        val chunks = telegramTextChunks(
+        val chunks = channelTextChunks(
             text = responseText.ifBlank { FALLBACK_ASSISTANT_REPLY },
-            maxLength = TELEGRAM_TEXT_LIMIT,
         )
         chunks.forEach { chunk ->
             sendReplySafely(bindingId, token, chatId, chunk)

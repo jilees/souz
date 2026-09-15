@@ -1,12 +1,9 @@
 package ru.souz.backend.channels
 
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
 import ru.souz.backend.telegram.TelegramBotApi
 import ru.souz.backend.telegram.TelegramBotBindingRepository
 import ru.souz.backend.telegram.TelegramBotTokenCrypto
-import ru.souz.backend.telegram.telegramTextChunks
 
 class TelegramChannelProvider(
     private val bindingRepository: TelegramBotBindingRepository,
@@ -43,30 +40,10 @@ class TelegramChannelProvider(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return ChannelSendResult.Failed("Telegram delivery failed: ${e.message}")
+            return ChannelSendResult.Failed("Telegram delivery failed.")
         }
-        val chunks = telegramTextChunks(text)
-        val sentChunks = mutableListOf<String>()
-        val failure = try {
-            for (chunk in chunks) {
-                telegramBotApi.sendMessage(token, telegramChatId, chunk)
-                sentChunks += chunk
-            }
-            null
-        } catch (e: Exception) {
-            e
-        }
-        if (sentChunks.isNotEmpty()) {
-            withContext(NonCancellable) {
-                deliveryService.deliver(userId, binding.chatId, sentChunks.joinToString(""))
-            }
-        }
-        return when (failure) {
-            null -> ChannelSendResult.Delivered("Sent via Telegram.")
-            is CancellationException -> throw failure
-            else -> ChannelSendResult.Failed(
-                "Telegram delivery failed after ${sentChunks.size}/${chunks.size} part(s): ${failure.message}"
-            )
+        return deliveryService.sendChunks(userId, chatId, text, "Telegram") { chunk ->
+            telegramBotApi.sendMessage(token, telegramChatId, chunk)
         }
     }
 }

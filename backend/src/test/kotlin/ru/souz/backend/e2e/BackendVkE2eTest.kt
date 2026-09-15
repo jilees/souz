@@ -7,458 +7,219 @@ import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
+import java.io.IOException
 import java.util.UUID
-import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.getAndUpdate
 import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.http.BackendHttpRoutes
-import ru.souz.backend.vk.VkApiError
 import ru.souz.backend.vk.VkBotApi
+import ru.souz.backend.vk.VkBotApiException
 import ru.souz.backend.vk.VkGroup
 import ru.souz.backend.vk.VkLongPollResponse
 import ru.souz.backend.vk.VkLongPollServer
 import ru.souz.backend.vk.VkLongPollUpdate
 import ru.souz.backend.vk.VkMessage
 import ru.souz.backend.vk.VkMessageObjectWrapper
-import ru.souz.backend.vk.VkResponse
 import ru.souz.backend.vk.VkUser
 import ru.souz.llms.LLMMessageRole
 
 class BackendVkE2eTest {
     @Test
-    fun `vk routes validate redact and enforce ownership, then polling links, rejects foreign senders, and executes updates once`() {
-        val vkApi = FakeVkBotApi()
-        backendE2eTest(
-            schemaPrefix = "e2e_vk_polling",
-            featureFlags = BackendFeatureFlags(wsEvents = true, vkBot = true),
-            vkApi = vkApi,
-            startBackgroundServices = true,
-        ) {
-            // --- binding CRUD: validation, redaction, ownership, conflict ---
-            val foreignUserId = UUID.randomUUID().toString()
-            val validationChatId = createPublicChat(foreignUserId, "create-validation")
-            // Owned by the same user as validationChatId, so the conflict below is a genuine
-            // token-uniqueness rejection (409) and not an ownership rejection (404).
-            val secondOwnedChatId = createPublicChat(foreignUserId, "create-foreign-conflict")
-            val validationToken = "vk1:valid-token"
-
-            val invalid = client.put(BackendHttpRoutes.chatVkBot(validationChatId)) {
-                trusted(foreignUserId)
-                jsonBody("""{"token":"bad-token"}""")
-            }
-            val upserted = client.put(BackendHttpRoutes.chatVkBot(validationChatId)) {
-                trusted(foreignUserId)
-                jsonBody("""{"token":"$validationToken"}""")
-            }
-            val fetched = client.get(BackendHttpRoutes.chatVkBot(validationChatId)) {
-                trusted(foreignUserId)
-            }
-            val unowned = client.get(BackendHttpRoutes.chatVkBot(validationChatId)) {
-                trusted(UUID.randomUUID().toString())
-            }
-            val conflict = client.put(BackendHttpRoutes.chatVkBot(secondOwnedChatId)) {
-                trusted(foreignUserId)
-                jsonBody("""{"token":"$validationToken"}""")
-            }
-
-            assertEquals(HttpStatusCode.BadRequest, invalid.status)
-            assertEquals("invalid_vk_bot_token", invalid.jsonBody()["error"]["code"].asText())
-            assertEquals(HttpStatusCode.OK, upserted.status)
-            assertEquals("Souz E2E", upserted.jsonBody()["vkBot"]["vkGroupName"].asText())
-            assertTrue(upserted.jsonBody()["pendingLinkCommand"].asText().isNotBlank())
-            assertFalse(upserted.bodyAsText().contains(validationToken))
-            assertEquals(HttpStatusCode.OK, fetched.status)
-            assertFalse(fetched.bodyAsText().contains(validationToken))
-            assertEquals(false, fetched.jsonBody()["vkBot"]["linked"].asBoolean())
-            assertEquals(HttpStatusCode.NotFound, unowned.status)
-            assertEquals(HttpStatusCode.Conflict, conflict.status)
-            assertEquals("vk_bot_already_bound", conflict.jsonBody()["error"]["code"].asText())
-            assertFalse(
-                sql { connection ->
-                    connection.prepareStatement(
-                        "select group_token_encrypted from vk_bot_bindings where chat_id = ?"
-                    ).use { statement ->
-                        statement.setObject(1, UUID.fromString(validationChatId))
-                        statement.executeQuery().use { rows ->
-                            rows.next()
-                            rows.getString(1).contains(validationToken)
-                        }
-                    }
-                }
-            )
-            // Delete this binding before it can ever be picked up by the running poller — the rest
-            // of this test shares one FakeVkBotApi, and a second concurrently-polled binding would
-            // interleave into the `requestedTs`/`sentMessages` trackers the assertions below key off.
-            client.delete(BackendHttpRoutes.chatVkBot(validationChatId)) { trusted(foreignUserId) }
-
-            // --- linking, foreign-sender rejection, discovery, and a real turn ---
-            val userId = UUID.randomUUID().toString()
-            val chatId = createPublicChat(userId, "create-polling")
-            val settings = client.patch(BackendHttpRoutes.SETTINGS) {
-                trusted(userId)
+    fun `binding API links only a private account and replays turns without repeating execution`() {
+        val vk = ScriptedVkApi()
+        backendE2eTest("vk_workflow", featureFlags = BackendFeatureFlags(vkBot = true), vkApi = vk) {
+            val user = UUID.randomUUID().toString()
+            val chat = createPublicChat(user)
+            val source = createPublicChat(user, "source")
+            client.patch(BackendHttpRoutes.SETTINGS) {
+                trusted(user)
                 jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}"}""")
             }
-            assertEquals(HttpStatusCode.OK, settings.status)
-            val token = "vk1:polling-token"
-            val boundResponse = client.put(BackendHttpRoutes.chatVkBot(chatId)) {
-                trusted(userId)
-                jsonBody("""{"token":"$token"}""")
+            for (token in listOf("", " ", "x".repeat(4097), "invalid")) {
+                assertEquals(HttpStatusCode.BadRequest, bind(user, chat, token).status)
             }
-            assertEquals(HttpStatusCode.OK, boundResponse.status)
-            val linkCommand = boundResponse.jsonBody()["pendingLinkCommand"].asText()
-            assertTrue(linkCommand.isNotBlank())
-
-            vkApi.enqueue(update(10, senderId = 701, peerId = 701 + GROUP_PEER_OFFSET, text = linkCommand))
-            eventually("group-like update checkpoint") {
-                vkApi.requestedTs.lastOrNull()?.toLongOrNull()?.takeIf { it >= 11 }
-            }
-            assertFalse(binding(userId, chatId)["linked"].asBoolean())
-            assertFalse(vkApi.sentMessages.any { it.peerId == 701L + GROUP_PEER_OFFSET })
-
-            vkApi.enqueue(update(11, senderId = 701, text = "wrong-secret"))
-            eventually("invalid private link rejection") {
-                vkApi.sentMessages.firstOrNull {
-                    it.peerId == 701L && it.text == "Чтобы привязать этот чат, отправь секрет, который показал Souz."
+            val response = bind(user, chat)
+            assertEquals(HttpStatusCode.OK, response.status)
+            val secret = response.jsonBody()["pendingLinkCommand"].asText()
+            assertTrue(secret.isNotBlank())
+            assertFalse(response.bodyAsText().contains("vk-token"))
+            assertEquals(HttpStatusCode.Conflict, bind(user, source).status)
+            assertEquals(HttpStatusCode.Conflict, bind(user, source, "other-token-for-same-group").status)
+            for (method in listOf("GET", "PUT", "DELETE")) {
+                val stranger = UUID.randomUUID().toString()
+                val denied = when (method) {
+                    "GET" -> client.get(BackendHttpRoutes.chatVkBot(chat)) { trusted(stranger) }
+                    "PUT" -> bind(stranger, chat)
+                    else -> client.delete(BackendHttpRoutes.chatVkBot(chat)) { trusted(stranger) }
                 }
+                assertEquals(HttpStatusCode.NotFound, denied.status)
             }
-            assertFalse(binding(userId, chatId)["linked"].asBoolean())
+            val fetched = client.get(BackendHttpRoutes.chatVkBot(chat)) { trusted(user) }
+            assertFalse(fetched.bodyAsText().contains(secret))
+            assertFalse(fetched.bodyAsText().contains("vk-token"))
+            assertTrue(stored(chat, "group_token_encrypted").startsWith("vkenc:v1:"))
+            assertFalse(stored(chat, "link_secret_hash").contains(secret))
 
-            vkApi.enqueue(update(12, senderId = 701, text = linkCommand))
-            eventually("private VK link") {
-                binding(userId, chatId).takeIf { it["linked"].asBoolean() }
-            }
-            assertTrue(vkApi.sentMessages.any {
-                it.peerId == 701L && it.text == "Готово, этот VK-аккаунт привязан к чату Souz."
-            })
+            vk.responses.add(VkLongPollResponse("2", listOf(
+                update(1, secret, peer = 2_000_000_001),
+                update(2, "wrong-secret"),
+                update(3, secret, sender = -1),
+            )))
+            backend.pollVkOnce()
+            assertFalse(binding(user, chat)["linked"].asBoolean())
+            assertEquals(1, vk.sent.size)
+            val link = update(4, secret)
+            vk.responses.add(VkLongPollResponse("3", listOf(link)))
+            backend.pollVkOnce()
+            assertTrue(binding(user, chat)["linked"].asBoolean())
+            assertEquals("Test", binding(user, chat)["vkFirstName"].asText())
 
-            val discoveryChatId = createPublicChat(userId, "create-discovery")
-            val archivedChatId = createPublicChat(userId, "create-archived")
-            assertEquals(
-                HttpStatusCode.OK,
-                client.post(BackendHttpRoutes.archiveChat(archivedChatId)) {
-                    trusted(userId)
-                }.status,
-            )
-            llm.requestSkillForPrompt("discover vk channels", "ListActiveChannels", emptyMap())
-            val discovery = client.post(BackendHttpRoutes.chatMessages(discoveryChatId)) {
-                trusted(userId)
-                jsonBody("""{"content":"discover vk channels","options":{"model":"${E2E_LOCAL_MODEL.alias}"}}""")
-            }
-            assertEquals(HttpStatusCode.OK, discovery.status)
-            val channelResult = eventually("production channel discovery result") {
-                llm.requests
-                    .filter { request -> request.conversationPrompt() == "discover vk channels" }
-                    .flatMap { request -> request.messages }
-                    .lastOrNull { message ->
-                        message.role == LLMMessageRole.function && message.name == "RunSkillCommand"
-                    }
-            }
-            val channels = json.readTree(channelResult.content)["channels"]
-            assertEquals(
-                setOf(
-                    "vk:$chatId",
-                    "public_client:$discoveryChatId",
-                ),
-                channels.map { "${it["channelType"].asText()}:${it["channelId"].asText()}" }.toSet(),
-            )
-            assertTrue(channels.none { it["channelId"].asText() == archivedChatId })
+            val turn = update(5, "VK question")
+            vk.failSend = true
+            vk.responses.add(VkLongPollResponse("4", listOf(link, turn)))
+            backend.pollVkOnce()
+            assertEquals("3", stored(chat, "last_ts"))
+            vk.responses.add(VkLongPollResponse("4", listOf(link, turn)))
+            backend.pollVkOnce()
+            assertEquals("4", stored(chat, "last_ts"))
+            assertEquals(1, llm.requests.count { it.conversationPrompt() == "VK question" })
+            val messages = client.get(BackendHttpRoutes.chatMessages(chat)) { trusted(user) }.jsonBody()["items"]
+            assertEquals(listOf("VK question", messages.last()["content"].asText()), messages.map { it["content"].asText() })
+            assertEquals(messages.last()["content"].asText(), vk.sent.last().second)
 
-            vkApi.enqueue(update(13, senderId = 701, text = "message from VK"))
-            eventually("real-kernel VK turn") {
-                llm.requests.count { it.conversationPrompt() == "message from VK" }.takeIf { it == 1 }
-            }
-            val messages = eventually("persisted VK turn") {
-                client.get(BackendHttpRoutes.chatMessages(chatId)) {
-                    trusted(userId)
-                }.jsonBody()["items"].takeIf { it.size() == 2 }
-            }
-            assertEquals(listOf("user", "assistant"), messages.map { it["role"].asText() })
-            assertEquals("message from VK", messages.first()["content"].asText())
-            val assistantReply = messages.last()["content"].asText()
-            eventually("VK assistant reply") {
-                vkApi.sentMessages.firstOrNull { it.peerId == 701L && it.text == assistantReply }
-            }
-            assertTrue(vkApi.typingActivity.any { it == 701L })
+            vk.responses.add(VkLongPollResponse("5", listOf(update(6, "foreign", sender = 999), update(7, "foreign", sender = 999))))
+            backend.pollVkOnce()
+            assertEquals(1, vk.sent.count { it.first == 999L })
+            assertEquals(1, llm.requests.count { it.conversationPrompt() == "VK question" })
 
-            eventually("a repeated empty poll after the VK checkpoint") {
-                vkApi.requestedTs.count { it.toLongOrNull() == 14L }.takeIf { it >= 2 }
-            }
-            assertEquals(1, llm.requests.count { it.conversationPrompt() == "message from VK" })
+            llm.requestSkillForPrompt("discover", "ListActiveChannels", emptyMap())
+            runSkill(user, source, "discover")
+            val channels = skillResult("discover")["channels"]
+            assertEquals(setOf("vk:$chat", "public_client:$source"), channels.map {
+                "${it["channelType"].asText()}:${it["channelId"].asText()}"
+            }.toSet())
+            llm.requestSkillForPrompt("forward", "SendMessageToChannel", mapOf("channelType" to "vk", "channelId" to chat, "text" to "forwarded"))
+            runSkill(user, source, "forward")
+            assertEquals("forwarded", vk.sent.last().second)
+            assertEquals("forwarded", client.get(BackendHttpRoutes.chatMessages(chat)) { trusted(user) }.jsonBody()["items"].last()["content"].asText())
 
-            vkApi.enqueue(update(14, senderId = 999, text = linkCommand))
-            eventually("foreign VK sender rejection") {
-                vkApi.sentMessages.firstOrNull {
-                    it.peerId == 999L && it.text == "Этот бот уже привязан к другому VK-аккаунту."
-                }
-            }
-            eventually("foreign update checkpoint") {
-                vkApi.requestedTs.lastOrNull()?.toLongOrNull()?.takeIf { it >= 15 }
-            }
-            assertEquals(1, llm.requests.count { it.conversationPrompt() == "message from VK" })
-            assertEquals(
-                2,
-                client.get(BackendHttpRoutes.chatMessages(chatId)) {
-                    trusted(userId)
-                }.jsonBody()["items"].size(),
-            )
+            val replacement = bind(user, chat).jsonBody()["pendingLinkCommand"].asText()
+            assertFalse(binding(user, chat)["linked"].asBoolean())
+            assertTrue(replacement != secret)
+            vk.responses.add(VkLongPollResponse("6", listOf(update(8, secret))))
+            backend.pollVkOnce()
+            assertFalse(binding(user, chat)["linked"].asBoolean())
+            assertEquals(HttpStatusCode.OK, client.delete(BackendHttpRoutes.chatVkBot(chat)) { trusted(user) }.status)
+            assertTrue(client.get(BackendHttpRoutes.chatVkBot(chat)) { trusted(user) }.jsonBody()["vkBot"].isNull)
         }
     }
 
     @Test
-    fun `polling discards a leased-away update, then agent delivery works and a failed send is not persisted`() {
-        val vkApi = FakeVkBotApi()
-        val pausedPoll = vkApi.pauseNextPoll()
-        backendE2eTest(
-            schemaPrefix = "e2e_vk_lease_and_outbound",
-            featureFlags = BackendFeatureFlags(wsEvents = true, vkBot = true),
-            vkApi = vkApi,
-            startBackgroundServices = true,
-        ) {
-            // --- lease fencing: the very first poll is paused and its lease stolen mid-flight ---
-            val leaseUserId = UUID.randomUUID().toString()
-            val leaseChatId = createPublicChat(leaseUserId, "create-lease")
-            val leaseUpserted = client.put(BackendHttpRoutes.chatVkBot(leaseChatId)) {
-                trusted(leaseUserId)
-                jsonBody("""{"token":"vk1:lease-token"}""")
+    fun `long poll recovers cursors and discards work after lease loss or rebind`() {
+        val vk = ScriptedVkApi()
+        backendE2eTest("vk_recovery", featureFlags = BackendFeatureFlags(vkBot = true), vkApi = vk) {
+            val user = UUID.randomUUID().toString()
+            val chat = createPublicChat(user)
+            val secret = bind(user, chat).jsonBody()["pendingLinkCommand"].asText()
+            for ((failed, expected) in listOf(1 to "7", 2 to "8", 3 to "100")) {
+                vk.responses.add(VkLongPollResponse(ts = "7", failed = failed))
+                vk.responses.add(VkLongPollResponse("8"))
+                backend.pollVkOnce()
+                assertEquals(expected, vk.cursors.last())
             }
-            assertEquals(HttpStatusCode.OK, leaseUpserted.status)
-            val leaseLinkCommand = leaseUpserted.jsonBody()["pendingLinkCommand"].asText()
-
-            eventually("paused VK poll holding a binding lease") {
-                pausedPoll.takeIf { it.entered.isCompleted }
-            }
-            pausedPoll.respondWith(update(10, senderId = 701, text = leaseLinkCommand), newTs = "11")
-            sql { connection ->
-                connection.prepareStatement(
-                    """
-                    update vk_bot_bindings
-                    set poller_owner = 'takeover-instance',
-                        poller_lease_until = current_timestamp + interval '250 milliseconds'
-                    where chat_id = ?
-                    """.trimIndent()
-                ).use { statement ->
-                    statement.setObject(1, UUID.fromString(leaseChatId))
-                    assertEquals(1, statement.executeUpdate())
-                }
-            }
-            pausedPoll.release.complete(Unit)
-
-            eventually("a later poll after the stolen lease expires") {
-                vkApi.requestedTs.size.takeIf { it >= 2 }
-            }
-            assertFalse(binding(leaseUserId, leaseChatId)["linked"].asBoolean())
-            assertTrue(vkApi.sentMessages.isEmpty())
-            // The polling loop keeps ticking for VK (empty-batch `ts` advances legitimately once the
-            // stolen lease's short TTL expires and the real instance reclaims it), so the checkpoint
-            // isn't pinned at null forever — the invariant under test is narrower: the *fenced*
-            // batch's own `ts` ("11", returned alongside the discarded update) must never land, since
-            // that write happened under a lease this instance no longer held.
-            val leaseCheckpoint = sql { connection ->
-                connection.prepareStatement(
-                    "select last_ts from vk_bot_bindings where chat_id = ?"
-                ).use { statement ->
-                    statement.setObject(1, UUID.fromString(leaseChatId))
-                    statement.executeQuery().use { rows ->
-                        assertTrue(rows.next())
-                        rows.getString(1)
+            assertEquals(3, vk.negotiations)
+            vk.onPoll = {
+                sql { connection ->
+                    connection.prepareStatement("update vk_bot_bindings set poller_owner = 'other' where chat_id = ?").use {
+                        it.setObject(1, UUID.fromString(chat))
+                        it.executeUpdate()
                     }
                 }
             }
-            assertTrue(leaseCheckpoint != "11")
+            vk.responses.add(VkLongPollResponse("9", listOf(update(1, secret))))
+            backend.pollVkOnce()
+            assertFalse(binding(user, chat)["linked"].asBoolean())
+            assertEquals("8", stored(chat, "last_ts"))
+            assertTrue(vk.sent.isEmpty())
 
-            // --- outbound cross-channel delivery, on a fresh binding (the one-time pause is spent) ---
-            val userId = UUID.randomUUID().toString()
-            val vkChatId = createPublicChat(userId, "create-vk-target")
-            val sourceChatId = createPublicChat(userId, "create-vk-source")
-            val failedSourceChatId = createPublicChat(userId, "create-vk-failure")
-            val upserted = client.put(BackendHttpRoutes.chatVkBot(vkChatId)) {
-                trusted(userId)
-                jsonBody("""{"token":"vk1:outbound-token"}""")
-            }
-            assertEquals(HttpStatusCode.OK, upserted.status)
-            val linkCommand = upserted.jsonBody()["pendingLinkCommand"].asText()
-            vkApi.enqueue(update(20, senderId = 801, text = linkCommand))
-            eventually("linked outbound VK binding") {
-                binding(userId, vkChatId).takeIf { it["linked"].asBoolean() }
-            }
-
-            val deliveredText = "vk outbound delivery"
-            llm.requestSkillForPrompt(
-                prompt = "send vk outbound",
-                skillId = "SendMessageToChannel",
-                arguments = mapOf(
-                    "channelType" to "vk",
-                    "channelId" to vkChatId,
-                    "text" to deliveredText,
-                ),
-            )
-            val deliveredTurn = client.post(BackendHttpRoutes.chatMessages(sourceChatId)) {
-                trusted(userId)
-                jsonBody("""{"content":"send vk outbound","options":{"model":"${E2E_LOCAL_MODEL.alias}"}}""")
-            }
-            assertEquals(HttpStatusCode.OK, deliveredTurn.status)
-            awaitTerminal(sourceChatId, userId)
-            eventually("VK outbound message") {
-                vkApi.sentMessages.firstOrNull { it.peerId == 801L && it.text == deliveredText }
-            }
-            val deliveredMessages = client.get(BackendHttpRoutes.chatMessages(vkChatId)) {
-                trusted(userId)
-            }.jsonBody()["items"]
-            assertTrue(deliveredMessages.any { message ->
-                message["content"].asText() == deliveredText &&
-                    message.path("metadata").path("crossChannel").asText() == "true"
-            })
-
-            val failedText = "vk outbound should not persist"
-            vkApi.failSendText(failedText)
-            llm.requestSkillForPrompt(
-                prompt = "send vk outbound failure",
-                skillId = "SendMessageToChannel",
-                arguments = mapOf(
-                    "channelType" to "vk",
-                    "channelId" to vkChatId,
-                    "text" to failedText,
-                ),
-            )
-            val failedTurn = client.post(BackendHttpRoutes.chatMessages(failedSourceChatId)) {
-                trusted(userId)
-                jsonBody("""{"content":"send vk outbound failure","options":{"model":"${E2E_LOCAL_MODEL.alias}"}}""")
-            }
-            assertEquals(HttpStatusCode.OK, failedTurn.status)
-            awaitTerminal(failedSourceChatId, userId)
-
-            assertTrue(vkApi.sentMessages.none { it.text == failedText })
-            val messagesAfterFailure = client.get(BackendHttpRoutes.chatMessages(vkChatId)) {
-                trusted(userId)
-            }.jsonBody()["items"]
-            assertTrue(messagesAfterFailure.none { it["content"].asText() == failedText })
-            assertEquals(
-                1,
-                messagesAfterFailure.count { it.path("metadata").path("crossChannel").asText() == "true" },
-            )
+            bind(user, chat)
+            vk.onPoll = { bind(user, chat) }
+            vk.responses.add(VkLongPollResponse("10", listOf(update(2, secret))))
+            backend.pollVkOnce()
+            assertFalse(binding(user, chat)["linked"].asBoolean())
+            assertTrue(vk.sent.isEmpty())
         }
     }
 
-    private suspend fun BackendE2eScope.binding(userId: String, chatId: String) =
-        assertNotNull(
-            client.get(BackendHttpRoutes.chatVkBot(chatId)) {
-                trusted(userId)
-            }.jsonBody()["vkBot"]
-        )
+    @Test
+    fun `disabled VK routes and schema are absent`() = backendE2eTest("vk_disabled") {
+        val path = BackendHttpRoutes.chatVkBot(UUID.randomUUID())
+        assertEquals(HttpStatusCode.NotFound, client.get(path) { trusted(UUID.randomUUID().toString()) }.status)
+        assertFalse(client.get(BackendHttpRoutes.OPENAPI_DOCUMENT).bodyAsText().contains("vk-bot"))
+    }
 
-    private suspend fun BackendE2eScope.awaitTerminal(chatId: String, userId: String) {
-        eventually("terminal VK source execution") {
-            client.get(BackendHttpRoutes.chatEvents(chatId)) {
-                trusted(userId)
-            }.jsonBody()["items"].takeIf { events ->
-                events.any { event ->
-                    event["type"].asText() in setOf(
-                        "execution.finished",
-                        "execution.failed",
-                        "execution.cancelled",
-                    )
-                }
-            }
+    private suspend fun BackendE2eScope.bind(user: String, chat: String, token: String = "vk-token") =
+        client.put(BackendHttpRoutes.chatVkBot(chat)) { trusted(user); jsonBody("""{"token":"$token"}""") }
+
+    private suspend fun BackendE2eScope.binding(user: String, chat: String) =
+        client.get(BackendHttpRoutes.chatVkBot(chat)) { trusted(user) }.jsonBody()["vkBot"]
+
+    private fun BackendE2eScope.stored(chat: String, column: String): String = sql { connection ->
+        connection.prepareStatement("select $column from vk_bot_bindings where chat_id = ?").use {
+            it.setObject(1, UUID.fromString(chat))
+            it.executeQuery().use { rows -> rows.next(); rows.getString(1) }
         }
     }
 
-    private fun update(
-        id: Long,
-        senderId: Long,
-        peerId: Long = senderId,
-        text: String,
-    ) = VkLongPollUpdate(
-        type = "message_new",
-        obj = VkMessageObjectWrapper(
-            message = VkMessage(id = id, fromId = senderId, peerId = peerId, text = text),
-        ),
+    private suspend fun BackendE2eScope.runSkill(user: String, chat: String, prompt: String) {
+        val response = client.post(BackendHttpRoutes.chatMessages(chat)) {
+            trusted(user)
+            jsonBody("""{"content":"$prompt","options":{"model":"${E2E_LOCAL_MODEL.alias}"}}""")
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        val thread = response.jsonBody()["execution"]["id"].asText()
+        eventually("$prompt completion") {
+            client.get("${BackendHttpRoutes.chatThread(chat, thread)}?clientType=backend")
+                .jsonBody().takeIf { it["status"]?.asText() == "completed" }
+        }
+    }
+
+    private fun BackendE2eScope.skillResult(prompt: String) = json.readTree(
+        llm.requests.filter { it.conversationPrompt() == prompt }.flatMap { it.messages }
+            .last { it.role == LLMMessageRole.function && it.name == "RunSkillCommand" }.content,
     )
-
-    private companion object {
-        const val GROUP_PEER_OFFSET = 2_000_000_000L
-    }
 }
 
-private class FakeVkBotApi : VkBotApi {
-    data class SentMessage(val peerId: Long, val text: String)
+private fun update(id: Long, text: String, sender: Long = 701, peer: Long = sender) =
+    VkLongPollUpdate("message_new", VkMessageObjectWrapper(VkMessage(id, sender, peer, text)))
 
-    val requestedTs = CopyOnWriteArrayList<String>()
-    val sentMessages = CopyOnWriteArrayList<SentMessage>()
-    val typingActivity = CopyOnWriteArrayList<Long>()
-    private val updates = CopyOnWriteArrayList<VkLongPollUpdate>()
-    private val failedSendTexts = CopyOnWriteArrayList<String>()
-    private val nextPollPause = MutableStateFlow<PausedVkPoll?>(null)
-
-    fun enqueue(update: VkLongPollUpdate) {
-        updates += update
+private class ScriptedVkApi : VkBotApi {
+    val responses = ArrayDeque<VkLongPollResponse>()
+    val cursors = mutableListOf<String>()
+    val sent = mutableListOf<Pair<Long, String>>()
+    var negotiations = 0
+    var failSend = false
+    var onPoll: (suspend () -> Unit)? = null
+    override suspend fun getGroupInfo(groupToken: String): VkGroup {
+        if (groupToken == "invalid") throw VkBotApiException(5)
+        return VkGroup(123, "Test group")
     }
-
-    fun failSendText(text: String) {
-        failedSendTexts += text
+    override suspend fun getUserInfo(groupToken: String, userId: Long) = VkUser(userId, "Test", "User")
+    override suspend fun getLongPollServer(groupToken: String, groupId: Long): VkLongPollServer {
+        negotiations++
+        return VkLongPollServer("key-$negotiations", "https://vk.test", "100")
     }
-
-    fun pauseNextPoll(): PausedVkPoll =
-        PausedVkPoll().also { pause -> check(nextPollPause.compareAndSet(null, pause)) }
-
-    override suspend fun getGroupInfo(groupToken: String): VkResponse<List<VkGroup>> =
-        if (groupToken.startsWith("bad")) {
-            VkResponse(error = VkApiError(errorCode = 100, errorMsg = "Invalid token"))
-        } else {
-            VkResponse(response = listOf(VkGroup(id = 555L, name = "Souz E2E")))
-        }
-
-    override suspend fun getLongPollServer(groupToken: String, groupId: Long): VkResponse<VkLongPollServer> =
-        VkResponse(response = VkLongPollServer(key = "key-1", server = "https://example.test/lp", ts = "1"))
-
-    override suspend fun getUserInfo(groupToken: String, userId: Long): VkResponse<List<VkUser>> =
-        VkResponse(response = listOf(VkUser(id = userId, firstName = "E2E", lastName = null)))
-
     override suspend fun pollLongPoll(server: String, key: String, ts: String, waitSeconds: Int): VkLongPollResponse {
-        requestedTs += ts
-        val pause = nextPollPause.getAndUpdate { null }
-        if (pause != null) {
-            pause.entered.complete(Unit)
-            pause.release.await()
-            return pause.response()
-        }
-        val offset = ts.toLongOrNull() ?: 1L
-        val matched = updates.filter { candidate -> (candidate.obj?.message?.id ?: 0L) >= offset }
-        val newTs = (matched.maxOfOrNull { it.obj?.message?.id ?: 0L }?.plus(1) ?: offset).toString()
-        return VkLongPollResponse(ts = newTs, updates = matched)
+        cursors += ts
+        onPoll?.also { onPoll = null }?.invoke()
+        return responses.removeFirstOrNull() ?: VkLongPollResponse(ts)
     }
-
     override suspend fun sendMessage(groupToken: String, peerId: Long, text: String) {
-        if (text in failedSendTexts) {
-            error("Simulated VK send failure.")
-        }
-        sentMessages += SentMessage(peerId, text)
+        if (failSend) { failSend = false; throw IOException("Failed send") }
+        sent += peerId to text
     }
-
-    override suspend fun setActivity(groupToken: String, peerId: Long, groupId: Long, type: String) {
-        typingActivity += peerId
-    }
-}
-
-private class PausedVkPoll {
-    val entered = CompletableDeferred<Unit>()
-    val release = CompletableDeferred<Unit>()
-
-    // Plain var, not an atomic: safe to publish this way because `respondWith` always runs
-    // (in the test body) before `release.complete(Unit)`, and `pollLongPoll` only reads
-    // `response()` after `release.await()` returns — `release`'s own completion already
-    // establishes that happens-before edge, so no separate JVM concurrency primitive is needed.
-    private var response = VkLongPollResponse(ts = "1", updates = emptyList())
-
-    fun respondWith(update: VkLongPollUpdate, newTs: String) {
-        response = VkLongPollResponse(ts = newTs, updates = listOf(update))
-    }
-
-    fun response(): VkLongPollResponse = response
+    override suspend fun setActivity(groupToken: String, peerId: Long, groupId: Long) = Unit
 }

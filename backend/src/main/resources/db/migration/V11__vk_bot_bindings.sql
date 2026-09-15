@@ -5,7 +5,7 @@ create table vk_bot_bindings (
   group_token_encrypted text not null,
   group_token_hash text not null,
   link_secret_hash text,
-  vk_group_id bigint not null,
+  vk_group_id bigint not null unique,
   vk_group_name text,
   last_ts text,
   enabled boolean not null default true,
@@ -14,6 +14,7 @@ create table vk_bot_bindings (
   vk_first_name text,
   vk_last_name text,
   linked_at timestamptz,
+  linked_message_id bigint,
   poller_owner text,
   poller_lease_until timestamptz,
   last_error text,
@@ -24,11 +25,8 @@ create table vk_bot_bindings (
   constraint vk_bot_bindings_group_token_hash_key unique (group_token_hash)
 );
 
-create index vk_bot_bindings_enabled_idx
-on vk_bot_bindings(enabled);
-
-create index vk_bot_bindings_user_chat_idx
-on vk_bot_bindings(user_id, chat_id);
+create index vk_bot_bindings_user_updated_idx
+on vk_bot_bindings(user_id, updated_at desc);
 
 create index vk_bot_bindings_enabled_lease_idx
 on vk_bot_bindings(enabled, poller_lease_until);

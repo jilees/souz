@@ -19,6 +19,7 @@ data class VkBotBinding(
     val vkFirstName: String?,
     val vkLastName: String?,
     val linkedAt: Instant?,
+    val linkedMessageId: Long?,
     val pollerOwner: String?,
     val pollerLeaseUntil: Instant?,
     val lastError: String?,
@@ -29,28 +30,6 @@ data class VkBotBinding(
     val linked: Boolean
         get() = vkUserId != null && vkPeerId != null
 
-    /**
-     * Enabled and fully linked — the single "is this a live, usable VK channel" check, shared by
-     * [VkChannelProvider][ru.souz.backend.channels.VkChannelProvider]'s own listing/sending and the
-     * ownership-claim check in `BackendDiModule` so the two can't silently disagree about which
-     * chats belong to VK.
-     */
     val active: Boolean
         get() = enabled && linked
-}
-
-sealed interface VkUserClaimResult {
-    data class Claimed(
-        val binding: VkBotBinding,
-    ) : VkUserClaimResult
-
-    data class AlreadyLinked(
-        val binding: VkBotBinding,
-    ) : VkUserClaimResult
-
-    data class InvalidSecret(
-        val binding: VkBotBinding,
-    ) : VkUserClaimResult
-
-    data object NotFound : VkUserClaimResult
 }

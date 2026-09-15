@@ -104,7 +104,6 @@ import ru.souz.backend.telegram.TelegramBotTokenCrypto
 import ru.souz.backend.telegram.TelegramStepNarrationSender
 import ru.souz.backend.vk.HttpVkBotApi
 import ru.souz.backend.vk.VkBotApi
-import ru.souz.backend.vk.VkBotBindingRepository
 import ru.souz.backend.vk.VkBotBindingService
 import ru.souz.backend.vk.VkBotPollingService
 import ru.souz.backend.vk.VkBotTokenCrypto
@@ -183,14 +182,17 @@ fun backendDiModule(
     bindSingleton<UserSettingsRepository> { PostgresUserSettingsRepository(instance()) }
     bindSingleton<UserProviderKeyRepository> { PostgresUserProviderKeyRepository(instance()) }
     bindSingleton<TelegramBotBindingRepository> { PostgresTelegramBotBindingRepository(instance()) }
-    bindSingleton<VkBotBindingRepository> { PostgresVkBotBindingRepository(instance()) }
+    bindSingleton { PostgresVkBotBindingRepository(instance()) }
     bindSingleton {
         // Each AuthorizationCodeOAuthClient and SkillOAuthGatewayImpl owns its own Ktor CIO
         // HttpClient (a selector-manager thread pool each); without closing them here they leak
         // past backend shutdown.
         BackendRuntimeResources(
             cancelAndJoinApplicationWork = { instance<BackendApplicationScope>().cancelAndJoin() },
-            closeProviderClients = { instance<ProviderHttpClients>().close() },
+            closeProviderClients = {
+                instance<ProviderHttpClients>().close()
+                (instanceOrNull<VkBotApi>() as? AutoCloseable)?.close()
+            },
             closeLocalRuntime = { instance<ru.souz.llms.local.LocalLlamaRuntime>().close() },
             closeSkillOAuthClients = {
                 skillOAuthConfig?.providers?.values.orEmpty().filterIsInstance<AutoCloseable>().forEach { it.close() }
@@ -441,7 +443,7 @@ fun backendDiModule(
     }
     bindSingleton {
         val telegramBindingRepository = instance<TelegramBotBindingRepository>()
-        val vkBindingRepository = instance<VkBotBindingRepository>()
+        val vkBindingRepository = instance<PostgresVkBotBindingRepository>()
         PublicClientChannelProvider(
             chatRepository = instance(),
             deliveryService = instance(),

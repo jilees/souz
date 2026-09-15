@@ -4,6 +4,7 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import org.slf4j.LoggerFactory
 import ru.souz.backend.agent.runtime.StepNarrationTelegramSender
+import ru.souz.backend.channels.channelTextChunks
 
 /**
  * Pushes an agent-loop narration line to the linked Telegram chat via a bare `sendMessage`,
@@ -28,7 +29,7 @@ class TelegramStepNarrationSender(
             logger.warn("Step narration: Telegram token decrypt failed for chat {}", chatId)
             return
         }
-        for (chunk in telegramTextChunks(text)) {
+        for (chunk in channelTextChunks(text)) {
             try {
                 telegramBotApi.sendMessage(token, telegramChatId, chunk)
             } catch (e: CancellationException) {

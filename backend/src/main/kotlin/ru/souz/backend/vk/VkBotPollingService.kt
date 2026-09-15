@@ -1,12 +1,9 @@
 package ru.souz.backend.vk
 
 import java.io.IOException
-import java.net.InetAddress
 import java.time.Clock
-import java.time.Duration
 import java.time.Instant
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -17,336 +14,204 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
-import ru.souz.backend.chat.service.SendMessageResult
+import ru.souz.backend.channels.channelTextChunks
 import ru.souz.backend.crypto.sha256Hex
 import ru.souz.backend.execution.model.AgentExecutionStatus
 import ru.souz.backend.execution.service.AgentExecutionService
 import ru.souz.backend.http.BackendV1Exception
 import ru.souz.backend.settings.service.UserSettingsOverrides
-import kotlin.time.Duration.Companion.milliseconds
-
-fun interface VkTurnExecutor {
-    suspend fun execute(
-        userId: String,
-        chatId: UUID,
-        content: String,
-        clientMessageId: String,
-        requestOverrides: UserSettingsOverrides,
-    ): SendMessageResult
-}
-
-private class AgentExecutionVkTurnExecutor(
-    private val executionService: AgentExecutionService,
-) : VkTurnExecutor {
-    override suspend fun execute(
-        userId: String,
-        chatId: UUID,
-        content: String,
-        clientMessageId: String,
-        requestOverrides: UserSettingsOverrides,
-    ): SendMessageResult =
-        executionService.executeChatTurnAndAwaitCompletion(
-            userId = userId,
-            chatId = chatId,
-            content = content,
-            clientMessageId = clientMessageId,
-            requestOverrides = requestOverrides,
-        )
-}
-
-private data class VkLongPollBatch(val newTs: String, val updates: List<VkLongPollUpdate>)
+import ru.souz.backend.storage.postgres.PostgresVkBotBindingRepository
 
 class VkBotPollingService(
-    private val repository: VkBotBindingRepository,
+    private val repository: PostgresVkBotBindingRepository,
     private val botApi: VkBotApi,
-    private val turnExecutor: VkTurnExecutor,
+    private val executionService: AgentExecutionService,
     private val tokenCrypto: VkBotTokenCrypto,
     private val scope: CoroutineScope,
     private val clock: Clock = Clock.systemUTC(),
-    private val instanceId: String = defaultInstanceId(),
-    private val pollLoopDelayMs: Long = POLL_LOOP_DELAY_MS,
-    private val leaseTtlSeconds: Long = LEASE_TTL_SECONDS,
-    maxConcurrency: Int = DEFAULT_MAX_CONCURRENCY,
-    private val maxIncomingTextLength: Int = MAX_INCOMING_TEXT_LENGTH,
+    private val pollLoopDelayMs: Long = 1_000,
+    private val leaseTtlSeconds: Long = 45,
+    maxConcurrency: Int = 4,
 ) {
-    private val logger = LoggerFactory.getLogger(VkBotPollingService::class.java)
+    private val logger = LoggerFactory.getLogger(javaClass)
+    private val owner = UUID.randomUUID().toString()
     private val semaphore = Semaphore(maxConcurrency)
+    private val pollMutex = Mutex()
+    private val sessions = mutableMapOf<UUID, PollSession>()
     private var pollingJob: Job? = null
-    private val lastAlreadyBoundReplyAt = ConcurrentHashMap<UUID, Instant>()
 
-    // In-memory only — never persisted, and intentionally not part of VkBotBinding. Caches the
-    // server/key pair across poll ticks for a binding so a healthy poll loop only calls
-    // groups.getLongPollServer once (not once per tick); a stale/invalid cached key self-heals
-    // via the ordinary failed=2/3 handling in fetchLongPollBatch, which refreshes and re-caches it.
-    private val longPollSessions = ConcurrentHashMap<UUID, VkLongPollServer>()
-
-    constructor(
-        repository: VkBotBindingRepository,
-        botApi: VkBotApi,
-        executionService: AgentExecutionService,
-        tokenCrypto: VkBotTokenCrypto,
-        scope: CoroutineScope,
-        clock: Clock = Clock.systemUTC(),
-        instanceId: String = defaultInstanceId(),
-        pollLoopDelayMs: Long = POLL_LOOP_DELAY_MS,
-        leaseTtlSeconds: Long = LEASE_TTL_SECONDS,
-        maxConcurrency: Int = DEFAULT_MAX_CONCURRENCY,
-        maxIncomingTextLength: Int = MAX_INCOMING_TEXT_LENGTH,
-    ) : this(
-        repository = repository,
-        botApi = botApi,
-        turnExecutor = AgentExecutionVkTurnExecutor(executionService),
-        tokenCrypto = tokenCrypto,
-        scope = scope,
-        clock = clock,
-        instanceId = instanceId,
-        pollLoopDelayMs = pollLoopDelayMs,
-        leaseTtlSeconds = leaseTtlSeconds,
-        maxConcurrency = maxConcurrency,
-        maxIncomingTextLength = maxIncomingTextLength,
-    )
+    // Map membership is coordinated by pollMutex; each child owns one session per round.
+    private class PollSession {
+        var server: VkLongPollServer? = null
+        var lastRejectionAt: Instant = Instant.MIN
+    }
 
     fun start() {
-        if (pollingJob?.isActive == true) {
-            return
-        }
+        if (pollingJob?.isActive == true) return
         pollingJob = scope.launch {
             while (isActive) {
                 try {
                     pollEnabledOnce()
                 } catch (e: CancellationException) {
                     throw e
-                } catch (e: Exception) {
-                    logger.warn("VK polling loop iteration failed: {}", e.message)
+                } catch (_: Exception) {
+                    logger.warn("VK polling iteration failed.")
                 }
-                delay(pollLoopDelayMs.milliseconds)
+                delay(pollLoopDelayMs)
             }
         }
     }
 
-    internal suspend fun pollEnabledOnce() {
+    internal suspend fun pollEnabledOnce() = pollMutex.withLock {
         val bindings = repository.listEnabled()
-        longPollSessions.keys.retainAll(bindings.mapTo(HashSet()) { it.id })
+        sessions.keys.retainAll(bindings.map { it.id }.toSet())
+        val rounds = bindings.map { it to sessions.getOrPut(it.id) { PollSession() } }
         supervisorScope {
-            bindings.forEach { binding ->
+            rounds.forEach { (binding, session) ->
                 launch {
-                    semaphore.withPermit {
-                        pollBinding(binding)
+                    try {
+                        semaphore.withPermit { pollBinding(binding, session) }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        logger.warn("VK polling failed for binding {}", binding.id)
                     }
                 }
             }
         }
     }
 
-    private suspend fun pollBinding(binding: VkBotBinding) = coroutineScope {
-        val bindingScope = this
+    private suspend fun pollBinding(binding: VkBotBinding, session: PollSession) = coroutineScope {
         val now = clock.instant()
-        val leasedBinding = repository.tryAcquireLease(
-            id = binding.id,
-            owner = instanceId,
-            leaseUntil = now.plusSeconds(leaseTtlSeconds),
-            now = now,
-        ) ?: return@coroutineScope
-        val leaseHeartbeat = launch {
-            val renewIntervalMs = leaseRenewIntervalMs(leaseTtlSeconds)
+        var current = repository.tryAcquireLease(binding.id, owner, now.plusSeconds(leaseTtlSeconds), now)
+            ?: return@coroutineScope
+        val bindingScope = this
+        val heartbeat = launch {
             while (isActive) {
-                delay(renewIntervalMs.milliseconds)
-                repository.tryAcquireLease(
-                    id = leasedBinding.id,
-                    owner = instanceId,
-                    leaseUntil = clock.instant().plusSeconds(leaseTtlSeconds),
-                    now = clock.instant(),
-                ) ?: run {
-                    bindingScope.cancel(CancellationException("Lost VK lease for binding ${leasedBinding.id}."))
-                    return@launch
+                delay((leaseTtlSeconds * 1_000 / 3).coerceAtLeast(100))
+                val tick = clock.instant()
+                if (!repository.renewLease(binding.id, owner, tick.plusSeconds(leaseTtlSeconds), tick)) {
+                    bindingScope.cancel("Lost VK binding lease.")
                 }
             }
         }
-
         try {
             val token = try {
-                tokenCrypto.decrypt(leasedBinding.groupTokenEncrypted)
-            } catch (e: CancellationException) {
-                throw e
+                tokenCrypto.decrypt(current.groupTokenEncrypted)
             } catch (_: Exception) {
-                repository.markError(leasedBinding.id, VK_TOKEN_DECRYPT_ERROR)
-                logger.warn("VK token decrypt failed for binding {}", leasedBinding.id)
+                repository.markError(current.id, owner, "vk_token_decrypt_error", clock.instant())
                 return@coroutineScope
             }
-
-            val batch = try {
-                fetchLongPollBatch(leasedBinding.id, token, leasedBinding.vkGroupId, leasedBinding.lastTs)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: VkBotApiHttpException) {
-                handleApiError(leasedBinding, e.vkError)
-                return@coroutineScope
-            } catch (_: VkBotApiTransportException) {
-                repository.markError(leasedBinding.id, VK_NETWORK_ERROR)
-                logger.warn("VK long polling transport failure for binding {}", leasedBinding.id)
-                return@coroutineScope
-            } catch (_: IOException) {
-                repository.markError(leasedBinding.id, VK_NETWORK_ERROR)
-                logger.warn("VK long polling IO failure for binding {}", leasedBinding.id)
-                return@coroutineScope
-            } catch (_: Exception) {
-                repository.markError(leasedBinding.id, VK_UNKNOWN_ERROR)
-                logger.warn("VK long polling unexpected failure for binding {}", leasedBinding.id)
-                return@coroutineScope
-            }
-
-            if (!repository.hasActiveLease(leasedBinding.id, instanceId, clock.instant())) {
-                return@coroutineScope
-            }
-            repository.clearError(leasedBinding.id)
-            var currentBinding = leasedBinding
+            val batch = fetchBatch(current, token, session)
             for (update in batch.updates) {
-                if (!repository.hasActiveLease(currentBinding.id, instanceId, clock.instant())) {
-                    return@coroutineScope
-                }
-                currentBinding = handleUpdate(currentBinding, token, update)
+                if (!owns(current.id)) return@coroutineScope
+                current = handleUpdate(current, token, update, session)
             }
-            if (repository.hasActiveLease(currentBinding.id, instanceId, clock.instant())) {
-                repository.updateLastTs(
-                    id = currentBinding.id,
-                    lastTs = batch.newTs,
-                    owner = instanceId,
-                )
+            repository.updateLastTs(current.id, owner, requireNotNull(batch.ts), clock.instant())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val code = (e as? VkBotApiException)?.code
+            val error = when {
+                code == 5 || code == 15 -> "vk_unauthorized"
+                code in listOf(6, 9, 29) -> "vk_rate_limited"
+                code == 10 || e is IOException -> "vk_network_error"
+                else -> "vk_unknown_error"
             }
+            repository.markError(binding.id, owner, error, clock.instant(), disable = code == 5 || code == 15)
+            if (error == "vk_rate_limited") delay(5_000)
         } finally {
-            leaseHeartbeat.cancelAndJoin()
+            heartbeat.cancelAndJoin()
         }
     }
 
-    /**
-     * One Long Poll round for [groupId]: reuses the cached session for [bindingId] if this
-     * instance already has one (avoiding a `groups.getLongPollServer` call on every healthy poll
-     * tick), or negotiates a fresh one. Resumes from [lastTs] when present. Retries in-place per
-     * VK's `failed` codes — `1` resumes with the server-returned `ts`, `2` refreshes only the key,
-     * `3` resets the whole session — up to [MAX_LONGPOLL_ATTEMPTS] before giving up for this poll
-     * tick; a stale cached key self-heals via the `2`/`3` paths, which re-cache the fresh session.
-     */
-    private suspend fun fetchLongPollBatch(bindingId: UUID, token: String, groupId: Long, lastTs: String?): VkLongPollBatch {
-        var session = longPollSessions[bindingId]
-            ?: negotiateSession(token, groupId).also { longPollSessions[bindingId] = it }
-        var ts = lastTs ?: session.ts
-        var attempts = 0
-        while (attempts < MAX_LONGPOLL_ATTEMPTS) {
-            attempts++
-            val response = botApi.pollLongPoll(session.server, session.key, ts, waitSeconds = LONGPOLL_WAIT_SECONDS)
+    private suspend fun fetchBatch(binding: VkBotBinding, token: String, session: PollSession): VkLongPollResponse {
+        var server = session.server ?: botApi.getLongPollServer(token, binding.vkGroupId).also { session.server = it }
+        var ts = binding.lastTs ?: server.ts
+        // Persist the initial cursor before processing so a failed first batch can be replayed.
+        if (binding.lastTs == null) repository.updateLastTs(binding.id, owner, ts, clock.instant())
+        repeat(3) { attempt ->
+            val response = botApi.pollLongPoll(server.server, server.key, ts)
             when (response.failed) {
-                null -> return VkLongPollBatch(newTs = response.ts ?: ts, updates = response.updates)
-                1 -> ts = response.ts ?: ts
-                2 -> {
-                    session = negotiateSession(token, groupId).let { fresh -> session.copy(server = fresh.server, key = fresh.key) }
-                    longPollSessions[bindingId] = session
+                null -> return response.copy(ts = response.ts ?: ts)
+                1 -> ts = response.ts ?: throw IOException("Missing VK Long Poll timestamp.")
+                2, 3 -> {
+                    server = botApi.getLongPollServer(token, binding.vkGroupId)
+                    session.server = server
+                    if (response.failed == 3) ts = server.ts
                 }
-                3 -> {
-                    session = negotiateSession(token, groupId)
-                    ts = session.ts
-                    longPollSessions[bindingId] = session
-                }
-                else -> throw VkBotApiException("Unknown VK Long Poll failed code: ${response.failed}")
+                else -> throw IOException("Unsupported VK Long Poll failure.")
             }
-            // A short pause between retries so a VK-side blip returning failed=1/2/3 repeatedly
-            // doesn't fire up to MAX_LONGPOLL_ATTEMPTS requests back-to-back with no backoff.
-            if (attempts < MAX_LONGPOLL_ATTEMPTS) {
-                delay(LONGPOLL_RETRY_DELAY_MS.milliseconds)
-            }
+            if (attempt < 2) delay(500)
         }
-        throw VkBotApiException("VK Long Poll session could not be established after $attempts attempt(s).")
-    }
-
-    private suspend fun negotiateSession(token: String, groupId: Long): VkLongPollServer {
-        val response = botApi.getLongPollServer(token, groupId)
-        val server = response.response
-        if (response.error != null || server == null) {
-            throw VkBotApiHttpException(
-                methodName = "groups.getLongPollServer",
-                vkError = response.error ?: VkApiError(errorMsg = "Empty VK Long Poll server response."),
-            )
-        }
-        return server
+        throw IOException("VK Long Poll retry limit reached.")
     }
 
     private suspend fun handleUpdate(
         binding: VkBotBinding,
         token: String,
         update: VkLongPollUpdate,
+        session: PollSession,
     ): VkBotBinding {
-        if (update.type != MESSAGE_NEW_EVENT) {
+        val message = update.obj?.message ?: return binding
+        if (update.type != "message_new" || message.out != 0 || message.fromId <= 0 || message.peerId != message.fromId) {
             return binding
         }
-        val message = update.obj?.message ?: return binding
-        val isDirect = message.peerId == message.fromId
         val text = message.text?.trim().orEmpty()
-
+        if (text.isEmpty()) return binding
         if (!binding.linked) {
-            if (!isDirect || text.isBlank()) {
+            val secretHash = sha256Hex(text)
+            if (binding.linkSecretHash != secretHash) {
+                reply(binding, token, message.peerId, "Чтобы привязать этот чат, отправь секрет, который показал Souz.")
                 return binding
             }
-            val profile = fetchUserProfile(token, message.fromId)
-            return when (
-                val claim = repository.claimVkUser(
-                    id = binding.id,
-                    linkSecretHash = sha256Hex(text),
-                    vkUserId = message.fromId,
-                    vkPeerId = message.peerId,
-                    vkFirstName = profile?.firstName,
-                    vkLastName = profile?.lastName,
-                    linkedAt = clock.instant(),
-                )
-            ) {
-                is VkUserClaimResult.Claimed -> {
-                    sendReplySafely(binding.id, token, message.peerId, LINKED_REPLY)
-                    claim.binding
-                }
-
-                is VkUserClaimResult.InvalidSecret -> {
-                    sendReplySafely(binding.id, token, message.peerId, PENDING_LINK_REPLY)
-                    claim.binding
-                }
-
-                is VkUserClaimResult.AlreadyLinked -> {
-                    val sameSender = message.fromId == claim.binding.vkUserId &&
-                        message.peerId == claim.binding.vkPeerId
-                    if (!sameSender) {
-                        sendAlreadyBoundReplyThrottled(binding.id, token, message.peerId)
-                    }
-                    claim.binding
-                }
-
-                VkUserClaimResult.NotFound -> binding
+            val profile = try {
+                botApi.getUserInfo(token, message.fromId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
             }
+            val linked = repository.claimVkUser(
+                binding.id, owner, secretHash, message.id, message.fromId, message.peerId,
+                profile?.firstName, profile?.lastName, clock.instant(),
+            ) ?: return binding
+            reply(linked, token, message.peerId, "Готово, этот VK-аккаунт привязан к чату Souz.")
+            return linked
         }
-
-        val senderMatches = isDirect &&
-            message.fromId == binding.vkUserId &&
-            message.peerId == binding.vkPeerId
-        if (!senderMatches) {
-            if (isDirect) {
-                sendAlreadyBoundReplyThrottled(binding.id, token, message.peerId)
+        if (message.fromId != binding.vkUserId || message.peerId != binding.vkPeerId) {
+            if (clock.instant().isAfter(session.lastRejectionAt.plusSeconds(60))) {
+                reply(binding, token, message.peerId, "Этот бот уже привязан к другому VK-аккаунту.")
+                session.lastRejectionAt = clock.instant()
             }
             return binding
         }
-
-        if (text.isBlank()) {
+        if (message.id <= (binding.linkedMessageId ?: 0L)) return binding
+        if (text.length > 8_000) {
+            reply(binding, token, message.peerId, "Сообщение слишком длинное.")
             return binding
         }
-        if (text.length > maxIncomingTextLength) {
-            sendReplySafely(binding.id, token, message.peerId, TOO_LONG_REPLY)
-            return binding
-        }
-
-        try {
+        val responseText = try {
             val result = coroutineScope {
-                val typingJob = launch { repeatTypingIndicator(binding.id, token, message.peerId, binding.vkGroupId) }
+                val typing = launch {
+                    while (isActive && owns(binding.id)) {
+                        try {
+                            botApi.setActivity(token, message.peerId, binding.vkGroupId)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            // Typing is best effort; it must not cancel the turn.
+                        }
+                        delay(4_000)
+                    }
+                }
                 try {
-                    turnExecutor.execute(
+                    executionService.executeChatTurnAndAwaitCompletion(
                         userId = binding.userId,
                         chatId = binding.chatId,
                         content = text,
@@ -354,188 +219,38 @@ class VkBotPollingService(
                         requestOverrides = UserSettingsOverrides(streamingMessages = false),
                     )
                 } finally {
-                    typingJob.cancelAndJoin()
+                    typing.cancelAndJoin()
                 }
             }
-            sendAssistantReply(binding.id, token, message.peerId, result)
+            result.assistantMessage?.content ?: when (result.execution.status) {
+                AgentExecutionStatus.COMPLETED -> "Готово."
+                AgentExecutionStatus.RUNNING -> ACTIVE_EXECUTION_REPLY
+                else -> FAILURE_REPLY
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: BackendV1Exception) {
-            if (e.code == "chat_already_has_active_execution") {
-                sendReplySafely(binding.id, token, message.peerId, ACTIVE_EXECUTION_REPLY)
-            } else {
-                logger.warn("VK turn execution failed with v1 code {} for binding {}", e.code, binding.id)
-                sendReplySafely(binding.id, token, message.peerId, GENERIC_FAILURE_REPLY)
-            }
+            if (e.code == "chat_already_has_active_execution") ACTIVE_EXECUTION_REPLY else FAILURE_REPLY
         } catch (_: Exception) {
-            logger.warn("VK turn execution failed for binding {}", binding.id)
-            sendReplySafely(binding.id, token, message.peerId, GENERIC_FAILURE_REPLY)
+            logger.warn("VK turn failed for binding {}", binding.id)
+            FAILURE_REPLY
+        }
+        for (chunk in channelTextChunks(responseText.ifBlank { "Готово." })) {
+            reply(binding, token, message.peerId, chunk)
         }
         return binding
     }
 
-    private suspend fun fetchUserProfile(token: String, userId: Long): VkUser? =
-        try {
-            botApi.getUserInfo(token, userId).response?.firstOrNull()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            null
-        }
+    private suspend fun owns(id: UUID): Boolean = repository.hasActiveLease(id, owner, clock.instant())
 
-    private suspend fun sendAssistantReply(
-        bindingId: UUID,
-        token: String,
-        peerId: Long,
-        result: SendMessageResult,
-    ) {
-        val responseText = when {
-            result.assistantMessage != null -> result.assistantMessage.content
-            result.execution.status == AgentExecutionStatus.COMPLETED -> FALLBACK_ASSISTANT_REPLY
-            result.execution.status == AgentExecutionStatus.RUNNING -> {
-                sendReplySafely(bindingId, token, peerId, ACTIVE_EXECUTION_REPLY)
-                return
-            }
-            else -> {
-                sendReplySafely(bindingId, token, peerId, GENERIC_FAILURE_REPLY)
-                return
-            }
-        }
-        val chunks = vkTextChunks(
-            text = responseText.ifBlank { FALLBACK_ASSISTANT_REPLY },
-            maxLength = VK_TEXT_LIMIT,
-        )
-        chunks.forEach { chunk ->
-            sendReplySafely(bindingId, token, peerId, chunk)
-        }
-    }
-
-    private suspend fun handleApiError(
-        binding: VkBotBinding,
-        error: VkApiError,
-    ) {
-        when (error.errorCode) {
-            // Both codes mean this token can never succeed on its own — an invalid/revoked token
-            // (5) or one missing a required scope (15, e.g. before Long Poll access was granted).
-            // Retrying without human intervention would just hammer VK forever, so disable.
-            VK_ERROR_UNAUTHORIZED, VK_ERROR_ACCESS_DENIED ->
-                repository.markError(binding.id, VK_UNAUTHORIZED, disable = true)
-            VK_ERROR_TOO_MANY_REQUESTS, VK_ERROR_FLOOD_CONTROL, VK_ERROR_RATE_LIMIT_REACHED -> {
-                repository.markError(binding.id, VK_RATE_LIMITED)
-                // VK's rate-limit errors carry no retry_after; back off a fixed amount so this
-                // binding doesn't immediately retry on the next ~1s poll tick and compound the
-                // flood-control penalty it just hit.
-                delay(RATE_LIMIT_BACKOFF_MS.milliseconds)
-            }
-            VK_ERROR_INTERNAL -> repository.markError(binding.id, VK_NETWORK_ERROR)
-            else -> repository.markError(binding.id, VK_UNKNOWN_ERROR)
-        }
-    }
-
-    /**
-     * Sends the "typing" activity immediately, then repeats it every [TYPING_REPEAT_INTERVAL_MS]
-     * — shorter than VK's own few-second expiry — so the indicator stays up continuously while the
-     * agent turn is running. Launched concurrently with the turn (never awaited) so this
-     * best-effort UI signal cannot delay starting the turn itself. [TYPING_MAX_DURATION_MS] is a
-     * safety net in case the caller never cancels this job.
-     */
-    private suspend fun repeatTypingIndicator(bindingId: UUID, token: String, peerId: Long, groupId: Long) {
-        withTimeoutOrNull(TYPING_MAX_DURATION_MS.milliseconds) {
-            while (isActive) {
-                setActivitySafely(bindingId, token, peerId, groupId)
-                delay(TYPING_REPEAT_INTERVAL_MS.milliseconds)
-            }
-        }
-    }
-
-    private suspend fun setActivitySafely(bindingId: UUID, token: String, peerId: Long, groupId: Long) {
-        if (!repository.hasActiveLease(bindingId, instanceId, clock.instant())) {
-            return
-        }
-        try {
-            botApi.setActivity(groupToken = token, peerId = peerId, groupId = groupId, type = "typing")
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            logger.warn("VK typing indicator send failed for peer {}", peerId)
-        }
-    }
-
-    /**
-     * Foreign/wrong-account traffic on an already-linked or already-claimed binding gets this
-     * reply once per [ALREADY_BOUND_REPLY_COOLDOWN_MS] window instead of once per message — an
-     * unbound-rate reply to repeated foreign messages would itself risk tripping VK's own
-     * flood-control on the community's token.
-     */
-    private suspend fun sendAlreadyBoundReplyThrottled(bindingId: UUID, token: String, peerId: Long) {
-        val now = clock.instant()
-        val last = lastAlreadyBoundReplyAt[bindingId]
-        if (last != null && Duration.between(last, now).toMillis() < ALREADY_BOUND_REPLY_COOLDOWN_MS) {
-            return
-        }
-        lastAlreadyBoundReplyAt[bindingId] = now
-        sendReplySafely(bindingId, token, peerId, ALREADY_BOUND_REPLY)
-    }
-
-    private suspend fun sendReplySafely(
-        bindingId: UUID,
-        token: String,
-        peerId: Long,
-        text: String,
-    ) {
-        if (!repository.hasActiveLease(bindingId, instanceId, clock.instant())) {
-            return
-        }
-        try {
-            botApi.sendMessage(groupToken = token, peerId = peerId, text = text)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            logger.warn("VK reply send failed for peer {}", peerId)
-        }
+    private suspend fun reply(binding: VkBotBinding, token: String, peerId: Long, text: String) {
+        if (!owns(binding.id)) throw CancellationException("Lost VK binding lease.")
+        // Delivery errors leave the batch cursor unchanged for retry.
+        botApi.sendMessage(token, peerId, text)
     }
 
     private companion object {
-        const val LONGPOLL_WAIT_SECONDS: Int = 25
-        const val MAX_LONGPOLL_ATTEMPTS: Int = 3
-        const val POLL_LOOP_DELAY_MS: Long = 1_000L
-        const val LEASE_TTL_SECONDS: Long = 45L
-        const val TYPING_REPEAT_INTERVAL_MS: Long = 4_000L
-        const val TYPING_MAX_DURATION_MS: Long = 5 * 60 * 1_000L
-        const val DEFAULT_MAX_CONCURRENCY: Int = 4
-        const val MAX_INCOMING_TEXT_LENGTH: Int = 8_000
-        const val MESSAGE_NEW_EVENT: String = "message_new"
-        const val LONGPOLL_RETRY_DELAY_MS: Long = 500L
-        const val RATE_LIMIT_BACKOFF_MS: Long = 5_000L
-        const val ALREADY_BOUND_REPLY_COOLDOWN_MS: Long = 60_000L
-
-        const val VK_ERROR_UNAUTHORIZED: Int = 5
-        const val VK_ERROR_TOO_MANY_REQUESTS: Int = 6
-        const val VK_ERROR_INTERNAL: Int = 10
-        const val VK_ERROR_FLOOD_CONTROL: Int = 9
-        const val VK_ERROR_ACCESS_DENIED: Int = 15
-        const val VK_ERROR_RATE_LIMIT_REACHED: Int = 29
-
-        const val LINKED_REPLY: String = "Готово, этот VK-аккаунт привязан к чату Souz."
-        const val FALLBACK_ASSISTANT_REPLY: String = "Готово."
-        const val ACTIVE_EXECUTION_REPLY: String = "В этом чате уже выполняется задача. Попробуй позже."
-        const val GENERIC_FAILURE_REPLY: String = "Не удалось выполнить команду."
-        const val ALREADY_BOUND_REPLY: String = "Этот бот уже привязан к другому VK-аккаунту."
-        const val PENDING_LINK_REPLY: String = "Чтобы привязать этот чат, отправь секрет, который показал Souz."
-        const val TOO_LONG_REPLY: String = "Сообщение слишком длинное."
-
-        const val VK_UNAUTHORIZED: String = "vk_unauthorized"
-        const val VK_RATE_LIMITED: String = "vk_rate_limited"
-        const val VK_NETWORK_ERROR: String = "vk_network_error"
-        const val VK_UNKNOWN_ERROR: String = "vk_unknown_error"
-        const val VK_TOKEN_DECRYPT_ERROR: String = "vk_token_decrypt_error"
-
-        fun leaseRenewIntervalMs(leaseTtlSeconds: Long): Long =
-            (leaseTtlSeconds * 1_000L / 3L).coerceAtLeast(1_000L)
-
-        fun defaultInstanceId(): String {
-            val host = runCatching { InetAddress.getLocalHost().hostName }.getOrDefault("unknown-host")
-            return "$host:${UUID.randomUUID()}"
-        }
+        const val ACTIVE_EXECUTION_REPLY = "В этом чате уже выполняется задача. Попробуй позже."
+        const val FAILURE_REPLY = "Не удалось выполнить команду."
     }
 }

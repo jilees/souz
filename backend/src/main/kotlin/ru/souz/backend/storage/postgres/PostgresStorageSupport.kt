@@ -246,6 +246,7 @@ internal fun ResultSet.toVkBotBinding(): VkBotBinding =
         vkFirstName = getString("vk_first_name"),
         vkLastName = getString("vk_last_name"),
         linkedAt = getObject("linked_at", OffsetDateTime::class.java)?.toInstant(),
+        linkedMessageId = getObject("linked_message_id", java.lang.Long::class.java)?.toLong(),
         pollerOwner = getString("poller_owner"),
         pollerLeaseUntil = getObject("poller_lease_until", OffsetDateTime::class.java)?.toInstant(),
         lastError = getString("last_error"),

@@ -4,6 +4,8 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import org.slf4j.LoggerFactory
 import ru.souz.backend.agent.runtime.StepNarrationVkSender
+import ru.souz.backend.channels.channelTextChunks
+import ru.souz.backend.storage.postgres.PostgresVkBotBindingRepository
 
 /**
  * Pushes an agent-loop narration line to the linked VK chat via a bare `sendMessage`, without the
@@ -11,7 +13,7 @@ import ru.souz.backend.agent.runtime.StepNarrationVkSender
  * [ru.souz.backend.channels.VkChannelProvider] applies — step narration is transient.
  */
 class VkStepNarrationSender(
-    private val bindingRepository: VkBotBindingRepository,
+    private val bindingRepository: PostgresVkBotBindingRepository,
     private val vkBotApi: VkBotApi,
     private val tokenCrypto: VkBotTokenCrypto,
 ) : StepNarrationVkSender {
@@ -28,7 +30,7 @@ class VkStepNarrationSender(
             logger.warn("Step narration: VK token decrypt failed for chat {}", chatId)
             return
         }
-        for (chunk in vkTextChunks(text)) {
+        for (chunk in channelTextChunks(text)) {
             try {
                 vkBotApi.sendMessage(token, peerId, chunk)
             } catch (e: CancellationException) {

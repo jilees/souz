@@ -304,6 +304,8 @@ internal class BackendE2eBackend(
     fun <T> sql(block: (Connection) -> T): T =
         dataSource.connection.use(block)
 
+    suspend fun pollVkOnce() = di.direct.instance<VkBotPollingService>().pollEnabledOnce()
+
     fun createPeer(llm: E2eLlmApi = E2eLlmApi()): BackendE2eBackend =
         BackendE2eBackend(
             schema = schema,
