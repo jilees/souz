@@ -40,6 +40,10 @@ import ru.souz.backend.app.BackendRuntimeResources
 import ru.souz.backend.app.backendDiModule
 import ru.souz.backend.client.ClientThreadRecoveryService
 import ru.souz.backend.config.BackendFeatureFlags
+import ru.souz.backend.config.BackendConfigSource
+import ru.souz.backend.settings.service.BackendSettingsProvider
+import ru.souz.db.SettingsProvider
+import ru.souz.llms.http.ProviderHttpClients
 import ru.souz.backend.http.BackendHttpDependencies
 import ru.souz.backend.http.BackendHttpRoutes
 import ru.souz.backend.http.BackendOpenApiSecurity
@@ -108,6 +112,8 @@ internal fun backendE2eTest(
     vkApi: VkBotApi? = null,
     turnRunnerOverride: BackendConversationTurnRunner? = null,
     startBackgroundServices: Boolean = false,
+    settingsSource: BackendConfigSource? = null,
+    providerClients: ProviderHttpClients? = null,
     block: suspend BackendE2eScope.() -> Unit,
 ) = testApplication {
     val backend = BackendE2eBackend(
@@ -118,6 +124,8 @@ internal fun backendE2eTest(
         vkApi = vkApi,
         turnRunnerOverride = turnRunnerOverride,
         startBackgroundServices = startBackgroundServices,
+        settingsSource = settingsSource,
+        providerClients = providerClients,
     )
     application {
         backendApplication(backend.dependencies)
@@ -151,8 +159,14 @@ internal class BackendE2eScope(
         json.readTree((session.incoming.receive() as Frame.Text).readText())
 
     suspend fun <T> withPublicSocket(chatId: String, block: suspend (DefaultClientWebSocketSession) -> T): T =
+        withSocket("${BackendHttpRoutes.chatWebSocket(chatId)}?clientType=backend", block)
+
+    suspend fun <T> withMultiChatSocket(block: suspend (DefaultClientWebSocketSession) -> T): T =
+        withSocket("${BackendHttpRoutes.WS}?clientType=backend", block)
+
+    private suspend fun <T> withSocket(url: String, block: suspend (DefaultClientWebSocketSession) -> T): T =
         webSocketClient().use { client ->
-            val session = client.webSocketSession("${BackendHttpRoutes.chatWebSocket(chatId)}?clientType=backend")
+            val session = client.webSocketSession(url)
             try {
                 block(session)
             } finally {
@@ -222,6 +236,8 @@ internal class BackendE2eBackend(
     vkApi: VkBotApi?,
     turnRunnerOverride: BackendConversationTurnRunner?,
     startBackgroundServices: Boolean,
+    private val settingsSource: BackendConfigSource? = null,
+    private val providerClients: ProviderHttpClients? = null,
 ) : AutoCloseable {
     private val appConfig: BackendAppConfig = postgresAppConfig(
         schema = schema,
@@ -245,6 +261,14 @@ internal class BackendE2eBackend(
         bindSingleton<LocalProviderAvailability>(overrides = true) { localAvailability }
         bindSingleton<LocalLlamaRuntime>(overrides = true) { localRuntime }
         bindSingleton<LocalChatAPI>(overrides = true) { localChatApi }
+        if (settingsSource != null) {
+            bindSingleton<SettingsProvider>(overrides = true) {
+                BackendSettingsProvider(instance(), localAvailability, settingsSource)
+            }
+        }
+        if (providerClients != null) {
+            bindSingleton<ProviderHttpClients>(overrides = true) { providerClients }
+        }
         if (telegramApi != null) {
             bindSingleton<TelegramBotApi>(overrides = true) { telegramApi }
         }

@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.slf4j.MDC
 import ru.souz.llms.LLMChatAPI
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.LLMRequest
@@ -23,8 +24,11 @@ import ru.souz.llms.local.LocalLlamaRuntime
 import ru.souz.llms.local.LocalProviderAvailability
 import ru.souz.llms.local.LocalProviderStatus
 
-internal class E2eLlmApi : LLMChatAPI {
+internal class E2eLlmApi(
+    private val response: (suspend (LLMRequest.Chat) -> LLMResponse.Chat)? = null,
+) : LLMChatAPI {
     val requests = CopyOnWriteArrayList<LLMRequest.Chat>()
+    val requestLogContexts = CopyOnWriteArrayList<Map<String, String>>()
     val streamedChunks = CopyOnWriteArrayList<String>()
     private val gates = LinkedHashMap<String, CompletableDeferred<Unit>>()
     private val mutex = Mutex()
@@ -91,6 +95,7 @@ internal class E2eLlmApi : LLMChatAPI {
     }
 
     override suspend fun message(body: LLMRequest.Chat): LLMResponse.Chat {
+        requestLogContexts += MDC.getCopyOfContextMap().orEmpty()
         requests += body
         val prompt = body.conversationPrompt()
         signal(prompt).complete(Unit)
@@ -104,17 +109,27 @@ internal class E2eLlmApi : LLMChatAPI {
         }
         releaseGate?.await()
         promptReleaseGates[prompt]?.await()
-        return (promptSkills[prompt] ?: skill)?.let { scriptedSkillReply(body, it) }
+        return response?.invoke(body)
+            ?: (promptSkills[prompt] ?: skill)?.let { scriptedSkillReply(body, it) }
             ?: reply(body, "assistant reply to $prompt")
     }
 
     override suspend fun messageStream(body: LLMRequest.Chat): Flow<LLMResponse.Chat> = flow {
+        requestLogContexts += MDC.getCopyOfContextMap().orEmpty()
         requests += body
         val prompt = body.conversationPrompt()
         signal(prompt).complete(Unit)
         failMessage?.let { error(it) }
         releaseGate?.await()
         promptReleaseGates[prompt]?.await()
+        response?.let {
+            val reply = it(body)
+            if (reply is LLMResponse.Chat.Ok) {
+                streamedChunks += reply.choices.map { choice -> choice.message.content }.filter(String::isNotEmpty)
+            }
+            emit(reply)
+            return@flow
+        }
         (promptSkills[prompt] ?: skill)?.let {
             emit(scriptedSkillReply(body, it))
             return@flow
@@ -183,7 +198,7 @@ private fun scriptedSkillReply(
     }
 }
 
-private fun toolCallReply(
+internal fun toolCallReply(
     body: LLMRequest.Chat,
     name: String,
     arguments: Map<String, Any>,

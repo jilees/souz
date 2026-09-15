@@ -432,7 +432,7 @@ internal fun AgentEventEnvelope.toPublicDto(): PublicClientEventDto =
             AgentEventType.ASSISTANT_STEP -> executionId?.toString()
             else -> requireNotNull(executionId).toString()
         },
-        payload = payload.toTransportPayload(type),
+        payload = payload.toTransportPayload(type) - "target",
         createdAt = createdAt.toString(),
     )
 
