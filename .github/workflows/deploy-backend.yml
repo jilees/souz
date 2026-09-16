@@ -51,6 +51,12 @@ jobs:
       # image build context, so ship sharedLogic/Dockerfile + sharedLogic/docker/
       # and (re)build on the box. Docker layer cache makes this a near-no-op when
       # nothing in the context changed.
+      #
+      # docker/skills/** is protected from --delete: default skills are also
+      # hand-placed directly on the VPS (outside git) so every new user's
+      # sandbox seeds them without a repo change. A plain --delete rsync would
+      # wipe those on the next deploy; the protect filter keeps git-tracked
+      # skills syncing normally while leaving VPS-only ones alone.
       - name: Build runtime sandbox image
         env:
           SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
@@ -58,6 +64,7 @@ jobs:
           sshpass -e ssh -o UserKnownHostsFile=~/.ssh/known_hosts "root@${{ secrets.VPS_HOST }}" \
             'mkdir -p /opt/souz-backend/runtime-sandbox'
           sshpass -e rsync -az --delete \
+            --filter='P docker/skills/**' \
             -e "ssh -o UserKnownHostsFile=~/.ssh/known_hosts" \
             sharedLogic/Dockerfile sharedLogic/docker \
             "root@${{ secrets.VPS_HOST }}:/opt/souz-backend/runtime-sandbox/"
