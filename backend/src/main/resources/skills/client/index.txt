@@ -1,6 +1,7 @@
 user-ask
-device-media-open
+# device-media-open temporarily disabled while testing orion.call — re-enable by uncommenting.
 device-mcp-list-devices
 device-mcp-list-tools
 device-mcp-call-tool
 web-search
+orion-call
