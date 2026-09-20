@@ -45,6 +45,7 @@ import ru.souz.backend.common.backendLogContext
 import ru.souz.backend.common.withBackendLogContext
 import ru.souz.backend.events.bus.AgentEventStream
 import ru.souz.backend.events.model.AgentEvent
+import ru.souz.backend.events.model.AgentEventEnvelope
 import ru.souz.backend.events.model.PublicToolCallStartedPayload
 import ru.souz.backend.http.BackendHttpDependencies
 import ru.souz.backend.http.BackendV1Exception
@@ -326,7 +327,7 @@ internal class PublicClientConnection(
 
 private suspend fun AgentEventStream.forwardPublicEvents(
     replayDone: CompletableDeferred<Unit>,
-    send: suspend (AgentEvent) -> Unit,
+    send: suspend (AgentEventEnvelope) -> Unit,
 ) {
     var lastSeq = initialSeq
     suspend fun sendDurableEvents(events: Iterable<AgentEvent>) {
@@ -344,8 +345,15 @@ private suspend fun AgentEventStream.forwardPublicEvents(
         replayDone.complete(Unit)
     }
     for (event in liveEvents) {
-        val seq = event.seq
-        if (seq == null || seq > lastSeq) sendDurableEvents(replayAfter(lastSeq))
+        if (event.durable) {
+            val seq = event.seq
+            if (seq == null || seq > lastSeq) sendDurableEvents(replayAfter(lastSeq))
+        } else if (event.isPublicClientEvent()) {
+            // Never durably stored, so replay can't recover it — deliver it directly while this
+            // connection happens to be live, same "must be connected right now" contract as a
+            // client-tool round trip.
+            send(event)
+        }
     }
 }
 

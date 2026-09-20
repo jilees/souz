@@ -98,6 +98,9 @@ class AgentEventService(
         createdAt = createdAt,
     )
 
+    /** True if the user currently has a live WS connection subscribed to this chat. */
+    fun hasLiveSubscriber(userId: String, chatId: UUID): Boolean = eventBus.hasSubscriber(userId, chatId)
+
     suspend fun publishLive(
         userId: String,
         chatId: UUID,

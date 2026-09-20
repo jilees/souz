@@ -31,3 +31,8 @@ Search failures return `web_search_failed` through the normal client error envel
 failure accurately instead of claiming a successful search. A timeout uses `client_tool_timed_out`.
 If the Skill reports missing client context, no active public WebSocket client is available for
 this execution.
+
+Unlike device-specific Skills, this one isn't tied to any particular device — any of the user's
+connected channels that implements this search relay works equally well. If routing this to
+another channel (see below), don't try to match it to a specific named device: just use any
+channel from `ListActiveChannels`.

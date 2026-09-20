@@ -35,6 +35,7 @@ import ru.souz.backend.chat.service.ChatService
 import ru.souz.backend.chat.service.MessageService
 import ru.souz.backend.client.BackendClientSkills
 import ru.souz.backend.client.ClientThreadRuntimeRegistry
+import ru.souz.backend.client.PushToolCallRegistry
 import ru.souz.backend.client.PublicClientService
 import ru.souz.backend.client.ClientThreadRecoveryService
 import ru.souz.backend.client.repository.ClientRequestRepository
@@ -202,6 +203,7 @@ fun backendDiModule(
     }
     bindSingleton { AgentEventBus() }
     bindSingleton { ClientThreadRuntimeRegistry() }
+    bindSingleton { PushToolCallRegistry() }
     bindSingleton {
         UserProviderKeyService(
             repository = instance(),
@@ -259,6 +261,8 @@ fun backendDiModule(
             registry = instance(),
             toolCallRepository = instance(),
             eventService = instance(),
+            chatDeliveryService = instance(),
+            pushToolCallRegistry = instance(),
         )
     }
     bindSingleton<ConversationMemoryRuntime> {
@@ -477,6 +481,7 @@ fun backendDiModule(
             toolCallRepository = instance(),
             executionService = instance(),
             registry = instance(),
+            pushToolCallRegistry = instance(),
         )
     }
     bindSingleton {

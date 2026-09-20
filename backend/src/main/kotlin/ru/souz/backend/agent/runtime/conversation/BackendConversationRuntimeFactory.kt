@@ -113,11 +113,6 @@ internal class BackendConversationRuntimeFactory(
             initialUsage = initialUsage,
             providerApiOverride = testApi?.let { api -> { api } },
         )
-        val activeClientToolCatalog = if (request.clientToolsEnabled) {
-            clientToolCatalog
-        } else {
-            BackendNoopAgentToolCatalog
-        }
         val visionGateway = LLMCapabilityResolver(
             settingsProvider = settingsProvider,
             openAiGateway = OpenAIVisionGateway(settingsProvider, executionApi),
@@ -143,7 +138,7 @@ internal class BackendConversationRuntimeFactory(
             compiledToolCatalog = toolCatalog,
             executionLlmToolCatalog = executionLlmToolCatalog,
             enabledCompiledToolNames = request.enabledTools,
-            clientToolCatalog = activeClientToolCatalog,
+            clientToolCatalog = clientToolCatalog,
             includeFewShotExamples = settingsProvider.useFewShotExamples,
         )
         val requestToolsFilter = RuntimePassThroughToolsFilter

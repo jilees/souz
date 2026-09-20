@@ -53,6 +53,7 @@ internal class PublicClientService(
     private val toolCallRepository: ToolCallRepository,
     private val executionService: AgentExecutionService,
     private val registry: ClientThreadRuntimeRegistry,
+    private val pushToolCallRegistry: PushToolCallRegistry,
     private val mapper: ObjectMapper = jacksonObjectMapper().registerKotlinModule(),
 ) {
     suspend fun requireChat(chatId: UUID, clientType: String): Chat {
@@ -158,6 +159,10 @@ internal class PublicClientService(
         }
         if (frame.error?.details?.isObject == false) {
             return rejectedTool(chat.id, threadId, toolCallId, "invalid_request", "error.details must be an object.", now)
+        }
+        val pushResolved = pushToolCallRegistry.resolve(threadId, toolCallId, ClientToolOutcome(status, frame.result, frame.error))
+        if (pushResolved) {
+            return HandledClientFrame(acceptedTool(chat.id, threadId, toolCallId, duplicate = false, now))
         }
         val context = ToolCallContext(chat.userId, chat.id.toString(), threadId.toString(), toolCallId)
         val existing = toolCallRepository.get(context)
