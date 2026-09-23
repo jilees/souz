@@ -539,6 +539,7 @@ class SkillRuntimeToolsTest {
             bindSingleton<SkillRegistryRepository> { repository }
             bindSingleton<AgentToolCatalog> { catalog }
             bindSingleton<AgentToolsFilter> { TestToolsFilter() }
+            bindSingleton<ConversationKnowledgeStore> { SandboxConversationKnowledgeStore(instance()) }
             import(portableSkillToolsDiModule())
         }
 
@@ -581,6 +582,7 @@ class SkillRuntimeToolsTest {
             bindSingleton<ToolInvocationRuntimeSandboxResolver> {
                 ToolInvocationRuntimeSandboxResolver.fixed(localSandbox(home, stateRoot))
             }
+            bindSingleton<ConversationKnowledgeStore> { SandboxConversationKnowledgeStore(instance()) }
             import(portableSkillRuntimeToolsDiModule())
         }
 
