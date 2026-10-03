@@ -57,6 +57,46 @@ class BackendSettingsProviderTest {
     }
 
     @Test
+    fun `legacy VPS settings preserve refreshed credentials and rejected token recovery`() {
+        val env = mutableMapOf(
+            "SOUZ_BACKEND_CODEX_ACCESS_TOKEN" to "legacy-access",
+            "SOUZ_BACKEND_CODEX_REFRESH_TOKEN" to "legacy-refresh",
+            "SOUZ_BACKEND_CODEX_ACCOUNT_ID" to "legacy-account",
+            "SOUZ_BACKEND_CODEX_EXPIRES_AT" to "1800000000",
+            "SOUZ_BACKEND_REGION_PROFILE" to "en",
+        )
+        val store = MapBackendServerPreferenceStore()
+        val settings = provider(store = store, env = env)
+        assertEquals("legacy-access", settings.codexAccessToken)
+        assertEquals("legacy-account", settings.codexAccountId)
+        assertEquals(1800000000L, settings.codexExpiresAt)
+        assertEquals("en", settings.regionProfile)
+        assertTrue(settings.hasCompleteCodexOAuthCredentials())
+        settings.codexAccessToken = "refreshed-access"
+        settings.codexRefreshToken = "refreshed-refresh"
+        assertEquals("refreshed-access", provider(store = store, env = env).codexAccessToken)
+        settings.codexAccessToken = null
+        assertNull(provider(store = store, env = env).codexAccessToken)
+        env["SOUZ_BACKEND_CODEX_REFRESH_TOKEN"] = "replacement-refresh"
+        assertEquals("legacy-access", settings.codexAccessToken)
+        assertEquals("replacement-refresh", settings.codexRefreshToken)
+        env["CODEX_ACCESS_TOKEN"] = "canonical-access"
+        env["APP_LANGUAGE"] = "ru"
+        assertEquals("canonical-access", provider(env = env).codexAccessToken)
+        assertEquals("ru", provider(env = env).regionProfile)
+        val properties = provider(properties = mapOf(
+            "souz.backend.codex.accessToken" to "property-access",
+            "souz.backend.codex.refreshToken" to "property-refresh",
+            "souz.backend.codex.accountId" to "property-account",
+            "souz.backend.codex.expiresAt" to "1800000000",
+            "souz.backend.regionProfile" to "en",
+        ))
+        assertTrue(properties.hasCompleteCodexOAuthCredentials())
+        assertEquals("property-access", properties.codexAccessToken)
+        assertEquals("en", properties.regionProfile)
+    }
+
+    @Test
     fun `backend deploy config controls non codex provider settings`() {
         val provider = provider(
             env = mapOf(

@@ -15,6 +15,10 @@ object AesGcmSecretCodec {
     private const val SALT_SIZE = 16
     private const val IV_SIZE = 12
     private val secureRandom = SecureRandom()
+    // Non-suspending JVM crypto boundary: only map access is locked, never PBKDF2.
+    // Both key and ciphertext scope cached plaintext; eviction bounds retained secrets.
+    private val decryptedValues = LinkedHashMap<Pair<String, String>, String>(16, 0.75f, true)
+    private const val MAX_CACHED_VALUES = 128
 
     fun encrypt(
         masterKey: String,
@@ -43,6 +47,17 @@ object AesGcmSecretCodec {
         payload: String,
     ): String {
         require(masterKey.isNotBlank()) { "masterKey must not be blank." }
+        val cacheKey = masterKey to payload
+        synchronized(decryptedValues) { decryptedValues[cacheKey] }?.let { return it }
+        val plaintext = decryptUncached(masterKey, payload)
+        synchronized(decryptedValues) {
+            decryptedValues[cacheKey] = plaintext
+            if (decryptedValues.size > MAX_CACHED_VALUES) decryptedValues.remove(decryptedValues.keys.first())
+        }
+        return plaintext
+    }
+
+    private fun decryptUncached(masterKey: String, payload: String): String {
         val parts = payload.removePrefix(PAYLOAD_PREFIX).split(':')
         require(parts.size == 3) { "Malformed encrypted payload" }
         val salt = b64Decode(parts[0])

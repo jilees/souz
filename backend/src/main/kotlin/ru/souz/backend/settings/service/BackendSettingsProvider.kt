@@ -159,10 +159,17 @@ class BackendSettingsProvider(
         VoiceRecognitionProvider.LOCAL_MACOS -> true
     }
 
-    private fun configured(envKey: String, propertyKey: String = envKey): String? =
-        source.value(envKey = envKey, propertyKey = propertyKey)
-            ?.trim()
-            ?.takeIf(String::isNotEmpty)
+    private fun configured(envKey: String, propertyKey: String = envKey): String? {
+        fun read(env: String, property: String): String? = source.value(env, property)?.trim()?.takeIf(String::isNotEmpty)
+        return read(envKey, propertyKey) ?: when (envKey) {
+            CODEX_ACCESS_TOKEN -> read("SOUZ_BACKEND_CODEX_ACCESS_TOKEN", "souz.backend.codex.accessToken")
+            CODEX_REFRESH_TOKEN -> read("SOUZ_BACKEND_CODEX_REFRESH_TOKEN", "souz.backend.codex.refreshToken")
+            CODEX_ACCOUNT_ID -> read("SOUZ_BACKEND_CODEX_ACCOUNT_ID", "souz.backend.codex.accountId")
+            CODEX_EXPIRES_AT -> read("SOUZ_BACKEND_CODEX_EXPIRES_AT", "souz.backend.codex.expiresAt")
+            APP_LANGUAGE -> read("SOUZ_BACKEND_REGION_PROFILE", "souz.backend.regionProfile")
+            else -> null
+        }
+    }
 
     private fun storedOrConfigured(key: String): String? {
         val rejectedRefreshToken = preferenceStore.get(CODEX_REJECTED_DEPLOY_REFRESH_TOKEN)
