@@ -8,13 +8,42 @@ import ru.souz.runtime.sandbox.RuntimeSandbox
 import ru.souz.runtime.sandbox.SandboxCommandRequest
 import ru.souz.runtime.sandbox.SandboxCommandResult
 import ru.souz.runtime.sandbox.SandboxCommandRuntime
+import ru.souz.runtime.sandbox.SandboxMode
 import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.tool.BadInputException
 import ru.souz.tool.InputParamDescription
 
+/**
+ * Env var whose value is an allowlist (comma / whitespace separated) of host env names to
+ * forward into DOCKER-mode skill commands. LOCAL skills are `ProcessBuilder` children and
+ * already inherit the backend's full environment, so this is a no-op there. Keep the list
+ * narrow — LLM keys and their base URLs, not "everything" — it exists to hand a skill's own
+ * internal loop the couple of secrets it needs, not to re-open the LOCAL-mode firehose.
+ */
+const val SANDBOX_FORWARD_ENV_SPEC = "SOUZ_SANDBOX_FORWARD_ENV"
+
+/**
+ * Resolves [SANDBOX_FORWARD_ENV_SPEC] against [hostEnv] into the `{name -> value}` pairs to
+ * forward. Names unset or blank in [hostEnv] are dropped; the spec var never forwards itself.
+ */
+fun resolveForwardedSandboxEnv(hostEnv: Map<String, String>): Map<String, String> =
+    hostEnv[SANDBOX_FORWARD_ENV_SPEC]
+        ?.split(',', ' ', '\t', '\n')
+        ?.map(String::trim)
+        ?.filter { it.isNotEmpty() && it != SANDBOX_FORWARD_ENV_SPEC }
+        ?.distinct()
+        ?.mapNotNull { name -> hostEnv[name]?.takeIf(String::isNotBlank)?.let { name to it } }
+        ?.toMap()
+        .orEmpty()
 
 class SkillCommandExecutor(
     private val sandboxResolver: ToolInvocationRuntimeSandboxResolver,
+    /**
+     * Host env pairs to forward into DOCKER-mode skill commands, from
+     * [resolveForwardedSandboxEnv]. Lowest precedence — never shadows a fixed `SOUZ_SKILL_*`
+     * var or a caller-supplied [Args.environment] value.
+     */
+    private val forwardedSandboxEnv: Map<String, String> = emptyMap(),
 ) {
     internal data class Args(
         @InputParamDescription("Runtime to execute: BASH, PYTHON, NODE, or PROCESS. Use BASH for shell scripts and PROCESS for argv commands.")
@@ -58,6 +87,11 @@ class SkillCommandExecutor(
         val skillRoot = resolveSkillRoot(sandbox, bundle.skillId, bundleHash)
         val workingDirectory = resolveWorkingDirectory(skillRoot, arguments.workingDirectory)
         val scriptPath = arguments.scriptPath.takeUnless { arguments.runtime == SandboxCommandRuntime.PROCESS }
+        // LOCAL skills are ProcessBuilder children and already inherit the backend's full env;
+        // DOCKER skills see only what `docker exec` is told, so hand them the narrow forwarded
+        // allowlist as the lowest precedence layer.
+        val forwardedEnvironment =
+            if (sandbox.mode == SandboxMode.DOCKER) forwardedSandboxEnv else emptyMap()
         return sandbox.commandExecutor.execute(
             SandboxCommandRequest(
                 runtime = arguments.runtime,
@@ -66,7 +100,7 @@ class SkillCommandExecutor(
                 scriptPath = resolveScriptPath(sandbox, skillRoot, scriptPath),
                 args = arguments.args,
                 workingDirectory = workingDirectory,
-                environment = mapOf(
+                environment = forwardedEnvironment + mapOf(
                     "SOUZ_SKILL_ID" to bundle.skillId.value,
                     "SOUZ_SKILL_ROOT" to skillRoot,
                     "SOUZ_SKILL_SUPPORTING_FILES" to bundle.files

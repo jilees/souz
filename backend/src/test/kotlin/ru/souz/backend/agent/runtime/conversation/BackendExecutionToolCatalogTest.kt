@@ -15,7 +15,7 @@ class BackendExecutionToolCatalogTest {
     @Test
     fun `catalog filters compiled tools preserves client tools and selects the search provider`() {
         val selections = mapOf(
-            null to (setOf("ReadFile", "WebPageText") + LLM_BACKED_TOOL_NAMES),
+            null to (setOf("ReadFile", "WebPageText", "ControlBrowser") + LLM_BACKED_TOOL_NAMES),
             setOf("ReadFile") to setOf("ReadFile"),
             setOf("InternetSearch") to setOf("InternetSearch"),
         )

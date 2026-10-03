@@ -16,7 +16,7 @@ class BackendToolCapabilityPolicyTest {
 
         assertTrue(ToolCategory.WEB_SEARCH in BackendToolCapabilityPolicy.safeCategories)
         assertEquals(
-            setOf("ReadFile", "WebPageText", "ListActiveChannels", "SendMessageToChannel") +
+            setOf("ReadFile", "WebPageText", "ControlBrowser", "ListActiveChannels", "SendMessageToChannel") +
                 LLM_BACKED_TOOL_NAMES,
             names,
         )
@@ -31,7 +31,7 @@ class BackendToolCapabilityPolicyTest {
             enabledToolNames = setOf("ReadFile", executionBoundTool, "ControlBrowser"),
         )
 
-        assertEquals(setOf("ReadFile", executionBoundTool), selected)
+        assertEquals(setOf("ReadFile", executionBoundTool, "ControlBrowser"), selected)
     }
 
     @Test
