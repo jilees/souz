@@ -27,7 +27,7 @@ import ru.souz.tool.ToolSetup
  * `agent-browser` commands through the sandbox command executor, never touching the host OS — and
  * only works in DOCKER sandbox mode.
  *
- * Decided architecture (see docs §10): the engine is Lightpanda, and it makes no attempt to pass
+ * Decided architecture (see the runtime sandbox guide): the engine is Lightpanda, and it makes no attempt to pass
  * itself off as a different browser — User-Agent, Sec-Ch-Ua and `navigator.userAgent` all honestly
  * say "Lightpanda". That, plus the from-scratch DOM, means sites with real anti-bot defenses
  * (a captcha, a "verifying your browser" page) are out of reach regardless of how this tool is
