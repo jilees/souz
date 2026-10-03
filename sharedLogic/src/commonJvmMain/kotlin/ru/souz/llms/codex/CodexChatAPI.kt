@@ -76,6 +76,9 @@ class CodexChatAPI(
                 val collectedItems = mutableListOf<JsonNode>()
                 var usageNode: JsonNode? = null
                 var terminalEventReceived = false
+                var streamError: LLMResponse.Chat.Error? = null
+                var responseId: String? = null
+                val requestId = response.headers["x-request-id"]
                 val created = System.currentTimeMillis() / 1000
 
                 while (!channel.isClosedForRead) {
@@ -89,8 +92,13 @@ class CodexChatAPI(
                                 val node = restJsonMapper.readTree(data)
                                 // Event type: prefer SSE header, fall back to JSON "type" field
                                 val eventType = pendingEvent ?: node["type"]?.asText()
+                                responseId = node["response"]?.get("id")?.asText() ?: responseId
                                 l.info("Codex SSE event: $eventType")
+                                if (eventType in setOf("error", "response.failed", "response.incomplete")) {
+                                    logStreamFailure(node, eventType, body.model, requestId, responseId, response.status.value)
+                                }
                                 when (eventType) {
+                                    "error" -> streamError = streamFailure(node, eventType)
                                     "response.output_item.done" -> {
                                         val item = node["item"] ?: node
                                         collectedItems.add(item)
@@ -99,15 +107,12 @@ class CodexChatAPI(
                                         terminalEventReceived = true
                                         val resp = node["response"] ?: node
                                         usageNode = resp["usage"]
-                                        val result = buildChatOkFromItems(collectedItems, usageNode, body.model, created)
+                                        val result = streamError ?: buildChatOkFromItems(collectedItems, usageNode, body.model, created)
                                         send(result)
                                     }
                                     "response.failed", "response.incomplete" -> {
                                         terminalEventReceived = true
-                                        val err = node["response"]?.get("error")?.asText()
-                                            ?: node["error"]?.asText()
-                                            ?: "Stream error: $eventType"
-                                        send(LLMResponse.Chat.Error(-1, err))
+                                        send(streamError ?: streamFailure(node, eventType))
                                     }
                                 }
                             } catch (cancellation: CancellationException) {
@@ -121,8 +126,12 @@ class CodexChatAPI(
                 }
 
                 // fallback: if response.completed never fired but items were collected
-                if (!terminalEventReceived && collectedItems.isNotEmpty() && usageNode == null) {
-                    send(buildChatOkFromItems(collectedItems, null, body.model, created))
+                if (!terminalEventReceived) {
+                    val failure = streamError
+                    if (failure != null) send(failure)
+                    else if (collectedItems.isNotEmpty() && usageNode == null) {
+                        send(buildChatOkFromItems(collectedItems, null, body.model, created))
+                    }
                 }
             }
         } catch (cancellation: CancellationException) {
@@ -131,6 +140,48 @@ class CodexChatAPI(
             l.error("Codex stream error", t)
             send(LLMResponse.Chat.Error(-1, "Codex stream error: ${t.message}"))
         }
+    }
+
+    private fun streamFailure(node: JsonNode, eventType: String): LLMResponse.Chat.Error {
+        val error = node["response"]?.get("error")?.takeUnless { it.isNull }
+            ?: node["error"]?.takeUnless { it.isNull } ?: node
+        val code = error["code"]?.asText()
+        val message = error["message"]?.asText()?.takeIf { it.isNotBlank() }
+            ?: error.takeIf { it.isTextual }?.asText()?.takeIf { it.isNotBlank() }
+            ?: code?.takeIf { it.isNotBlank() }
+            ?: node["response"]?.get("incomplete_details")?.get("reason")?.asText()?.takeIf { it.isNotBlank() }
+            ?: "Stream error: $eventType"
+        return LLMResponse.Chat.Error(if (code == "server_is_overloaded") 503 else -1, message)
+    }
+
+    private fun logStreamFailure(
+        node: JsonNode,
+        eventType: String?,
+        model: String,
+        requestId: String?,
+        responseId: String?,
+        httpStatus: Int,
+    ) {
+        val response = node["response"]
+        val error = response?.get("error")?.takeUnless { it.isNull }
+            ?: node["error"]?.takeUnless { it.isNull }
+            ?: node
+        // Select diagnostic scalars only; never serialize the response (which can contain conversation output).
+        fun scalar(value: JsonNode?): String? = value?.takeIf { it.isValueNode && !it.isNull }
+            ?.asText()?.replace('\n', ' ')?.replace('\r', ' ')?.take(2_000)
+        l.atWarn()
+            .addKeyValue("event", "codex.stream_failure")
+            .addKeyValue("model", model)
+            .addKeyValue("http_status", httpStatus)
+            .addKeyValue("request_id", requestId)
+            .addKeyValue("response_id", responseId)
+            .addKeyValue("sse_event", eventType)
+            .addKeyValue("error_code", scalar(error["code"]))
+            .addKeyValue("error_type", scalar(error["type"]))
+            .addKeyValue("error_message", scalar(error["message"]) ?: scalar(error))
+            .addKeyValue("error_param", scalar(error["param"]))
+            .addKeyValue("incomplete_reason", scalar(response?.get("incomplete_details")?.get("reason")))
+            .log("Codex stream failure")
     }
 
     override suspend fun embeddings(body: LLMRequest.Embeddings): LLMResponse.Embeddings =
