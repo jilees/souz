@@ -15,7 +15,7 @@ class BackendToolCapabilityPolicyTest {
 
         assertFalse(ToolCategory.WEB_SEARCH in BackendToolCapabilityPolicy.safeCategories)
         assertEquals(
-            setOf("ReadFile", "ListActiveChannels", "SendMessageToChannel", "ViewImage", "GenerateImage"),
+            setOf("ReadFile", "ControlBrowser", "ListActiveChannels", "SendMessageToChannel", "ViewImage", "GenerateImage"),
             names,
         )
         assertEquals(names, executionToolNames(enabledToolNames = null))
@@ -29,7 +29,7 @@ class BackendToolCapabilityPolicyTest {
             enabledToolNames = setOf("ReadFile", executionBoundTool, "ControlBrowser"),
         )
 
-        assertEquals(setOf("ReadFile", executionBoundTool), selected)
+        assertEquals(setOf("ReadFile", executionBoundTool, "ControlBrowser"), selected)
     }
 
     @Test

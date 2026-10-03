@@ -1,6 +1,10 @@
 package ru.souz.runtime.sandbox.docker
 
 import kotlinx.coroutines.test.runTest
+import ru.souz.llms.ToolInvocationMeta
+import ru.souz.llms.restJsonMapper
+import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
+import ru.souz.tool.browser.ToolBrowser
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.assertThrows
@@ -81,6 +85,42 @@ class DockerRuntimeSandboxIntegrationTest {
         assertEquals("python-ok", pythonResult.stdout.trim())
         assertEquals(0, nodeResult.exitCode)
         assertEquals("node-ok", nodeResult.stdout.trim())
+    }
+
+    @Test
+    fun `browser executes page javascript and preserves state across conversation calls`() = runTest {
+        val sandbox = createSandbox()
+        val page = sandbox.fileSystem.resolvePath("~/browser-fixture.html")
+        sandbox.fileSystem.writeText(page, """
+            <!doctype html><html><head><title>Browser fixture</title></head><body>
+            <button onclick="document.getElementById('result').textContent='Remembered'">Remember</button>
+            <p id="result">Waiting</p><script>document.title = 'JavaScript ready';</script>
+            </body></html>
+        """.trimIndent())
+        sandbox.start()
+        val server = docker("exec", "-d", sandbox.containerName, "python3", "-m", "http.server",
+            "8123", "--bind", "127.0.0.1", "--directory", "/souz/home")
+        assertEquals(0, server.exitCode, server.stderr)
+        val ready = sandbox.commandExecutor.execute(SandboxCommandRequest(
+            runtime = SandboxCommandRuntime.BASH,
+            script = "for attempt in {1..50}; do curl -fsS http://127.0.0.1:8123/browser-fixture.html >/dev/null && exit 0; sleep 0.1; done; exit 1",
+        ))
+        assertEquals(0, ready.exitCode, ready.stderr)
+        val browser = ToolBrowser(ToolInvocationRuntimeSandboxResolver { sandbox })
+        val first = ToolInvocationMeta("docker-test-user", conversationId = "first")
+        val opened = restJsonMapper.readTree(browser.suspendInvoke(
+            ToolBrowser.Input(ToolBrowser.Action.navigate, url = "http://127.0.0.1:8123/browser-fixture.html"), first,
+        ))
+        assertFalse(opened.has("error"), opened.toString())
+        assertEquals("JavaScript ready", opened["title"].asText())
+        val ref = Regex("ref=(e[0-9]+)").find(opened["snapshot"].asText())?.groupValues?.get(1)
+        assertNotNull(ref, opened.toString())
+        val clicked = restJsonMapper.readTree(browser.suspendInvoke(ToolBrowser.Input(ToolBrowser.Action.click, ref = ref), first))
+        assertFalse(clicked.has("error"), clicked.toString())
+        val second = first.copy(conversationId = "second")
+        val read = restJsonMapper.readTree(browser.suspendInvoke(ToolBrowser.Input(ToolBrowser.Action.read), second))
+        assertFalse(read.has("error"), read.toString())
+        assertContains(read["text"].asText(), "Remembered")
     }
 
     @Test
@@ -279,7 +319,7 @@ class DockerRuntimeSandboxIntegrationTest {
         if (inspect.exitCode == 0 && inspect.stdout.trim() == TEST_IMAGE_LABEL) {
             return
         }
-        val contextDir = repositoryRoot().resolve("runtime")
+        val contextDir = repositoryRoot().resolve("sharedLogic")
         val build = docker("build", "-t", TEST_IMAGE_NAME, contextDir.toString())
         check(build.exitCode == 0) {
             "Failed to build Docker sandbox test image.\nstdout:\n${build.stdout}\nstderr:\n${build.stderr}\nRun locally with SOUZ_TEST_DOCKER=1 ./gradlew :sharedLogic:jvmTest"
@@ -327,7 +367,7 @@ class DockerRuntimeSandboxIntegrationTest {
     )
 
     private companion object {
-        const val TEST_IMAGE_NAME = "souz-runtime-sandbox:test"
+        const val TEST_IMAGE_NAME = "souz-runtime-sandbox:latest"
         const val TEST_IMAGE_LABEL = "paper-summarize-academic"
     }
 }

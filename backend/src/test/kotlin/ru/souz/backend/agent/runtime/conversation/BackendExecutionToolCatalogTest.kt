@@ -87,7 +87,7 @@ class BackendExecutionToolCatalogTest {
     @Test
     fun `catalog exposes only client web search for every compiled tool selection`() {
         val selections = mapOf(
-            null to setOf("ReadFile", "ViewImage", "GenerateImage"),
+            null to setOf("ReadFile", "ControlBrowser", "ViewImage", "GenerateImage"),
             setOf("ReadFile") to setOf("ReadFile"),
             setOf("InternetSearch", "InternetResearch", "WebPageText", "FutureWebTool") to emptySet(),
             emptySet<String>() to emptySet(),

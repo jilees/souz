@@ -17,6 +17,7 @@ object BackendToolCapabilityPolicy {
         ToolCategory.FILES,
         ToolCategory.IMAGE,
         ToolCategory.IMAGE_GENERATION,
+        ToolCategory.BROWSER,
         ToolCategory.DATA_ANALYTICS,
         ToolCategory.CALCULATOR,
         ToolCategory.CHANNEL_MESSAGING,

@@ -58,6 +58,11 @@ Only these direct production project dependencies are allowed. Standard test-sou
 - `:backend` `main` → `:agent`, `:llms`, `:native`, `:sharedLogic`, `:skill-oauth-api`, `:skill-oauth-impl`, `:job-api`, `:job-impl`.
 - `:desktopApp` `main` → `:ambientAgent`, `:sharedLogic`, `:sharedUI`, `:agent`, `:llms`, `:native`.
 
+## Optional backend capabilities
+
+- The Docker runtime provides a per-user browser and explicit Skill environment forwarding; see [the runtime guide](docs/backend-docker-sandbox-rollout.md).
+- [Scheduled tasks](backend/docs/scheduled-tasks.md) use the backend's PostgreSQL-backed JobService.
+
 ## Verification
 
 - Use the Gradle wrapper and the Java 21 toolchain configured by the build.
