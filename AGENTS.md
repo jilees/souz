@@ -53,6 +53,7 @@ Only these direct production project dependencies are allowed. Standard test-sou
 
 ## Optional backend capabilities
 
+- Manual VPS deployment and the legacy hook database transition are documented in [the runtime guide](docs/backend-docker-sandbox-rollout.md).
 - The Docker runtime provides a per-user browser and explicit Skill environment forwarding; see [the runtime guide](docs/backend-docker-sandbox-rollout.md).
 - [Scheduled tasks](docs/scheduled-tasks.md) use workspace hooks and a live Orion scheduler connection.
 

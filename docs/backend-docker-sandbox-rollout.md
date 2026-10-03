@@ -32,6 +32,28 @@ Names are separated by commas or whitespace. Missing or blank values are ignored
 
 When publishing `/hooks/` through nginx, preserve `Authorization`, disable interactive Basic Auth for that location, and clear proxy identity headers. Hook authentication happens inside the backend. Apply ingress body-size, timeout and rate limits appropriate to the hook contract.
 
+## Manual VPS deployment
+
+Reference [systemd](../deploy/souz-backend.service), [nginx](../deploy/nginx-souz-backend.conf), [WebSocket map](../deploy/nginx-websocket-map.conf), and [environment](../deploy/backend.env.example) files live in `deploy/`. Build the backend distribution with `./gradlew :backend:installDist`, install `backend/build/install/backend/` under `/opt/souz-backend/app`, and keep the environment file under `/opt/souz-backend/config/`. Install the nginx map in its `http` context and replace domain, certificate, owner and proxy-token placeholders before validating and reloading nginx. Deployment is manual.
+
+Codex settings accept `CODEX_ACCESS_TOKEN`, `CODEX_REFRESH_TOKEN`, `CODEX_ACCOUNT_ID`, `CODEX_EXPIRES_AT` and `APP_LANGUAGE`. The legacy `SOUZ_BACKEND_CODEX_*` and `SOUZ_BACKEND_REGION_PROFILE` names remain valid fallbacks. Stored refreshed credentials take precedence over deployment values. Replace all four credentials together when recovering from a rejected refresh token.
+
+### Database transition from `codex/hooks-verify`
+
+That branch's V14 migration has a different checksum and requires `hook_receipts.prompt`; upstream inserts omit that field. The [transition script](../deploy/upgrade-hooks-verify.sql) accepts only the known legacy V14, makes `prompt` nullable, aligns the pending-queue index, and updates that one checksum atomically. Receipt data, legacy prompt/dispatch fields and usage counters remain intact. Other Flyway versions are validated normally at startup. Already reconciled V14 is a no-op; unknown checksums or legacy shapes fail without modifications.
+
+1. Stop the backend and back up its PostgreSQL database and user sandbox state. Keep the prior distribution for rollback.
+2. Run the script against the configured database, as its owner, with `search_path` set to `SOUZ_BACKEND_DB_SCHEMA`. For the example `public` schema:
+
+   ```sh
+   PGOPTIONS='-c search_path=public' psql -X --dbname=souz --set=ON_ERROR_STOP=1 --file=deploy/upgrade-hooks-verify.sql
+   ```
+
+3. Install the prepared distribution, rebuild the runtime image, recreate the per-user sandbox containers while preserving their mounted data, and start the backend. Startup applies the remaining upstream migrations.
+4. Check health, a Codex chat, browser navigation, a verified hook, and an Orion scheduled task. Keep external Skill bundles and their allowlisted environment values available in each owner's workspace.
+
+Do not run a blanket Flyway repair. A rollback to `codex/hooks-verify` requires the matching database backup, because the migration history and subsequent receipts belong to the new code. The migration test uses a disposable PostgreSQL instance; it does not inspect or modify the deployed VPS.
+
 ## Verification
 
 ```sh

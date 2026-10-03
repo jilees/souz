@@ -1,0 +1,20 @@
+# Manual backend service; install the distribution under /opt/souz-backend/app.
+# Keep credentials in /opt/souz-backend/config/backend.env with mode 600.
+# Docker tool execution requires access to the Docker daemon.
+
+[Unit]
+Description=Souz backend
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/souz-backend/config/backend.env
+WorkingDirectory=/opt/souz-backend/app
+ExecStart=/opt/souz-backend/app/bin/backend
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
