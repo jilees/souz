@@ -19,7 +19,9 @@ RUN curl -fsSL -o /usr/local/bin/lightpanda "$LIGHTPANDA_URL" \
 # Chrome installation is unnecessary: the supervisor starts Lightpanda.
 RUN npm install -g agent-browser@0.27.0
 
-ENV AGENT_BROWSER_ENGINE=lightpanda \
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    AGENT_BROWSER_SOCKET_DIR=/tmp/souz-agent-browser \
+    AGENT_BROWSER_ENGINE=lightpanda \
     AGENT_BROWSER_CONFIG=/souz/state/browser/agent-browser.json
 
 COPY docker/browser-supervisor.sh /opt/souz/browser-supervisor.sh
