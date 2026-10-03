@@ -13,10 +13,10 @@ fi
 # `docker exec agent-browser …` calls, so pointing it at the daemon is a
 # one-time file write here, not a per-call flag. Opt out with
 # SOUZ_SANDBOX_BROWSER=0 (default: on).
-echo '{}' > /opt/souz/agent-browser.json
+echo '{}' > /souz/state/browser/agent-browser.json
 
 if [ "${SOUZ_SANDBOX_BROWSER:-1}" = "1" ]; then
-  echo '{"cdp":"9222"}' > /opt/souz/agent-browser.json
+  echo '{"cdp":"9222"}' > /souz/state/browser/agent-browser.json
 
   if [ -x /opt/souz/browser-supervisor.sh ]; then
     (

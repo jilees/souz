@@ -20,7 +20,7 @@ RUN curl -fsSL -o /usr/local/bin/lightpanda "$LIGHTPANDA_URL" \
 RUN npm install -g agent-browser@0.27.0
 
 ENV AGENT_BROWSER_ENGINE=lightpanda \
-    AGENT_BROWSER_CONFIG=/opt/souz/agent-browser.json
+    AGENT_BROWSER_CONFIG=/souz/state/browser/agent-browser.json
 
 COPY docker/browser-supervisor.sh /opt/souz/browser-supervisor.sh
 RUN chmod +x /opt/souz/browser-supervisor.sh
