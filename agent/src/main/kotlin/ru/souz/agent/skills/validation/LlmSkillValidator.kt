@@ -16,6 +16,7 @@ class LlmSkillValidator(
     private val model: String,
     private val provider: LlmProvider,
     private val jsonUtils: JsonUtils,
+    private val connectionId: String? = null,
 ) : SkillValidator {
     private val logger = LoggerFactory.getLogger(LlmSkillValidator::class.java)
 
@@ -24,6 +25,7 @@ class LlmSkillValidator(
             LLMRequest.Chat(
                 model = model,
                 provider = provider,
+                connectionId = connectionId,
                 temperature = 0.0f,
                 messages = listOf(
                     LLMRequest.Message(

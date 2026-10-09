@@ -26,13 +26,15 @@ Tools requested on the last allowed model turn still execute. Exhaustion does no
 
 ## Model configuration
 
+Backend [named LLM configuration](backend-docker-sandbox-rollout.md#named-llm-connections) advertises the names in `subagentModels` plus the parent's selection. Each name resolves to an exact model ID and connection. A child without an explicit selection inherits both; identical upstream model IDs on different connections remain distinct choices.
+
 `SUBAGENT_MODELS_JSON` adds model IDs grouped by provider. For example, launch either host with:
 
 ```sh
 export SUBAGENT_MODELS_JSON='{"OPENAI":["my-custom-model","my-deployment/v2"],"ANTHROPIC":["my-anthropic-model"]}'
 ```
 
-The tool advertises the configured IDs plus the parent's current model. Without the setting, with `{}`, or with empty provider lists, only the parent model is available. Unlisted providers contribute no additional models. The parent model is always allowed; if its ID is configured under another provider, the parent's provider takes precedence for that execution. A custom OpenAI parent contributes its actual `OPENAI_MODEL` deployment ID.
+The tool advertises the configured IDs plus the parent's current model. Without configured named or legacy choices, only the parent model is available. Unlisted providers contribute no additional models. The parent model is always allowed; if its ID is configured under another provider, the parent's provider takes precedence for that execution. A custom OpenAI parent contributes its actual `OPENAI_MODEL` deployment ID.
 
 The host selects the provider API and existing credentials; the tool accepts no provider argument. Children can use a different provider from the parent. Model IDs are case-sensitive, preserved unchanged, and need not appear in `LLMModel`. An unadvertised ID returns `subagent_model_unavailable` before child execution. Configuration authorizes a choice; the provider still checks whether that model exists and is accessible. Local inference requires an installed, supported model profile.
 

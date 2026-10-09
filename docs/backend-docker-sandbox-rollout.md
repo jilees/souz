@@ -16,6 +16,18 @@ The browser session is shared across that user's conversations. Page state and l
 
 Browser diagnostics are written to `/souz/state/logs/browser.log`. `SOUZ_SANDBOX_BROWSER=0` in the container environment disables automatic browser startup. Lightpanda uses its nightly release; override the image build argument `LIGHTPANDA_URL` to select a specific compatible Linux x86-64 binary. The agent-browser version is fixed in the Dockerfile.
 
+## Named LLM connections
+
+Set `SOUZ_LLM_CONFIG_FILE` to a JSON file readable by the backend process; [llm.example.json](../deploy/llm.example.json) defines the format. Replace its example URLs, model IDs and context size, and supply each connection's `apiKeyEnv` in the backend environment. Mount the file into the backend container when applicable. The catalog and credentials are loaded once; restart after edits.
+
+`openaiConnections` maps stable connection IDs to `baseUrl` and `apiKeyEnv`. `models` maps case-sensitive Souz names to a connection and the exact upstream `modelId`. Several names can use the same connection; different connections can serve identical upstream IDs. Names must not collide with built-in model selectors or legacy `SUBAGENT_MODELS_JSON` IDs. Unknown fields, duplicate JSON keys, unresolved references, invalid URLs, and missing secrets fail configuration loading.
+
+All configured models appear in bootstrap capabilities and can be assigned through the trusted settings API: `PATCH /v1/settings` with `{"defaultModel":"test-chat"}`. The existing proxy headers identify the user. The name is stored in PostgreSQL and applies to subsequent executions; no user allowlist is involved. HTTP message `options.model` and WebSocket `payload.meta.model` accept the same names. Unknown or removed names fail explicitly rather than selecting another model. Connections use only their configured server keys, never a user's legacy `OPENAI` key. API responses and execution records contain selections, not connection secrets.
+
+`summarization.model` chooses a named model independently of the parent; optional `contextSize` controls its context window. `OPENAI_SUMMARIZATION_PARAMETERS` still supplies extra request parameters. `subagentModels` lists named choices advertised by `SpawnSubagent`; omission of a child model inherits the parent's exact model and connection. See [subagents](subagents.md#model-configuration).
+
+Existing `OPENAI_*`, `OPENAI_SUMMARIZATION_*` and `SUBAGENT_MODELS_JSON` settings remain valid. A configured named summarization route takes precedence over the legacy summary model, URL and key. Named connections cover backend chat calls; embeddings, speech and image generation keep their existing configuration. Skill scripts that call external APIs themselves still use their own environment configuration.
+
 ## Skill environment
 
 Set an explicit allowlist on the backend to pass selected host environment values into Docker skill commands:

@@ -26,6 +26,7 @@ class LlmMemoryWriter(
         val response = api.message(
             LLMRequest.Chat(
                 model = settingsProvider.executionModelId(model),
+                connectionId = settingsProvider.executionConnectionId(model),
                 provider = model.provider,
                 messages = listOf(
                     LLMRequest.Message(

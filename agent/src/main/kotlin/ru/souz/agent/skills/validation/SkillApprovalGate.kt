@@ -202,6 +202,7 @@ class SkillApprovalGate private constructor(
                     LlmSkillValidator(
                         llmApi = llmApi,
                         model = settingsProvider.executionModelId(model),
+                        connectionId = settingsProvider.executionConnectionId(model),
                         provider = model.provider,
                         jsonUtils = jsonUtils,
                     )

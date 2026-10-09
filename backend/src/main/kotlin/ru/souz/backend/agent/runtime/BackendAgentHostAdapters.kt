@@ -10,6 +10,8 @@ import ru.souz.agent.spi.AgentToolCatalog
 import ru.souz.backend.agent.model.BackendConversationTurnRequest
 import ru.souz.backend.memory.hindsight.UNSUPPORTED_MEMORY_MUTATION_NOTICE
 import ru.souz.db.SettingsProvider
+import ru.souz.llms.ChatModelRoute
+import ru.souz.llms.ChatModelSelection
 import ru.souz.llms.LLMModel
 import ru.souz.llms.LLMToolSetup
 import ru.souz.tool.ToolCategory
@@ -23,6 +25,13 @@ class BackendConversationSettingsProvider(
     requestTimeoutMillis: Long = delegate.requestTimeoutMillis,
 ) : SettingsProvider by delegate {
     private var systemPrompt: String = defaultSystemPrompt
+    private var namedRoute: ChatModelRoute? = null
+
+    override fun executionModelId(model: LLMModel): String =
+        namedRoute?.takeIf { model == LLMModel.OpenAICompatibleCustom }?.modelId ?: delegate.executionModelId(model)
+
+    override fun executionConnectionId(model: LLMModel): String? =
+        namedRoute?.takeIf { model == LLMModel.OpenAICompatibleCustom }?.connectionId
 
     override var defaultCalendar: String? = null
     override var regionProfile: String = localeToRegionProfile(locale)
@@ -49,7 +58,10 @@ class BackendConversationSettingsProvider(
         request: BackendConversationTurnRequest,
         temperature: Float,
     ) {
-        this.gigaModel = request.model
+        this.namedRoute = (request.model as? ChatModelSelection.Named)?.let {
+            requireNotNull(namedLlmModels.models[it.alias]) { "Unknown configured model: ${it.alias}." }
+        }
+        this.gigaModel = request.model as? LLMModel ?: LLMModel.OpenAICompatibleCustom
         this.contextSize = request.contextSize
         this.temperature = request.temperature ?: temperature
         this.regionProfile = localeToRegionProfile(request.locale)

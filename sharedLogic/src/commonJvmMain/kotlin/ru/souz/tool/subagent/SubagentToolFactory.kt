@@ -13,6 +13,7 @@ import ru.souz.agent.state.AgentSettings
 import ru.souz.agent.state.AgentTools
 import ru.souz.llms.LLMRequest
 import ru.souz.llms.LLMToolSetup
+import ru.souz.llms.ChatModelRoute
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.llms.restJsonMapper
@@ -36,14 +37,21 @@ class SubagentToolFactory(
     private val commandExecutor: SkillCommandExecutor,
     private val approvalGate: SkillApprovalGate? = null,
     private val configuredModels: Map<String, LlmProvider> = emptyMap(),
+    private val namedModels: Map<String, ChatModelRoute> = emptyMap(),
+    private val parentModelName: String? = null,
 ) {
     fun create(parentSettings: AgentSettings): LLMToolSetup {
-        val models = configuredModels + (parentSettings.model to parentSettings.provider)
+        val parentName = parentModelName ?: parentSettings.model
+        val models = configuredModels.mapValues { (id, provider) -> ChatModelRoute(id, provider) } + namedModels +
+            (parentName to ChatModelRoute(parentSettings.model, parentSettings.provider, parentSettings.connectionId))
         return SubagentTool(createAgent, models.keys.toList()) { input, meta ->
-            val model = input.model ?: parentSettings.model
-            val provider = models[model]
-                ?: fail("subagent_model_unavailable", "Choose an advertised model ID: $model is unavailable.")
-            prepare(input, parentSettings.copy(model = model, provider = provider, reasoningEffort = input.reasoningEffort), meta)
+            val name = input.model ?: parentName
+            val route = models[name]
+                ?: fail("subagent_model_unavailable", "Choose an advertised model ID: $name is unavailable.")
+            prepare(input, parentSettings.copy(
+                model = route.modelId, provider = route.provider, connectionId = route.connectionId,
+                reasoningEffort = input.reasoningEffort,
+            ), meta)
         }
     }
 

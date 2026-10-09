@@ -44,7 +44,7 @@ class SubagentToolFactoryTest {
     @Test
     fun `empty selection binds parent settings and returns a tool result`() = runTest {
         val fixture = Fixture(listOf(namedTool("unselected")))
-        val parent = fixture.parent.copy(temperature = 0.27f, contextSize = 42_000)
+        val parent = fixture.parent.copy(temperature = 0.27f, contextSize = 42_000, connectionId = "experiment")
         val tool = fixture.factory().create(parent)
         val meta = ToolInvocationMeta(
             userId = "owner", conversationId = "conversation", requestId = "request",
@@ -273,6 +273,15 @@ class SubagentToolFactoryTest {
         assertEquals("subagent_model_unavailable", rejected["error"]["code"].asText())
         assertEquals(choices.size, fixture.contexts.size)
         assertEquals(LLMModel.Max.alias, fixture.parent.model)
+        val namedTool = fixture.factory(namedModels = mapOf(
+            "tv-agent" to ru.souz.llms.ChatModelRoute("same-model", LlmProvider.OPENAI, "router"),
+        )).create(fixture.parent.copy(model = "same-model", provider = LlmProvider.OPENAI, connectionId = "experiment"))
+        namedTool.call(mapOf("task" to "Inspect", "model" to "tv-agent"))
+        assertEquals("router", fixture.context.settings.connectionId)
+        namedTool.call(mapOf("task" to "Inspect"))
+        assertEquals("experiment", fixture.context.settings.connectionId)
+        assertEquals("same-model", fixture.context.settings.model)
+
     }
 
     @Test
@@ -308,6 +317,7 @@ class SubagentToolFactoryTest {
         fun factory(
             approvalGate: SkillApprovalGate? = null,
             configuredModels: Map<String, LlmProvider> = emptyMap(),
+            namedModels: Map<String, ru.souz.llms.ChatModelRoute> = emptyMap(),
         ) = SubagentToolFactory(
             { _ -> mockk<Agent> {
                 coEvery { execute(any(), any(), any()) } answers {
@@ -315,7 +325,7 @@ class SubagentToolFactoryTest {
                     AgentExecutionResult("child answer", context)
                 }
             } },
-            catalog, filter, bundles, commands, approvalGate, configuredModels,
+            catalog, filter, bundles, commands, approvalGate, configuredModels, namedModels,
         )
     }
 }

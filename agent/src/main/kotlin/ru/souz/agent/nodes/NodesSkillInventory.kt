@@ -70,6 +70,7 @@ internal class NodesSkillInventory(
             val request = LLMRequest.Chat(
                 model = ctx.settings.model,
                 provider = ctx.settings.provider,
+                connectionId = ctx.settings.connectionId,
                 maxTokens = ctx.settings.contextSize,
                 functions = emptyList(),
                 messages = listOf(LLMRequest.Message(LLMMessageRole.system, """

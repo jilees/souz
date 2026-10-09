@@ -248,6 +248,7 @@ class InternetSearchExecutor(
             api.message(
                 LLMRequest.Chat(
                     model = settingsProvider.executionModelId(model),
+                    connectionId = settingsProvider.executionConnectionId(model),
                     provider = model.provider,
                     messages = listOf(
                         LLMRequest.Message(role = LLMMessageRole.system, content = systemPrompt),

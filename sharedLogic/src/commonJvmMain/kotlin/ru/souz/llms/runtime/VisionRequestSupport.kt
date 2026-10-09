@@ -16,6 +16,7 @@ internal suspend fun requestVisionText(
     return chatRequest(
         LLMRequest.Chat(
             model = settingsProvider.executionModelId(model),
+            connectionId = settingsProvider.executionConnectionId(model),
             provider = model.provider,
             messages = listOf(
                 LLMRequest.Message(

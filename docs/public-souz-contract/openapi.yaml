@@ -380,6 +380,7 @@ components:
           type: string
         model:
           type: string
+          description: Built-in model alias or configured model name; unknown selections are rejected.
     SucceededToolResult:
       type: object
       additionalProperties: false

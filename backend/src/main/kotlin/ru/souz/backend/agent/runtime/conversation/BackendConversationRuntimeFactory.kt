@@ -191,6 +191,8 @@ internal class BackendConversationRuntimeFactory(
             skillBundleProvider = skillBundleProvider,
             commandExecutor = commandExecutor,
             configuredModels = settingsProvider.subagentModels,
+            namedModels = settingsProvider.namedLlmModels.subagentModels,
+            parentModelName = request.model.alias.takeIf { request.model is ru.souz.llms.ChatModelSelection.Named },
         )
         val kernel = AgentExecutionKernelFactory(
             logObjectMapper = logObjectMapper,

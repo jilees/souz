@@ -17,6 +17,9 @@ class AgentModelRoutingTest {
             every { activeAgentId } returns AgentId.GRAPH
             every { gigaModel } returns LLMModel.OpenAICompatibleCustom
             every { getSystemPromptForAgentModel(any(), any()) } returns "system"
+            every { executionConnectionId(any()) } answers {
+                "experiment".takeIf { firstArg<LLMModel>() == LLMModel.OpenAICompatibleCustom }
+            }
             every { executionModelId(any()) } answers {
                 firstArg<LLMModel>().let { if (it == LLMModel.OpenAICompatibleCustom) "Custom/Parent" else it.alias }
             }
@@ -30,11 +33,13 @@ class AgentModelRoutingTest {
         val request = original.toGigaRequest(emptyList())
         assertEquals(original.settings.model, request.model)
         assertEquals(original.settings.provider, request.provider)
+        assertEquals("experiment", request.connectionId)
 
         facade.setModel(LLMModel.AnthropicSonnet45)
         val changed = facade.currentContext.value.settings
         assertEquals(LLMModel.AnthropicSonnet45.alias, changed.model)
         assertEquals(LlmProvider.ANTHROPIC, changed.provider)
+        assertEquals(null, changed.connectionId)
         assertEquals("Custom/Parent", original.settings.model)
     }
 }

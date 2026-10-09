@@ -83,6 +83,7 @@ class AgentFacade internal constructor(
         val prompt = contextFactory.systemPromptFor(_activeAgentId.value, model)
         val newSettings = _currentContext.value.settings.copy(
             model = settingsProvider.executionModelId(model), provider = model.provider,
+            connectionId = settingsProvider.executionConnectionId(model),
         )
         _currentContext.tryEmit(
             _currentContext.value.copy(settings = newSettings, systemPrompt = prompt)

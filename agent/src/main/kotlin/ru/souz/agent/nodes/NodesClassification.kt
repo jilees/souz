@@ -92,6 +92,7 @@ internal class NodesClassification(
         return LLMRequest.Chat(
             model = ctx.settings.model,
             provider = ctx.settings.provider,
+            connectionId = ctx.settings.connectionId,
             messages = messages,
             functions = emptyList(),
         )

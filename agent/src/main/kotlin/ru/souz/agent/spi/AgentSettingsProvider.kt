@@ -32,6 +32,8 @@ interface AgentSettingsProvider {
     /** Host-resolved provider request ID, including custom deployment selections. */
     fun executionModelId(model: LLMModel): String = model.alias
 
+    fun executionConnectionId(model: LLMModel): String? = null
+
     /** Whether the host prefers streaming LLM responses. */
     var useStreaming: Boolean
 

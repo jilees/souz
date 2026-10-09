@@ -36,6 +36,7 @@ class ToolInternetSearchTest {
     private val api = mockk<LLMChatAPI>()
     private val settingsProvider = mockk<SettingsProvider> {
         every { executionModelId(any()) } answers { firstArg<LLMModel>().alias }
+        every { executionConnectionId(any()) } returns null
     }
     private val webResearchClient = mockk<WebResearchClient>()
     private val filesToolUtil = mockk<FilesToolUtil>(relaxed = true)

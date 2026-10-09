@@ -4,6 +4,7 @@
 
 - Remote provider adapters receive host-owned `HttpClient` instances. They do not create, derive, or close clients.
 - Credentials, selected models, endpoints, sessions, and timeouts are request state and are applied explicitly to each request.
+- Backend named OpenAI connections use server keys resolved at startup. Cache execution adapters by provider and connection ID, never by provider alone; never substitute a legacy user OpenAI key for a named connection. See [configuration](../../../docs/backend-docker-sandbox-rollout.md#named-llm-connections).
 - Desktop may support Giga through its application-scoped transport and token state. Backend composition excludes Giga entirely.
 - The host that creates a provider transport closes it exactly once after in-flight application work is stopped.
 - OpenAI base URLs are normalized by `OpenAIEndpoint`. Only the semantically official HTTPS endpoint sends `stream_options.include_usage`; compatible custom endpoints omit that request option but still parse usage chunks they return.
@@ -22,7 +23,7 @@ Each Ktor client owns an engine, connection pool, plugins, and coroutine lifecyc
 - Use coroutine synchronization for token refresh and credential caches. Propagate cancellation and avoid JVM thread-local or monitor state.
 - Keep token accounting at the `LLMChatAPI` boundary, where normalized usage is available, rather than in HTTP middleware or provider adapters.
 - Keep custom OpenAI-compatible behavior explicit. Do not retry a rejected request with a different payload.
-- Resolve internal model selections with `executionModelId` when constructing requests and include their explicit provider. The desktop router and remote adapters forward exact IDs in streaming and ordinary calls; they do not guess models from prefixes or replace them with settings defaults. Classifiers pass typed requests to preserve routing metadata.
+- Resolve internal model selections with `executionModelId` when constructing requests and include their explicit provider and `executionConnectionId`. The desktop router and remote adapters forward exact IDs in streaming and ordinary calls; they do not guess models from prefixes or replace them with settings defaults. Classifiers pass typed requests to preserve routing metadata.
 - Jev uses a dedicated, host-owned OkHttp HTTP/1.1 transport with 60-second idle retention and connection-failure retries disabled. Reuse its pool across users and graph executions; close it with provider resources after application work stops. Credentials and model are fixed at adapter construction and applied per request. Resolve the adapter only when needed; the default LLM classifier requires no Jev configuration. Its probabilities are independent of conversational model routing and aggregate confidence. Validate every requested probability before applying category thresholds.
 
 ## Verification

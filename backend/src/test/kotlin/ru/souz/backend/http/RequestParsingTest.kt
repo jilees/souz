@@ -12,6 +12,8 @@ class RequestParsingTest {
     fun `parseModel trims and normalizes model names once at the request boundary`() {
         assertEquals(LLMModel.QwenMax, parseModel("  QWENMAX  ", fieldName = "defaultModel"))
         assertEquals(LLMModel.QwenMax, parseModel("  QWEN-MAX  ", fieldName = "defaultModel"))
+        assertEquals(ru.souz.llms.ChatModelSelection.Named("test-chat"),
+            parseModel(" test-chat ", "defaultModel", setOf("test-chat")))
     }
 
     @Test

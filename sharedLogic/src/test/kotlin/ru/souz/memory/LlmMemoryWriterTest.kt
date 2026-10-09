@@ -160,6 +160,7 @@ class LlmMemoryWriterTest {
     private fun settingsProvider(): SettingsProvider = mockk {
         every { gigaModel } returns LLMModel.AiTunnelGpt54Mini
         every { executionModelId(any()) } answers { firstArg<LLMModel>().alias }
+        every { executionConnectionId(any()) } returns null
     }
 
     private class RecordingChatApi(

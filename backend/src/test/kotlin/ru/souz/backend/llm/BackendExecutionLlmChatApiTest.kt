@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import ru.souz.backend.app.BackendLlmLimits
 import ru.souz.backend.app.BackendProviderRetryPolicy
@@ -60,6 +62,40 @@ import ru.souz.llms.restJsonMapper
 import kotlin.time.Duration.Companion.milliseconds
 
 class BackendExecutionLlmChatApiTest {
+    @Test
+    fun `named connections isolate identical model IDs keys streams and summarization`() {
+        withNamedLlmConfig { source ->
+            val requests = mutableListOf<CapturedRequest>()
+            val configured = ru.souz.backend.config.loadNamedLlmModels(source)
+            val settings = LlmSettingsStub().apply {
+                namedLlmModels = configured
+                openaiSummarizationModel = "shared-model"
+                openaiSummarizationBaseUrl = configured.connections.getValue("router").baseUrl
+                openaiSummarizationApiKey = configured.connections.getValue("router").apiKey
+            }
+            facadeFixture(settingsProvider = settings, providerApiOverride = null, client = recordingClient(requests)).use { fixture ->
+                runTest {
+                    listOf("test-chat", "tv-agent", "test-chat").map { name -> async {
+                        assertIs<LLMResponse.Chat.Ok>(fixture.api.message(chat(name)))
+                        assertIs<LLMResponse.Chat.Ok>(fixture.api.messageStream(chat(name)).toList().last())
+                    } }.awaitAll()
+                    val parent = chat("shared-model").copy(provider = LlmProvider.OPENAI, connectionId = "experiment")
+                    assertIs<LLMResponse.Chat.Ok>(fixture.api.message(parent.copy(isSummarization = true)))
+                    assertIs<LLMResponse.Chat.Error>(fixture.api.message(parent.copy(connectionId = "missing")))
+                    assertEquals(0, fixture.credentialResolver.calls.get())
+                    assertEquals(7, requests.size)
+                    assertEquals(4, requests.count { it.url == "https://experiment.test/v1/chat/completions" })
+                    requests.forEach {
+                        val key = if (it.url.contains("experiment.test")) "experiment-secret" else "router-secret"
+                        assertEquals("Bearer $key", it.authorization)
+                        assertEquals("shared-model", it.body["model"].asText())
+                        assertTrue(!it.body.has("connectionId") && !it.body.has("provider"))
+                    }
+                }
+            }
+        }
+    }
+
     @Test
     fun `raw routes preserve IDs across providers retries and stream accounting`() = runTest {
         val requests = mutableListOf<Pair<LlmProvider, LLMRequest.Chat>>()
@@ -414,25 +450,30 @@ private data class CapturedRequest(
     val body: JsonNode,
 )
 
-private fun recordingClient(requests: MutableList<CapturedRequest>): HttpClient =
-    HttpClient(
+private fun recordingClient(requests: MutableList<CapturedRequest>): HttpClient {
+    val captureMutex = Mutex()
+    return HttpClient(
         MockEngine { request ->
-            requests += CapturedRequest(
-                url = request.url.toString(),
-                authorization = request.headers[HttpHeaders.Authorization],
-                body = restJsonMapper.readTree(request.body.toByteArray()),
-            )
+            captureMutex.withLock {
+                requests += CapturedRequest(
+                    url = request.url.toString(),
+                    authorization = request.headers[HttpHeaders.Authorization],
+                    body = restJsonMapper.readTree(request.body.toByteArray()),
+                )
+            }
             respond(
-                content = OPENAI_CHAT_RESPONSE,
+                content = if (restJsonMapper.readTree(request.body.toByteArray())["stream"].asBoolean())
+                    "data: $OPENAI_CHAT_RESPONSE\n\ndata: [DONE]\n\n" else OPENAI_CHAT_RESPONSE,
                 headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
         }
     ) {
         providerHttpClientDefaults()
     }
+}
 
 private fun facadeFixture(
-    settingsProvider: LlmSettingsStub = LlmSettingsStub(),
+    settingsProvider: ru.souz.db.SettingsProvider = LlmSettingsStub(),
     credentialResolver: CountingCredentialResolver = CountingCredentialResolver("test-key"),
     retryPolicy: BackendProviderRetryPolicy = BackendProviderRetryPolicy(max429Retries = 0),
     initialUsage: LLMResponse.Usage = usage(0, 0, 0, 0),

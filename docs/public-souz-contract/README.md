@@ -12,6 +12,8 @@ A **chat** stores history; a **thread** is a task inside it. A **subscription** 
 
 ## Commands
 
+`message.submit.payload.meta.model` accepts a built-in model alias or a server-configured [model name](../backend-docker-sandbox-rollout.md#named-llm-connections). Omission uses the user's saved `defaultModel`. Unknown names are rejected; selection applies when a new execution starts.
+
 | Kind | Purpose |
 | --- | --- |
 | `chat.create` | Create or retrieve a chat with `requestId` and `payload:{userId,title?}`. ACK returns `chatId`; `clientType` comes from the socket. |

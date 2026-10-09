@@ -43,7 +43,7 @@ internal class BackendExecutionLlmChatApi(
 ) : LLMChatAPI {
     private val providerStateMutex = Mutex()
     private val credentials = mutableMapOf<LlmProvider, String?>()
-    private val providerApis = mutableMapOf<LlmProvider, LLMChatAPI>()
+    private val providerApis = mutableMapOf<Pair<LlmProvider, String?>, LLMChatAPI>()
 
     private val usageMutex = Mutex()
     private var usage = initialUsage
@@ -59,14 +59,14 @@ internal class BackendExecutionLlmChatApi(
                 baseUrl = settingsProvider.openaiSummarizationBaseUrl,
                 requestParameters = settingsProvider.openaiSummarizationParameters,
             )
-            val request = body.copy(model = summarizationModel, provider = LlmProvider.OPENAI, maxTokens = 0)
+            val request = body.copy(model = summarizationModel, provider = LlmProvider.OPENAI, connectionId = null, maxTokens = 0)
             return retryChat { callProvider(LlmProvider.OPENAI, request, api) }.also { recordUsage(it) }
         }
         val (provider, request) = when (val route = chatRoute(body)) {
             is ChatRoute.Ready -> route
             is ChatRoute.Rejected -> return route.error
         }
-        return retryChat { callProvider(provider, request, apiFor(provider)) }.also { recordUsage(it) }
+        return retryChat { callProvider(provider, request, apiFor(provider, request.connectionId)) }.also { recordUsage(it) }
     }
 
     override suspend fun messageStream(body: LLMRequest.Chat): Flow<LLMResponse.Chat> {
@@ -74,7 +74,7 @@ internal class BackendExecutionLlmChatApi(
             is ChatRoute.Ready -> route
             is ChatRoute.Rejected -> return flow { emit(route.error) }
         }
-        val api = apiFor(provider)
+        val api = apiFor(provider, request.connectionId)
         return retryingStream(provider, api, request)
     }
 
@@ -100,15 +100,15 @@ internal class BackendExecutionLlmChatApi(
 
     override suspend fun uploadFile(file: File): LLMResponse.UploadFile {
         val provider = currentProvider()
-        val api = apiFor(provider)
+        val api = apiFor(provider, settingsProvider.executionConnectionId(settingsProvider.gigaModel))
         return withProviderCall(hookBudget, provider) { api.uploadFile(file) }
     }
 
     override suspend fun downloadFile(fileId: String): String? =
-        apiFor(currentProvider()).downloadFile(fileId)
+        apiFor(currentProvider(), settingsProvider.executionConnectionId(settingsProvider.gigaModel)).downloadFile(fileId)
 
     override suspend fun balance(): LLMResponse.Balance =
-        apiFor(currentProvider()).balance()
+        apiFor(currentProvider(), settingsProvider.executionConnectionId(settingsProvider.gigaModel)).balance()
 
     suspend fun cumulativeUsage(): LLMResponse.Usage = usageMutex.withLock { usage }
 
@@ -122,6 +122,16 @@ internal class BackendExecutionLlmChatApi(
     private fun currentProvider(): LlmProvider = settingsProvider.gigaModel.provider
 
     private fun chatRoute(body: LLMRequest.Chat): ChatRoute {
+        body.connectionId?.let { id ->
+            if (body.provider != LlmProvider.OPENAI || id !in settingsProvider.namedLlmModels.connections) {
+                return ChatRoute.Rejected(LLMResponse.Chat.Error(-1, "Unknown OpenAI connection: $id."))
+            }
+        }
+        if (body.provider == null) settingsProvider.namedLlmModels.models[body.model]?.let { route ->
+            return ChatRoute.Ready(route.provider, body.copy(
+                model = route.modelId, provider = route.provider, connectionId = route.connectionId,
+            ))
+        }
         body.provider?.let { provider ->
             return if (provider in BackendLlmSupport.chatProviders) ChatRoute.Ready(provider, body)
             else rejectChatRoute(ModelResolution.UnsupportedProvider(body, provider))
@@ -133,20 +143,25 @@ internal class BackendExecutionLlmChatApi(
         )) {
             is ModelResolution.Resolved -> ChatRoute.Ready(
                 resolution.value.provider,
-                body.copy(model = settingsProvider.executionModelId(resolution.value), provider = resolution.value.provider),
+                body.copy(
+                    model = settingsProvider.executionModelId(resolution.value), provider = resolution.value.provider,
+                    connectionId = settingsProvider.executionConnectionId(resolution.value),
+                ),
             )
             else -> rejectChatRoute(resolution)
         }
     }
 
-    private suspend fun apiFor(provider: LlmProvider): LLMChatAPI {
+    private suspend fun apiFor(provider: LlmProvider, connectionId: String? = null): LLMChatAPI {
         if (provider == LlmProvider.GIGA) error(BackendLlmSupport.GIGA_UNSUPPORTED_MESSAGE)
         require(provider in BackendLlmSupport.chatProviders) {
             "Provider $provider is not supported by the backend."
         }
         if (provider == LlmProvider.LOCAL && providerApiOverride == null) return localChatApi
         return providerStateMutex.withLock {
-            providerApis[provider]?.let { return@withLock it }
+            val cacheKey = provider to connectionId
+            providerApis[cacheKey]?.let { return@withLock it }
+            val connection = connectionId?.let(settingsProvider.namedLlmModels.connections::getValue)
             val api = providerApiOverride?.invoke(provider) ?: when (provider) {
                 LlmProvider.OPENAI,
                 LlmProvider.AI_TUNNEL,
@@ -158,7 +173,8 @@ internal class BackendExecutionLlmChatApi(
                         LlmProvider.OPENAI -> httpClients.openAi
                         else -> httpClients.standard
                     },
-                    apiKey = resolveCredentialLocked(provider),
+                    apiKey = connection?.apiKey ?: resolveCredentialLocked(provider),
+                    baseUrl = connection?.baseUrl,
                 )
                 LlmProvider.ANTHROPIC -> AnthropicChatAPI(
                     settingsProvider,
@@ -173,7 +189,7 @@ internal class BackendExecutionLlmChatApi(
                 LlmProvider.LOCAL -> localChatApi
                 LlmProvider.GIGA -> error(BackendLlmSupport.GIGA_UNSUPPORTED_MESSAGE)
             }
-            providerApis[provider] = api
+            providerApis[cacheKey] = api
             api
         }
     }
