@@ -70,7 +70,7 @@ Durable replay preserves the event's original device values, including omission 
 
 ## Intermediate assistant messages
 
-Progress is opt-in through the trusted settings API: `PATCH /v1/settings` with `{"narrateSteps":true}`. Settings responses expose the effective value, defaulting to `false`. The preference controls the additive RU/EN prompt instruction and live WebSocket, Telegram, and VK delivery independently of `streamingMessages` and `showToolEvents`. Each execution snapshots it, including option continuations; settings changes affect subsequent executions.
+Progress is opt-in through the trusted settings API: `PATCH /v1/me/settings` with `{"narrateSteps":true}`. Settings responses expose the effective value, defaulting to `false`. The preference controls the additive RU/EN prompt instruction and live WebSocket, Telegram, and VK delivery independently of `streamingMessages` and `showToolEvents`. Each execution snapshots it, including option continuations; settings changes affect subsequent executions.
 
 `assistant.message` carries one complete, nonblank assistant text block in `payload:{"content":"Let me check.","deviceId":"device-tv-456","deviceType":"tv_box"}`. An accepted LLM response containing tool calls can produce several such events, in the original block order, before those tools execute. Separate blocks stay separate, including repeated text. Streaming providers assemble the full response and pass the agent's acceptance check first; stream chunks are not messages. Reasoning, discarded attempts and final answers do not produce these events.
 
