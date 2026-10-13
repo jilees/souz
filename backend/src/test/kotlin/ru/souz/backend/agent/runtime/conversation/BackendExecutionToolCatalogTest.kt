@@ -8,6 +8,7 @@ import ru.souz.backend.testutil.TestToolCatalog
 import ru.souz.backend.testutil.TestToolSetup
 import ru.souz.llms.LLMRequest
 import ru.souz.tool.LLM_BACKED_TOOL_NAMES
+import ru.souz.backend.personality.PersonalityTool
 import ru.souz.tool.ToolCategory
 import ru.souz.tool.web.ToolWebImageSearch
 
@@ -15,7 +16,7 @@ class BackendExecutionToolCatalogTest {
     @Test
     fun `catalog filters compiled tools preserves client tools and selects the search provider`() {
         val selections = mapOf(
-            null to (setOf("ReadFile", "WebPageText", "ControlBrowser") + LLM_BACKED_TOOL_NAMES),
+            null to (setOf("ReadFile", "WebPageText", "ControlBrowser") + LLM_BACKED_TOOL_NAMES + PersonalityTool.NAME),
             setOf("ReadFile") to setOf("ReadFile"),
             setOf("InternetSearch") to setOf("InternetSearch"),
         )
@@ -82,7 +83,8 @@ class BackendExecutionToolCatalogTest {
                 ToolCategory.BROWSER to listOf("ControlBrowser"),
             ),
             executionLlmToolCatalog = TestToolCatalog(
-                ToolCategory.WEB_SEARCH to BackendToolCapabilityPolicy.executionBoundToolNames.toList(),
+                ToolCategory.WEB_SEARCH to LLM_BACKED_TOOL_NAMES.toList(),
+                ToolCategory.CONFIG to listOf(PersonalityTool.NAME, "UnsafeLocalSettings"),
             ),
             enabledCompiledToolNames = enabledCompiledToolNames,
             clientToolCatalog = TestToolCatalog(

@@ -53,6 +53,8 @@ Only these direct production project dependencies are allowed. Standard test-sou
 
 ## Optional backend capabilities
 
+- [User personality](docs/personality-settings.md) is independent of the system prompt and synchronizes to Orion.
+
 - [Named OpenAI-compatible connections](docs/backend-docker-sandbox-rollout.md#named-llm-connections) provide server-configured model names for user settings, subagents and summarization.
 
 - Manual VPS deployment and the legacy hook database transition are documented in [the runtime guide](docs/backend-docker-sandbox-rollout.md).

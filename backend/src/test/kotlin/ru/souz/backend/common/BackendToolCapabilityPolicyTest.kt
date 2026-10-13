@@ -6,6 +6,7 @@ import kotlin.test.assertTrue
 import ru.souz.agent.spi.AgentToolCatalog
 import ru.souz.backend.testutil.TestToolCatalog
 import ru.souz.tool.LLM_BACKED_TOOL_NAMES
+import ru.souz.backend.personality.PersonalityTool
 import ru.souz.tool.ToolCategory
 import ru.souz.tool.web.ToolWebImageSearch
 
@@ -17,7 +18,7 @@ class BackendToolCapabilityPolicyTest {
         assertTrue(ToolCategory.WEB_SEARCH in BackendToolCapabilityPolicy.safeCategories)
         assertEquals(
             setOf("ReadFile", "WebPageText", "ControlBrowser", "ListActiveChannels", "SendMessageToChannel") +
-                LLM_BACKED_TOOL_NAMES,
+                LLM_BACKED_TOOL_NAMES + PersonalityTool.NAME,
             names,
         )
         assertEquals(names, executionToolNames(enabledToolNames = null))
@@ -55,7 +56,8 @@ class BackendToolCapabilityPolicyTest {
         BackendToolCapabilityPolicy.selectExecutionTools(
             processToolCatalog = processCatalog(),
             executionLlmToolCatalog = TestToolCatalog(
-                ToolCategory.WEB_SEARCH to BackendToolCapabilityPolicy.executionBoundToolNames.toList(),
+                ToolCategory.WEB_SEARCH to LLM_BACKED_TOOL_NAMES.toList(),
+                ToolCategory.CONFIG to listOf(PersonalityTool.NAME, "UnsafeLocalSettings"),
             ),
             enabledToolNames = enabledToolNames,
             clientSearchEnabled = clientSearchEnabled,

@@ -30,6 +30,8 @@ data class UserSettings(
     val locale: Locale? = null,
     val timeZone: ZoneId? = null,
     val systemPrompt: String? = null,
+    val personalityPrompt: String? = null,
+    val personalityRevision: Long = 1,
     val enabledTools: Set<String>? = null,
     val showToolEvents: Boolean? = null,
     val streamingMessages: Boolean? = null,

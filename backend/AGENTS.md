@@ -19,6 +19,7 @@ Before changing this module, read the [pain-point index](docs/pain-points.md) an
 - Hook intake capacity is isolated per configured owner and survives reload. Verifier commands use the trusted owner's configured LOCAL/DOCKER sandbox through `SandboxCommandExecutor`, before Skill discovery or LLM use. They share that sandbox's permissions and do not create a separate verification container.
 - Scheduled-task tools are compiled Kotlin operations, filtered by `enabledTools`. Orion owns titles and schedules; ordinary hook manifests remain unchanged. Generated prompts preserve the originating user channel as a default delivery destination across edits, independently of scheduler RPC routing. Use the live-only client dispatcher for internal scheduler RPC, including same-channel calls, so Bearer credentials never enter durable events/tool audit. See [scheduled tasks](../docs/scheduled-tasks.md).
 - Give each ordinary HTTP route explicit OpenAPI metadata. Keep the WebSocket routes out of the generated document and maintain its schema in `docs/public-souz-contract`.
+- Keep [personality](../docs/personality-settings.md) independent of system prompts and ordinary settings writes.
 
 ## Verification
 

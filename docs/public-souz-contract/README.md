@@ -32,6 +32,8 @@ With `HINDSIGHT_API_URL` configured and `SOUZ_FEATURE_WS_AUTOMATIC_MEMORY_RECALL
 
 Every public `tool.call.started` requests client execution and omits `target`. Return `tool.result`, respecting `deadlineAt` when present. The example covers `user.ask`, `device.media.open` and `web.search`; argument/result shapes are documented in the schemas and trace.
 
+`prompt.personality.set` synchronizes [user personality](../personality-settings.md) on connection and after changes through live `seq:null` events.
+
 Cross-channel client Skills accept `channelId` from `ListActiveChannels`. The target must be an owned,
 unarchived device channel with a live subscription on the caller's backend process. Cross-channel
 `user.ask` also requires the [destination device context](#destination-device) described below. Souz removes

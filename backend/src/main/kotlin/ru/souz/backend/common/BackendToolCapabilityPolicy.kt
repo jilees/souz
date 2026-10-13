@@ -1,6 +1,7 @@
 package ru.souz.backend.common
 
 import ru.souz.agent.spi.AgentToolCatalog
+import ru.souz.backend.personality.PersonalityTool
 import ru.souz.tool.LLM_BACKED_TOOL_NAMES
 import ru.souz.tool.ToolCategory
 import ru.souz.tool.composeToolCatalogs
@@ -30,7 +31,7 @@ object BackendToolCapabilityPolicy {
     )
 
     /** Advertised tools whose LLM dependency is bound per execution, so no process catalog holds them. */
-    val executionBoundToolNames: Set<String> = LLM_BACKED_TOOL_NAMES
+    val executionBoundToolNames: Set<String> = LLM_BACKED_TOOL_NAMES + PersonalityTool.NAME
 
     /** Tools that sit in a safe category yet are neither advertised nor executable on the backend. */
     val deniedToolNames: Set<String> = setOf(ToolWebImageSearch.NAME)
@@ -64,7 +65,9 @@ object BackendToolCapabilityPolicy {
     private fun hostableTools(catalog: AgentToolCatalog, allow: (String) -> Boolean = { true }): AgentToolCatalog =
         immutableToolCatalogSnapshot(
             catalog.toolsByCategory
-                .filterKeys { category -> category in safeCategories }
-                .mapValues { (_, tools) -> tools.filterKeys { it !in deniedToolNames && allow(it) } }
+                .filterKeys { category -> category in safeCategories || category == ToolCategory.CONFIG }
+                .mapValues { (category, tools) -> tools.filterKeys {
+                    it !in deniedToolNames && allow(it) && (category != ToolCategory.CONFIG || it == PersonalityTool.NAME)
+                } }
         )
 }

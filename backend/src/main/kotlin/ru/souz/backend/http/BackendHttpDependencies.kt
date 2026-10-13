@@ -4,6 +4,7 @@ import ru.souz.backend.bootstrap.BackendBootstrapService
 import ru.souz.backend.chat.service.ChatService
 import ru.souz.backend.chat.service.MessageService
 import ru.souz.backend.client.PublicClientService
+import ru.souz.backend.personality.PersonalitySync
 import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.events.service.AgentEventService
 import ru.souz.backend.execution.service.AgentExecutionService
@@ -28,6 +29,7 @@ internal data class BackendHttpDependencies(
     val optionService: OptionService,
     val eventService: AgentEventService,
     val publicClientService: PublicClientService,
+    val personalitySync: PersonalitySync,
     val hookService: HookService,
     val telegramBotBindingService: TelegramBotBindingService? = null,
     val vkBotBindingService: VkBotBindingService? = null,

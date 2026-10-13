@@ -4,6 +4,8 @@ Read the topics relevant to the code you plan to change in `:backend`.
 
 ## Topics
 
+- [Personality](../../docs/personality-settings.md) — persistence, current-turn style and Orion delivery.
+
 - [Workspace hooks](pain-points/hooks.md) — trusted ownership, admission, persistent call budgets, sequential dispatch and single-process recovery.
 - [Scheduled task scope](pain-points/scheduled-tasks.md) — Orion ownership, partial mutations, secret-safe live transport and deferred task-purpose classification.
 

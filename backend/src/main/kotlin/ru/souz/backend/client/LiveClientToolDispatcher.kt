@@ -22,7 +22,7 @@ internal class LiveClientToolDispatcher(
             it.clientType in types && events.hasLiveSubscriber(userId, chatId)
         }
 
-    suspend fun schedulerChannel(userId: String, explicit: UUID?, preferred: UUID?): Chat? {
+    suspend fun orionChannel(userId: String, explicit: UUID?, preferred: UUID?): Chat? {
         val types = setOf("backend")
         if (explicit != null) return resolve(userId, explicit, types)
         if (preferred != null) resolve(userId, preferred, types)?.let { return it }
@@ -30,8 +30,14 @@ internal class LiveClientToolDispatcher(
             .firstOrNull { it.clientType in types && events.hasLiveSubscriber(userId, it.id) }
     }
 
-    suspend fun call(chat: Chat, name: String, arguments: Map<String, Any>, timeout: Duration): ClientToolOutcome {
-        val threadId = UUID.randomUUID()
+    suspend fun call(
+        chat: Chat,
+        name: String,
+        arguments: Map<String, Any>,
+        timeout: Duration,
+        sourceThreadId: UUID? = null,
+    ): ClientToolOutcome {
+        val threadId = sourceThreadId ?: UUID.randomUUID()
         val context = ToolCallContext(chat.userId, chat.id.toString(), threadId.toString(), UUID.randomUUID().toString())
         val deadline = now().plus(timeout)
         return registry.withChannelTool(context, deadline) { pending ->
