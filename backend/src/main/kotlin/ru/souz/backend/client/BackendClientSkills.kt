@@ -18,6 +18,8 @@ import ru.souz.backend.channels.ChannelDeliveryService
 import ru.souz.backend.events.model.AgentEventType
 import ru.souz.backend.events.model.PublicToolCallStartedPayload
 import ru.souz.backend.events.service.AgentEventService
+import ru.souz.backend.metrics.BackendMetrics
+import ru.souz.backend.metrics.metricOutcome
 import ru.souz.backend.toolcall.model.ToolCallStatus
 import ru.souz.backend.toolcall.repository.ToolCallContext
 import ru.souz.backend.toolcall.repository.ToolCallRepository
@@ -30,19 +32,18 @@ import ru.souz.llms.restJsonMapper
 import ru.souz.tool.ToolCategory
 
 internal class BackendClientSkills(
-    private val registry: ClientThreadRuntimeRegistry,
-    private val toolCallRepository: ToolCallRepository,
-    private val eventService: AgentEventService,
-    private val channelDeliveryService: ChannelDeliveryService,
-    private val now: () -> Instant = Instant::now,
+    registry: ClientThreadRuntimeRegistry,
+    toolCallRepository: ToolCallRepository,
+    eventService: AgentEventService,
+    channelDeliveryService: ChannelDeliveryService,
+    now: () -> Instant = Instant::now,
+    metrics: BackendMetrics? = null,
     classLoader: ClassLoader = BackendClientSkills::class.java.classLoader,
 ) : AgentToolCatalog {
-    private val liveDispatcher = LiveClientToolDispatcher(registry, eventService, channelDeliveryService, now)
-    private val definitionsById: Map<SkillId, ClientSkillDefinition> =
-        loadClientSkillDefinitions(classLoader)
+    private val liveDispatcher = LiveClientToolDispatcher(registry, eventService, channelDeliveryService, now, metrics)
 
     override val toolsByCategory: Map<ToolCategory, Map<String, LLMToolSetup>> =
-        definitionsById.values
+        loadClientSkillDefinitions(classLoader).values
             .groupBy { it.category }
             .mapValues { (_, definitions) ->
                 Collections.unmodifiableMap(
@@ -54,6 +55,7 @@ internal class BackendClientSkills(
                             eventService = eventService,
                             liveDispatcher = liveDispatcher,
                             now = now,
+                            metrics = metrics,
                         )
                     },
                 )
@@ -68,8 +70,10 @@ private class ClientWebSocketSkill(
     private val eventService: AgentEventService,
     private val liveDispatcher: LiveClientToolDispatcher,
     private val now: () -> Instant,
+    private val metrics: BackendMetrics?,
 ) : LLMToolSetup {
     private val timeout = definition.timeout
+    private val metricCategory = definition.category.name.lowercase()
 
     override val fn = LLMRequest.Function(
         name = definition.skillId.value,
@@ -78,24 +82,48 @@ private class ClientWebSocketSkill(
     )
 
     override suspend fun invoke(functionCall: LLMResponse.FunctionCall): LLMRequest.Message =
-        errorMessage(functionCall.name, "client_context_missing", "Client tool context is unavailable.")
+        outcomeMessage(functionCall.name, failed("client_context_missing", "Client tool context is unavailable."))
 
+    // Count cancellation synchronously before propagating it to the caller.
+    @Suppress("SuspendFunSwallowedCancellation")
     override suspend fun invoke(
         functionCall: LLMResponse.FunctionCall,
         meta: ToolInvocationMeta,
     ): LLMRequest.Message {
+        val started = System.nanoTime()
+        var outcome = "error"
+        metrics?.toolStarted()
+        try {
+            val result = invokeClient(functionCall, meta)
+            outcome = when (result.status) {
+                "succeeded" -> "success"
+                "timed_out" -> "timeout"
+                "cancelled" -> "cancelled"
+                else -> "error"
+            }
+            return outcomeMessage(functionCall.name, result)
+        } catch (failure: Throwable) {
+            outcome = failure.metricOutcome()
+            throw failure
+        } finally {
+            metrics?.toolFinished()
+            metrics?.toolOutcome(metricCategory, outcome, System.nanoTime() - started)
+        }
+    }
+
+    private suspend fun invokeClient(functionCall: LLMResponse.FunctionCall, meta: ToolInvocationMeta): ClientToolOutcome {
         if ("channelId" in functionCall.arguments) return invokeOnChannel(functionCall, meta)
         val threadId = meta.requestId?.let { raw -> runCatching { UUID.fromString(raw) }.getOrNull() }
-            ?: return errorMessage(functionCall.name, "client_context_missing", "Thread ID is unavailable.")
+            ?: return failed("client_context_missing", "Thread ID is unavailable.")
         val chatId = meta.conversationId?.let { raw -> runCatching { UUID.fromString(raw) }.getOrNull() }
-            ?: return errorMessage(functionCall.name, "client_context_missing", "Chat ID is unavailable.")
+            ?: return failed("client_context_missing", "Chat ID is unavailable.")
         val toolCallId = UUID.randomUUID().toString()
         val pending = PendingClientTool(toolCallId)
         val device = when (val beginTool = registry.beginTool(threadId, pending)) {
             BeginClientToolResult.Missing ->
-                return errorMessage(functionCall.name, "client_context_missing", "Client device is unavailable. Use ListActiveChannels and pass channelId to reach another device.")
+                return failed("client_context_missing", "Client device is unavailable. Use ListActiveChannels and pass channelId to reach another device.")
             BeginClientToolResult.Busy ->
-                return errorMessage(functionCall.name, "client_tool_busy", "Another client tool call is already pending.")
+                return failed("client_tool_busy", "Another client tool call is already pending.")
             is BeginClientToolResult.Started -> beginTool.device
         }
         val startedAt = now()
@@ -126,8 +154,9 @@ private class ClientWebSocketSkill(
                     deadlineAt = deadlineAt.toString(),
                 ),
             )
-            val outcome = awaitResultUntilDeadline(context, threadId, toolCallId, pending, deadlineAt)
-            return outcomeMessage(functionCall.name, outcome)
+            return metrics?.executions?.beginClientWait(threadId).use {
+                awaitResultUntilDeadline(context, threadId, toolCallId, pending, deadlineAt)
+            }
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) {
                 cancel(context)
@@ -139,38 +168,35 @@ private class ClientWebSocketSkill(
                     failStartedCall(context, error)
                 }
             }
-            return errorMessage(functionCall.name, "client_tool_failed", error.message ?: "Client tool failed.")
+            return failed("client_tool_failed", error.message ?: "Client tool failed.")
         } finally {
-            registry.clearTool(threadId, toolCallId)
+            withContext(NonCancellable) { registry.clearTool(threadId, toolCallId) }
         }
     }
 
     private suspend fun invokeOnChannel(
         functionCall: LLMResponse.FunctionCall,
         meta: ToolInvocationMeta,
-    ): LLMRequest.Message {
+    ): ClientToolOutcome {
         val chatId = (functionCall.arguments["channelId"] as? String)
             ?.let { runCatching { UUID.fromString(it.trim()) }.getOrNull() }
-            ?: return errorMessage(functionCall.name, "client_context_missing", "channelId must be a UUID.")
+            ?: return failed("client_context_missing", "channelId must be a UUID.")
         val chat = liveDispatcher.resolve(meta.userId, chatId, supportedClientTypes)
-            ?: return errorMessage(functionCall.name, "client_context_missing", "No device is connected on that channel.")
-        return outcomeMessage(functionCall.name, liveDispatcher.call(
-            chat, fn.name, functionCall.arguments - "channelId", timeout,
-        ))
+            ?: return failed("client_context_missing", "No device is connected on that channel.")
+        val sourceExecution = meta.requestId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        return liveDispatcher.call(chat, fn.name, functionCall.arguments - "channelId", timeout, sourceExecution)
     }
 
     private fun outcomeMessage(functionName: String, outcome: ClientToolOutcome): LLMRequest.Message =
         LLMRequest.Message(
             role = LLMMessageRole.function,
-            content = when (outcome.status) {
-                "succeeded" -> restJsonMapper.writeValueAsString(outcome.result)
-                else -> restJsonMapper.writeValueAsString(
-                    mapOf(
-                        "status" to outcome.status,
-                        "error" to (outcome.error ?: ClientError("client_tool_failed", "Client tool failed.")),
-                    )
+            content = restJsonMapper.writeValueAsString(when (outcome.status) {
+                "succeeded" -> outcome.result
+                else -> mapOf(
+                    "status" to outcome.status,
+                    "error" to (outcome.error ?: ClientError("client_tool_failed", "Client tool failed.")),
                 )
-            },
+            }),
             name = functionName,
         )
 
@@ -237,12 +263,7 @@ private class ClientWebSocketSkill(
         )
     }
 
-    private fun errorMessage(functionName: String, code: String, message: String): LLMRequest.Message =
-        LLMRequest.Message(
-            role = LLMMessageRole.function,
-            content = restJsonMapper.writeValueAsString(mapOf("error" to ClientError(code, message))),
-            name = functionName,
-        )
+    private fun failed(code: String, message: String) = ClientToolOutcome("failed", null, ClientError(code, message))
 }
 
 private data class ClientSkillDefinition(

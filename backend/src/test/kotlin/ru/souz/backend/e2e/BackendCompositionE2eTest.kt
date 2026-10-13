@@ -256,6 +256,9 @@ class BackendCompositionE2eTest {
 
             assertEquals(HttpStatusCode.OK, bootstrap.status)
             assertEquals(userId, bootstrap.jsonBody()["user"]["id"].asText())
+            val toolNames = bootstrap.jsonBody()["capabilities"]["tools"].map { it["name"].asText() }.toSet()
+            assertTrue(toolNames.containsAll(setOf("ViewImage", "GenerateImage")))
+            assertTrue((toolNames intersect setOf("InternetSearch", "InternetResearch", "WebPageText", "WebImageSearch")).isEmpty())
             val models = bootstrap.jsonBody()["capabilities"]["models"]
             assertTrue(models.any { model ->
                 model["model"].asText() == E2E_LOCAL_MODEL.alias && model["serverManagedKey"].asBoolean()
@@ -352,6 +355,7 @@ class BackendCompositionE2eTest {
         val expectedWithoutTelegram = linkedMapOf(
             "/" to setOf("get"),
             "/health" to setOf("get"),
+            "/metrics" to setOf("get"),
             "/hooks/{hookId}" to setOf("post"),
             "/v1/hooks/reload" to setOf("post"),
             "/v1/hooks/receipts/{receiptId}" to setOf("get"),
@@ -404,7 +408,7 @@ class BackendCompositionE2eTest {
                         .filter { it.key in methods }
                         .forEach { (method, operation) ->
                             val publicOperation =
-                                path == "/" || path == "/health" ||
+                                path == "/" || path == "/health" || path == "/metrics" ||
                                     (path == "/v1/chats" && method == "post") ||
                                     (path == "/v1/chats/{chatId}/threads/{threadId}" && method == "get")
                             if (path == "/hooks/{hookId}") {

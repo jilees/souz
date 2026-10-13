@@ -43,6 +43,7 @@ class BackendPublicWebSocketE2eTest {
             val chatId = createPublicChat(userId)
             val wsClient = webSocketClient()
             val session = wsClient.webSocketSession("${BackendHttpRoutes.chatWebSocket(chatId)}?clientType=backend")
+            val sockets = backend.dependencies.metrics.registry.get("souz.ws.connections.active").gauge()
 
             val initialFrame = messageFrame(chatId, userId, "message-1", null, "hello socket", "device-1")
             session.send(Frame.Text(initialFrame))
@@ -59,6 +60,7 @@ class BackendPublicWebSocketE2eTest {
             assertEquals("event", terminal["kind"].asText())
             assertEquals("thread.completed", terminal["type"].asText())
             assertEquals(threadId, terminal["threadId"].asText())
+            assertEquals(1.0, sockets.value())
 
             val queried = client.get("${BackendHttpRoutes.chatThread(chatId, threadId)}?clientType=backend")
             assertEquals(HttpStatusCode.OK, queried.status)
@@ -70,6 +72,7 @@ class BackendPublicWebSocketE2eTest {
             assertEquals("rejected", rejected["status"].asText())
             assertEquals("thread_already_terminal", rejected["error"]["code"].asText())
             session.close()
+            eventually("released socket gauge") { sockets.value().takeIf { it == 0.0 } }
 
             val replay = wsClient.webSocketSession("${BackendHttpRoutes.chatWebSocket(chatId)}?clientType=backend&afterSeq=0")
             val replayedTerminal = readJson(replay)
@@ -413,6 +416,7 @@ class BackendPublicWebSocketE2eTest {
         ) {
             val userId = UUID.randomUUID().toString()
             val chatId = createPublicChat(userId)
+            val metrics = backend.dependencies.metrics.registry
             withPublicSocket(chatId) { session ->
                 session.send(Frame.Text(messageFrame(chatId, userId, "message-tool", null, "ask me", "device-tool")))
                 val messageAck = readJson(session)
@@ -426,6 +430,7 @@ class BackendPublicWebSocketE2eTest {
                 assertFalse(started["payload"].has("target"))
                 assertEquals("device-tool", started["payload"]["deviceId"].asText())
                 assertEquals("Which genre?", started["payload"]["arguments"]["question"].asText())
+                assertEquals(2.0, metrics.get("souz.pending.tool.calls").gauge().value()) // Skill helper and client transport.
 
                 withPublicSocket(chatId) { replay ->
                     assertEquals(started, readJson(replay))
@@ -458,11 +463,13 @@ class BackendPublicWebSocketE2eTest {
                 val conflict = readJson(session)
                 assertEquals("rejected", conflict["status"].asText())
                 assertEquals("idempotency_conflict", conflict["error"]["code"].asText())
+                assertEquals(0.0, metrics.get("souz.pending.tool.calls").gauge().value())
+                assertEquals(1.0, metrics.get("souz.tool.calls").tags("category", "chat", "outcome", "success").counter().count())
             }
         }
 
     @Test
-    fun `client web search replaces short search and returns documents without device capabilities`() =
+    fun `client web search is the only web skill and returns documents without device capabilities`() =
         backendE2eTest("e2e_ws_web_search", llm = E2eLlmApi().apply {
             requestSkill("web.search", mapOf("query" to "Когда открывается музей?"))
         }) {
@@ -497,9 +504,7 @@ class BackendPublicWebSocketE2eTest {
                 assertEquals("thread.completed", readJson(session)["type"].asText())
 
                 val inventory = llm.requests.first().messages.first { it.role == LLMMessageRole.system }.content
-                assertTrue(inventory.contains("web.search"))
-                assertFalse(inventory.contains("InternetSearch"))
-                assertTrue(inventory.contains("InternetResearch") && inventory.contains("WebPageText"))
+                assertEquals("- WEB_SEARCH: web.search", inventory.lineSequence().single { it.startsWith("- WEB_SEARCH:") })
                 val results = llm.requests.last().messages.filter { it.role == LLMMessageRole.function }
                 val discovered = json.readTree(results.single { it.name == "GetSkillByName" }.content)
                 assertEquals("web.search", discovered["skill"]["skillId"].asText())
@@ -538,6 +543,9 @@ class BackendPublicWebSocketE2eTest {
                 val duplicate = readJson(session)
                 assertEquals("accepted", duplicate["status"].asText())
                 assertTrue(duplicate["duplicate"].asBoolean())
+                val metrics = backend.dependencies.metrics.registry
+                assertEquals(0.0, metrics.get("souz.pending.tool.calls").gauge().value())
+                assertEquals(1.0, metrics.get("souz.tool.calls").tags("category", "chat", "outcome", "timeout").counter().count())
             }
         }
 
@@ -650,6 +658,9 @@ class BackendPublicWebSocketE2eTest {
                 val rejected = readJson(session)
                 assertEquals("rejected", rejected["status"].asText())
                 assertEquals("idempotency_conflict", rejected["error"]["code"].asText())
+                val metrics = backend.dependencies.metrics.registry
+                assertEquals(0.0, metrics.get("souz.pending.tool.calls").gauge().value())
+                assertEquals(1.0, metrics.get("souz.tool.calls").tags("category", "chat", "outcome", "cancelled").counter().count())
             }
         }
 

@@ -53,7 +53,7 @@ Existing hooks are never changed or removed when the initial schedule lookup is 
 
 Mutation locks cover the full operation, including RPC, per workspace: one shared LOCAL workspace lock or one DOCKER owner workspace lock. These are process-local locks; they do not serialize manual filesystem edits. Before a later write/removal, the tool checks the expected definition and revision again. It deletes hook.yaml and an empty containing directory only, leaving unrelated files intact. Creation respects the loader's 100-directory workspace limit.
 
-Task purpose classification, retry delivery, distributed coordination, orphan reconciliation and automatic cleanup of completed tasks are deferred; see [pain points](../backend/docs/pain-points/scheduled-tasks.md).
+Task purpose classification, retry delivery, distributed coordination, orphan reconciliation and automatic cleanup of completed tasks are deferred; see [pain points](../backend/docs/scheduled-tasks.md).
 
 ## Implementation and verification
 

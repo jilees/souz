@@ -71,8 +71,6 @@ import ru.souz.backend.storage.postgres.PostgresUserRepository
 import ru.souz.backend.storage.postgres.PostgresUserProviderKeyRepository
 import ru.souz.backend.storage.postgres.PostgresUserSettingsRepository
 import ru.souz.backend.telegram.TelegramBotBindingRepository
-import ru.souz.backend.telegram.TelegramBotBindingService
-import ru.souz.backend.vk.VkBotBindingService
 import ru.souz.backend.user.repository.UserRepository
 import ru.souz.memory.CompletedTurnEvidence
 import ru.souz.memory.CompletedTurnEvidenceKind
@@ -88,6 +86,8 @@ import ru.souz.tool.knowledge.ToolGetKnowledge
 import ru.souz.tool.knowledge.ToolSearchKnowledge
 import ru.souz.tool.memory.ToolSearchMemory
 import ru.souz.tool.skills.SkillCommandExecutor
+import ru.souz.jobs.JobService
+import ru.souz.jobs.impl.PostgresJobService
 
 class BackendDiModuleTest {
     @Test
@@ -222,6 +222,8 @@ class BackendDiModuleTest {
             assertIs<PostgresUserProviderKeyRepository>(di.direct.instance<UserProviderKeyRepository>())
             assertIs<PostgresTelegramBotBindingRepository>(di.direct.instance<TelegramBotBindingRepository>())
             assertIs<PostgresVkBotBindingRepository>(di.direct.instance<PostgresVkBotBindingRepository>())
+            assertIs<PostgresJobService>(di.direct.instance<JobService>())
+            assertSame(di.direct.instance<JobService>(), di.direct.instance<PostgresJobService>())
             assertIs<PostgresBackendServerPreferenceStore>(di.direct.instance<BackendServerPreferenceStore>())
             assertIs<BackendSettingsProvider>(di.direct.instance<ru.souz.db.SettingsProvider>())
             assertIs<UserProviderKeyService>(di.direct.instance<UserProviderKeyService>())
@@ -295,48 +297,6 @@ class BackendDiModuleTest {
     }
 
     @Test
-    fun `http dependencies include telegram binding when feature is enabled`() {
-        val appConfig = testAppConfig(
-            featureFlags = BackendFeatureFlags(telegramBot = true),
-            telegramTokenEncryptionKey = TEST_TELEGRAM_TOKEN_ENCRYPTION_KEY,
-        )
-        val dataSource = HikariDataSource()
-        val di = testDi(appConfig, dataSource)
-
-        try {
-            val httpDependencies = di.direct.instance<BackendHttpDependencies>()
-
-            assertSame(
-                di.direct.instance<TelegramBotBindingService>(),
-                httpDependencies.telegramBotBindingService,
-            )
-        } finally {
-            di.direct.instance<BackendRuntimeResources>().close()
-        }
-    }
-
-    @Test
-    fun `http dependencies include vk binding when feature is enabled`() {
-        val appConfig = testAppConfig(
-            featureFlags = BackendFeatureFlags(vkBot = true),
-            vkTokenEncryptionKey = TEST_VK_TOKEN_ENCRYPTION_KEY,
-        )
-        val dataSource = HikariDataSource()
-        val di = testDi(appConfig, dataSource)
-
-        try {
-            val httpDependencies = di.direct.instance<BackendHttpDependencies>()
-
-            assertSame(
-                di.direct.instance<VkBotBindingService>(),
-                httpDependencies.vkBotBindingService,
-            )
-        } finally {
-            di.direct.instance<BackendRuntimeResources>().close()
-        }
-    }
-
-    @Test
     fun `backend catalog excludes desktop sound configuration tools`() {
         val dataSource = HikariDataSource()
         val di = testDi(testAppConfig(), dataSource)
@@ -390,12 +350,9 @@ class BackendDiModuleTest {
     }
 
     private fun testAppConfig(
-        featureFlags: BackendFeatureFlags = BackendFeatureFlags(),
-        telegramTokenEncryptionKey: String? = null,
-        vkTokenEncryptionKey: String? = null,
         includeSkillOAuthConfig: Boolean = true,
     ): BackendAppConfig = BackendAppConfig(
-        featureFlags = featureFlags,
+        featureFlags = BackendFeatureFlags(),
         server = BackendServerConfig(
             host = "127.0.0.1",
             port = 8080,
@@ -412,8 +369,6 @@ class BackendDiModuleTest {
             connectionTimeoutMs = 30_000L,
         ),
         masterKey = "test-master-key",
-        telegramTokenEncryptionKey = telegramTokenEncryptionKey,
-        vkTokenEncryptionKey = vkTokenEncryptionKey,
         skillOAuthTokenEncryptionKey = if (includeSkillOAuthConfig) TEST_SKILL_OAUTH_TOKEN_ENCRYPTION_KEY else null,
         skillOAuthProviderCredentials = if (includeSkillOAuthConfig) {
             mapOf(
@@ -429,10 +384,6 @@ class BackendDiModuleTest {
     )
 
     private companion object {
-        const val TEST_TELEGRAM_TOKEN_ENCRYPTION_KEY =
-            "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
-        const val TEST_VK_TOKEN_ENCRYPTION_KEY =
-            "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
         const val TEST_SKILL_OAUTH_TOKEN_ENCRYPTION_KEY =
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
     }

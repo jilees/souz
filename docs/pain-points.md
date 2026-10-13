@@ -6,17 +6,19 @@ Before editing a module, open its index below and read only the topics related t
 
 ## Module indexes
 
-- [`:agent`](../agent/docs/pain-points.md) — includes [Skill discovery and approval](../agent/docs/pain-points/skill-activation.md) and [subagent lifecycle and isolation](../agent/docs/pain-points/subagents.md).
-- [`:graph-engine`](../graph-engine/docs/pain-points.md)
-- [`:llms`](../llms/docs/pain-points.md)
-- [`:native`](../native/docs/pain-points.md)
-- [`:ambientAgent`](../ambientAgent/docs/pain-points.md)
-- [`:sharedLogic`](../sharedLogic/docs/pain-points.md) — includes [sandbox and composite Skill execution](../sharedLogic/docs/pain-points/runtime-sandbox-and-skills.md) and [provider/classifier HTTP lifecycle](../sharedLogic/docs/pain-points/provider-http-lifecycle.md).
-- [`:sharedUI`](../sharedUI/docs/pain-points.md)
-- [`:skill-oauth-api`](../skill-oauth-api/docs/pain-points.md)
-- [`:skill-oauth-impl`](../skill-oauth-impl/docs/pain-points.md)
-- [`:desktopApp`](../desktopApp/docs/pain-points.md)
-- [`:backend`](../backend/docs/pain-points.md) — includes [scheduled-task ownership and partial failures](../backend/docs/pain-points/scheduled-tasks.md).
+- [`:agent`](../agent/AGENTS.md) — includes [Skill discovery and approval](../agent/docs/skill-activation.md) and [subagent lifecycle and isolation](../agent/docs/subagents.md).
+- [`:graph-engine`](../graph-engine/AGENTS.md)
+- [`:llms`](../llms/AGENTS.md)
+- [`:native`](../native/AGENTS.md)
+- [`:ambientAgent`](../ambientAgent/AGENTS.md)
+- [`:sharedLogic`](../sharedLogic/AGENTS.md) — includes [sandbox and composite Skill execution](../sharedLogic/docs/runtime-sandbox-and-skills.md) and [provider/classifier HTTP lifecycle](../sharedLogic/docs/provider-http-lifecycle.md).
+- [`:sharedUI`](../sharedUI/AGENTS.md)
+- [`:skill-oauth-api`](../skill-oauth-api/AGENTS.md)
+- [`:skill-oauth-impl`](../skill-oauth-impl/AGENTS.md)
+- [`:job-api`](../job-api/AGENTS.md)
+- [`:job-impl`](../job-impl/AGENTS.md)
+- [`:desktopApp`](../desktopApp/AGENTS.md)
+- [`:backend`](../backend/AGENTS.md) — includes [scheduled-task ownership and partial failures](../backend/docs/scheduled-tasks.md).
 
 ## Topic format
 
@@ -31,4 +33,4 @@ Keep exact constants, route inventories, file trees, and historical narratives i
 
 ## Repository-wide topics
 
-No repository-wide pain-point topics are currently recorded. Add one under [`docs/pain-points/`](pain-points/) only when the constraint genuinely spans modules and is not clearer in a single module index.
+Repository-wide runtime constraints are covered by [deployment and sandbox operations](backend-docker-sandbox-rollout.md), [hooks](hooks.md) and [scheduled tasks](scheduled-tasks.md).

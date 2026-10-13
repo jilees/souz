@@ -2,14 +2,17 @@ package ru.souz.backend.storage.postgres
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import com.zaxxer.hikari.metrics.micrometer.MicrometerMetricsTrackerFactory
+import io.micrometer.core.instrument.MeterRegistry
 import java.sql.DriverManager
 import java.util.Properties
 import org.flywaydb.core.Flyway
 import ru.souz.backend.app.BackendPostgresConfig
 import ru.souz.skilloauth.impl.SkillOAuthMigrations
+import ru.souz.jobs.impl.JobMigrations
 
 object PostgresDataSourceFactory {
-    fun create(config: BackendPostgresConfig): HikariDataSource {
+    fun create(config: BackendPostgresConfig, registry: MeterRegistry? = null): HikariDataSource {
         val postgresConfig = config.validate()
         val schema = postgresConfig.schema.postgresIdentifier()
         val jdbcUrl = postgresConfig.jdbcUrl()
@@ -22,6 +25,7 @@ object PostgresDataSourceFactory {
             maximumPoolSize = postgresConfig.maxPoolSize
             connectionTimeout = postgresConfig.connectionTimeoutMs
             poolName = "souz-backend-postgres"
+            registry?.let { metricsTrackerFactory = MicrometerMetricsTrackerFactory(it) }
             this.schema = schema
             addDataSourceProperty("currentSchema", schema)
             addDataSourceProperty("ApplicationName", "souz-backend")
@@ -36,10 +40,9 @@ object PostgresDataSourceFactory {
                 .createSchemas(false)
                 .load()
                 .migrate()
-            // Separate location/table (see SkillOAuthMigrations) so this module's version sequence
-            // can never collide with the host's own; runs unconditionally since it needs only the
-            // datasource and schema, neither gated behind skill-OAuth-specific config.
+            // Each service owns a separate migration location and history table.
             SkillOAuthMigrations.migrate(dataSource, schema)
+            JobMigrations.migrate(dataSource, schema)
         }
     }
 

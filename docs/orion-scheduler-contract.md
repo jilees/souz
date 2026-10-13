@@ -85,4 +85,4 @@ Remote errors: `scheduler_context_missing`, `scheduler_invalid_arguments`, `sche
 
 Only invalid arguments/schedule, missing context/configuration, and storage rejection explicitly guarantee that create saved no record. Souz can then remove the unchanged hook created by that invocation. Timeout, cancellation, malformed success or an unrecognized failure leaves the outcome uncertain and the hook available for inspection. No mutation is automatically repeated on another channel.
 
-See [operation ordering and partial results](scheduled-tasks.md#operation-results-and-partial-failures) and [maintenance constraints](../backend/docs/pain-points/scheduled-tasks.md). Delivery retries, distributed coordination, purpose classification and orphan reconciliation remain outside this contract.
+See [operation ordering and partial results](scheduled-tasks.md#operation-results-and-partial-failures) and [maintenance constraints](../backend/docs/scheduled-tasks.md). Delivery retries, distributed coordination, purpose classification and orphan reconciliation remain outside this contract.

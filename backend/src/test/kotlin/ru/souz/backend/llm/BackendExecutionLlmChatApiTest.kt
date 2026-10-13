@@ -41,6 +41,7 @@ import ru.souz.backend.hooks.LoadedHook
 import ru.souz.backend.http.BackendV1Exception
 import ru.souz.backend.llm.quota.ExecutionQuotaManager
 import ru.souz.backend.llm.quota.QuotaExceededException
+import ru.souz.backend.metrics.BackendMetrics
 import ru.souz.backend.storage.postgres.PostgresDataSourceFactory
 import ru.souz.backend.storage.postgres.PostgresUserRepository
 import ru.souz.backend.storage.postgres.newPostgresSchema
@@ -87,6 +88,13 @@ class BackendExecutionLlmChatApiTest {
                 assertIs<LLMResponse.Chat.Ok>(fixture.api.message(request))
                 assertEquals(2, fixture.api.messageStream(request).toList().size)
                 assertEquals(List(3) { provider to request }, requests.takeLast(3))
+                val tags = arrayOf("provider", provider.name.lowercase(), "model", "other")
+                val registry = fixture.metrics.registry
+                assertEquals(1.0, registry.get("souz.llm.requests").tags(*tags, "outcome", "error").counter().count())
+                assertEquals(2.0, registry.get("souz.llm.requests").tags(*tags, "outcome", "success").counter().count())
+                assertEquals(if (provider == LlmProvider.ANTHROPIC) 6.0 else 5.0,
+                    registry.get("souz.llm.tokens").tags(*tags, "direction", "input").counter().count())
+                assertEquals(5.0, registry.get("souz.llm.tokens").tags(*tags, "direction", "output").counter().count())
             }
             assertEquals(listOf(17L, 17L, 17L), delays)
             assertEquals(usage(25, 20, 45, 5), fixture.api.cumulativeUsage())
@@ -110,6 +118,35 @@ class BackendExecutionLlmChatApiTest {
             assertEquals("My-Deployment/v2", requests.single().body["model"].asText())
             assertEquals("Bearer execution-key", requests.single().authorization)
             assertEquals(1, credentials.calls.get())
+        }
+    }
+
+    @Test
+    fun `named routes isolate endpoints and keys with identical upstream IDs in both modes`() = withNamedLlmConfig { source ->
+        runTest {
+            val requests = mutableListOf<CapturedRequest>()
+            val settings = LlmSettingsStub().apply {
+                namedLlmModels = ru.souz.backend.config.loadNamedLlmModels(source)
+            }
+            facadeFixture(settingsProvider = settings, providerApiOverride = null, client = recordingClient(requests)).use { fixture ->
+                for (name in listOf("test-chat", "tv-agent", "test-chat")) {
+                    val expected = if (name == "test-chat") "experiment" else "router"
+                    val request = chat(name).copy(provider = LlmProvider.OPENAI)
+                    assertIs<LLMResponse.Chat.Ok>(fixture.api.message(request))
+                    assertTrue(fixture.api.messageStream(request).toList().any { it is LLMResponse.Chat.Ok })
+                    requests.takeLast(2).forEach {
+                        assertEquals("https://$expected.test/v1/chat/completions", it.url)
+                        assertEquals("Bearer $expected-secret", it.authorization)
+                        assertEquals("shared-model", it.body["model"].asText())
+                        assertTrue(!it.body.has("connectionId") && !it.body.has("provider"))
+                    }
+                }
+                settings.openaiModel = "test-chat"
+                fixture.api.message(chat(LLMModel.OpenAICompatibleCustom.alias))
+                assertEquals("https://experiment.test/v1/chat/completions", requests.last().url)
+                assertEquals("shared-model", requests.last().body["model"].asText())
+                assertEquals(0, fixture.credentialResolver.calls.get())
+            }
         }
     }
 
@@ -149,6 +186,8 @@ class BackendExecutionLlmChatApiTest {
             assertEquals(512, outbound.body["max_completion_tokens"].asInt())
             assertEquals(0, fixture.credentialResolver.calls.get())
             assertEquals(usage(1, 1, 2, 0), fixture.api.cumulativeUsage())
+            assertEquals(1.0, fixture.metrics.registry.get("souz.llm.requests")
+                .tags("provider", "openai", "model", "other", "outcome", "success").counter().count())
         }
     }
 
@@ -368,7 +407,10 @@ class BackendExecutionLlmChatApiTest {
                 } else {
                     flow {
                         try {
-                            for (tokens in listOf(usage(2, 1, 3, 1), usage(5, 3, 8, 2))) {
+                            for (tokens in listOf(
+                                usage(2, 1, 3, 1), usage(0, 0, 0, 0), usage(1, 1, 2, 0),
+                                usage(5, 3, 8, 2), usage(5, 3, 8, 2),
+                            )) {
                                 emit(ok(body.model, tokens))
                                 completedUpstreamEmits += 1
                             }
@@ -388,14 +430,19 @@ class BackendExecutionLlmChatApiTest {
             val failure = assertFailsWith<CancellationException> {
                 fixture.api.messageStream(chat(LLMModel.QwenMax.alias)).collect { response ->
                     assertIs<LLMResponse.Chat.Ok>(response)
-                    if (++collected == 2) throw CancellationException("stop")
+                    if (++collected == 5) throw CancellationException("stop")
                 }
             }
             assertEquals(2, streamRequests)
-            assertEquals(1, completedUpstreamEmits, "The facade consumed the upstream stream ahead of its collector.")
+            assertEquals(4, completedUpstreamEmits, "The facade consumed the upstream stream ahead of its collector.")
             assertTrue(upstreamCancelled)
             assertEquals("stop", failure.message)
             assertEquals(usage(5, 3, 8, 2), fixture.api.cumulativeUsage())
+            val registry = fixture.metrics.registry
+            val tags = arrayOf("provider", "qwen", "model", LLMModel.QwenMax.alias)
+            assertEquals(1.0, registry.get("souz.llm.requests").tags(*tags, "outcome", "error").counter().count())
+            assertEquals(1.0, registry.get("souz.llm.requests").tags(*tags, "outcome", "cancelled").counter().count())
+            assertEquals(5.0, registry.get("souz.llm.tokens").tags(*tags, "direction", "input").counter().count())
         }
     }
 }
@@ -404,8 +451,12 @@ private class FacadeFixture(
     val api: BackendExecutionLlmChatApi,
     val credentialResolver: CountingCredentialResolver,
     private val clients: ProviderHttpClients,
+    val metrics: BackendMetrics,
 ) : AutoCloseable {
-    override fun close() = clients.close()
+    override fun close() {
+        clients.close()
+        metrics.close()
+    }
 }
 
 private data class CapturedRequest(
@@ -422,9 +473,10 @@ private fun recordingClient(requests: MutableList<CapturedRequest>): HttpClient 
                 authorization = request.headers[HttpHeaders.Authorization],
                 body = restJsonMapper.readTree(request.body.toByteArray()),
             )
+            val stream = requests.last().body["stream"]?.asBoolean() == true
             respond(
-                content = OPENAI_CHAT_RESPONSE,
-                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                content = if (stream) "data: $OPENAI_CHAT_RESPONSE\n\ndata: [DONE]\n\n" else OPENAI_CHAT_RESPONSE,
+                headers = headersOf(HttpHeaders.ContentType, if (stream) "text/event-stream" else ContentType.Application.Json.toString()),
             )
         }
     ) {
@@ -444,6 +496,7 @@ private fun facadeFixture(
     },
 ): FacadeFixture {
     val clients = ProviderHttpClients(standard = client, openAi = client)
+    val metrics = BackendMetrics()
     val api = BackendExecutionLlmChatApi(
         userId = "user-a",
         settingsProvider = settingsProvider,
@@ -456,8 +509,9 @@ private fun facadeFixture(
         delayMillis = delayMillis,
         providerApiOverride = providerApiOverride,
         hookBudget = hookBudget,
+        metrics = metrics,
     )
-    return FacadeFixture(api, credentialResolver, clients)
+    return FacadeFixture(api, credentialResolver, clients, metrics)
 }
 
 private class CountingCredentialResolver(
