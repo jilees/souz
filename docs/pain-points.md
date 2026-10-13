@@ -18,7 +18,7 @@ Before editing a module, open its index below and read only the topics related t
 - [`:job-api`](../job-api/AGENTS.md)
 - [`:job-impl`](../job-impl/AGENTS.md)
 - [`:desktopApp`](../desktopApp/AGENTS.md)
-- [`:backend`](../backend/AGENTS.md) — includes [scheduled-task ownership and partial failures](../backend/docs/scheduled-tasks.md).
+- [`:backend`](../backend/AGENTS.md) — includes [personality](personality-settings.md) and [scheduled-task ownership and partial failures](../backend/docs/scheduled-tasks.md).
 
 ## Topic format
 

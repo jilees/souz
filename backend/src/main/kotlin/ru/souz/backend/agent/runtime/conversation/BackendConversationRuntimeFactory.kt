@@ -4,6 +4,11 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.plus
+import ru.souz.backend.personality.PersonalityLlmApi
+import ru.souz.backend.personality.PersonalitySync
+import ru.souz.backend.personality.PersonalityTool
+import ru.souz.backend.settings.repository.UserSettingsRepository
+import ru.souz.tool.composeToolCatalogs
 import ru.souz.ToolLoopGraphBasedAgent
 import ru.souz.agent.AgentCoreTools
 import ru.souz.agent.AgentExecutionKernelFactory
@@ -87,6 +92,8 @@ internal class BackendConversationRuntimeFactory(
     private val hookStore: HookStore,
     private val executionQuotas: ExecutionQuotaManager,
     private val metrics: BackendMetrics? = null,
+    private val userSettingsRepository: UserSettingsRepository,
+    private val personalitySync: PersonalitySync,
     private val testLlmApiFactory: (suspend (SettingsProvider) -> LLMChatAPI)? = null,
 ) {
     internal suspend fun create(
@@ -157,7 +164,10 @@ internal class BackendConversationRuntimeFactory(
         )
         val executionToolCatalog = backendExecutionToolCatalog(
             compiledToolCatalog = toolCatalog,
-            executionLlmToolCatalog = executionLlmToolCatalog,
+            executionLlmToolCatalog = composeToolCatalogs(
+                executionLlmToolCatalog,
+                PersonalityTool(userSettingsRepository, personalitySync, executionApi, settingsProvider, agentBackgroundScope),
+            ),
             enabledCompiledToolNames = request.enabledTools,
             clientToolCatalog = clientToolCatalog,
             includeFewShotExamples = settingsProvider.useFewShotExamples,
@@ -228,6 +238,8 @@ internal class BackendConversationRuntimeFactory(
             telemetry = toolTelemetry,
             errorMessages = BackendAgentErrorMessages,
             llmApi = executionApi,
+            conversationLlmApi = PersonalityLlmApi(executionApi, userSettingsRepository, key.userId,
+                canUpdate = executionToolCatalog.toolsByCategory.values.any { PersonalityTool.NAME in it }),
             skillClassifier = skillClassifier,
             memoryRuntime = memoryRuntime,
             automaticMemoryRecall = automaticMemoryRecall,

@@ -13,6 +13,7 @@ import org.kodein.di.instanceOrNull
 import ru.souz.backend.metrics.BackendMetrics
 import ru.souz.agent.knowledge.ConversationKnowledgeStore
 import ru.souz.backend.client.LiveClientToolDispatcher
+import ru.souz.backend.personality.PersonalitySync
 import ru.souz.backend.scheduler.OrionSchedulerClient
 import ru.souz.backend.scheduler.ScheduledHookFiles
 import ru.souz.backend.scheduler.ScheduledTaskService
@@ -333,6 +334,8 @@ fun backendDiModule(
             hookStore = instance(),
             executionQuotas = instance(),
             metrics = instance(),
+            userSettingsRepository = instance(),
+            personalitySync = instance(),
         )
     }
     bindSingleton {
@@ -483,6 +486,7 @@ fun backendDiModule(
     bindSingleton { ToolSendMessageToChannel(registry = instance()) }
     bindSingleton { BackendChannelToolCatalog(instance(), instance()) }
     bindSingleton { LiveClientToolDispatcher(instance(), instance(), instance()) }
+    bindSingleton { PersonalitySync(instance(), instance()) }
     bindSingleton { OrionSchedulerClient(instance()) }
     bindSingleton { ScheduledHookFiles(instance(), appConfig.hooks, instance(), instance()) }
     bindSingleton { ScheduledTaskService(instance(), instance(), instance(), instance(), instance(), instance(), instance()) }
@@ -550,6 +554,7 @@ fun backendDiModule(
             optionService = instance(),
             eventService = instance(),
             publicClientService = instance(),
+            personalitySync = instance(),
             hookService = instance(),
             telegramBotBindingService = if (featureFlags.telegramBot) instance() else null,
             vkBotBindingService = if (featureFlags.vkBot) instance() else null,

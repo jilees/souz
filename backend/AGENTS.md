@@ -22,8 +22,11 @@ Before changing this module, read the relevant pain-point topics below.
 - Give each ordinary HTTP route explicit OpenAPI metadata. Keep the WebSocket routes out of the generated document and maintain its schema in `docs/public-souz-contract`.
 - Keep Prometheus instrumentation in `:backend`, using repository commits and existing LLM/tool hooks. Restrict `/metrics` at ingress; its [metric reference](docs/metrics.md) defines accounting and replica semantics.
 
+- Keep [personality](../docs/personality-settings.md) independent of system prompts and ordinary settings writes.
+
 ## Pain points
 
+- [Personality](../docs/personality-settings.md) — persistence, current-turn style and Orion delivery.
 - [Scheduled tasks](docs/scheduled-tasks.md) — Orion ownership, transient RPC and source-channel delivery.
 - [Named LLM connections](docs/named-llm-connections.md) — server model names, independent endpoints and keys, subagents and summarization.
 
