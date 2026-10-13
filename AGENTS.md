@@ -62,6 +62,7 @@ Only these direct production project dependencies are allowed. Standard test-sou
 
 - The Docker runtime provides a per-user browser and explicit Skill environment forwarding; see [the runtime guide](docs/backend-docker-sandbox-rollout.md).
 - [Scheduled tasks](backend/docs/scheduled-tasks.md) use the backend's PostgreSQL-backed JobService.
+- [User personality](docs/personality-settings.md) is independent of the system prompt and synchronizes to Orion.
 
 ## Verification
 
