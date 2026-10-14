@@ -53,7 +53,7 @@ object BackendToolCapabilityPolicy {
     ): AgentToolCatalog {
         val isEnabled = { toolName: String ->
             (enabledToolNames == null || toolName in enabledToolNames) &&
-                (!clientSearchEnabled || toolName != ToolInternetSearch.NAME)
+                (!clientSearchEnabled || toolName !in setOf(ToolInternetSearch.NAME, "AttachFileToReply"))
         }
         return composeToolCatalogs(
             hostableTools(processToolCatalog, isEnabled),

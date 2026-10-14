@@ -93,6 +93,7 @@ internal class BackendConversationRuntimeFactory(
     private val userSettingsRepository: UserSettingsRepository,
     private val personalitySync: PersonalitySync,
     private val testLlmApiFactory: (suspend (SettingsProvider) -> LLMChatAPI)? = null,
+    private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
 ) {
     internal suspend fun create(
         key: AgentConversationKey,
@@ -135,6 +136,7 @@ internal class BackendConversationRuntimeFactory(
             initialUsage = initialUsage,
             providerApiOverride = testApi?.let { api -> { api } },
             hookBudget = hookBudget,
+            attachmentInput = attachmentInput,
         )
         val visionGateway = LLMCapabilityResolver(
             settingsProvider = settingsProvider,
@@ -142,6 +144,7 @@ internal class BackendConversationRuntimeFactory(
             anthropicGateway = AnthropicVisionGateway(settingsProvider, executionApi),
             additionalGateways = mapOf(
                 LlmProvider.LOCAL to LocalVisionGateway(settingsProvider, executionApi),
+                LlmProvider.CODEX to OpenAIVisionGateway(settingsProvider, executionApi),
             ),
         )
         val imageGenerationGateway = OpenAIImageGenerationGateway(

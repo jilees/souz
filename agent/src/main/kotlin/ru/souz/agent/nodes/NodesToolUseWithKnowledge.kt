@@ -45,6 +45,7 @@ internal class NodesToolUseWithKnowledge(
         }
         val history = ArrayList(ctx.history).apply { addAll(fnCallMessages) }
         ctx.map(history = history) { ctx.history.last().content }
+            .copy(replyAttachments = (ctx.replyAttachments + fnCallMessages.flatMap { it.replyFiles }).distinctBy { it.file })
     }
 
     private suspend fun offloadToolResult(

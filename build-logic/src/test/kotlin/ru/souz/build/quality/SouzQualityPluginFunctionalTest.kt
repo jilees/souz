@@ -165,6 +165,30 @@ class SouzQualityPluginFunctionalTest {
     }
 
     @Test
+    fun `coverage aggregation is excluded unless inherited by production`(@TempDir root: Path) {
+        val fixture = FixtureProject(root).apply {
+            create()
+            write(
+                "graph-engine/build.gradle.kts",
+                """
+                plugins { `java-library` }
+                val kover by configurations.creating
+                dependencies { add(kover.name, project(":llms")) }
+                """.trimIndent() + "\n",
+            )
+            commit()
+        }
+        fixture.build("souzGateFast")
+        assertEquals("pass", check(report(fixture), "module-boundaries").path("status").asText())
+
+        fixture.append("graph-engine/build.gradle.kts", "configurations.named(\"implementation\") { extendsFrom(kover) }\n")
+        fixture.buildAndFail("souzGateFast")
+        val boundaries = check(report(fixture), "module-boundaries")
+        assertEquals("fail", boundaries.path("status").asText())
+        assertTrue(boundaries.toString().contains(":graph-engine main must not depend on :llms"))
+    }
+
+    @Test
     fun `KMP named configurations preserve production scope and exclude tests`(@TempDir root: Path) {
         val fixture = FixtureProject(root).apply {
             create()

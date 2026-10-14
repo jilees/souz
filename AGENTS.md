@@ -53,6 +53,8 @@ Only these direct production project dependencies are allowed. Standard test-sou
 
 ## Optional backend capabilities
 
+- [Channel attachments](docs/channel-attachments.md) use private per-user S3 buckets and explicit file selection for Telegram/VK replies.
+
 - [User personality](docs/personality-settings.md) is independent of the system prompt and synchronizes to Orion.
 
 - [Named OpenAI-compatible connections](docs/backend-docker-sandbox-rollout.md#named-llm-connections) provide server-configured model names for user settings, subagents and summarization.

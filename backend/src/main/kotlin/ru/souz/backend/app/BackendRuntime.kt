@@ -10,6 +10,7 @@ import ru.souz.backend.telegram.TelegramBotPollingService
 import ru.souz.backend.vk.VkBotPollingService
 import ru.souz.backend.client.ClientThreadRecoveryService
 import ru.souz.backend.memory.hindsight.HistoryMemoryWorker
+import ru.souz.backend.attachments.AttachmentCleanupWorker
 
 /** Process-wide backend runtime container with shared services and LLM resources. */
 class BackendRuntime private constructor(
@@ -35,6 +36,7 @@ class BackendRuntime private constructor(
         telegramBotPollingService?.start()
         vkBotPollingService?.start()
         di.direct.instanceOrNull<HistoryMemoryWorker>()?.start(applicationScope)
+        di.direct.instanceOrNull<AttachmentCleanupWorker>()?.start(applicationScope)
     }
 
     override fun close() {

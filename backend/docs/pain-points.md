@@ -4,6 +4,8 @@ Read the topics relevant to the code you plan to change in `:backend`.
 
 ## Topics
 
+- [Attachments](pain-points/attachments.md) — S3 ownership, ephemeral model inputs, expiry and delivery receipts.
+
 - [Personality](../../docs/personality-settings.md) — persistence, current-turn style and Orion delivery.
 
 - [Workspace hooks](pain-points/hooks.md) — trusted ownership, admission, persistent call budgets, sequential dispatch and single-process recovery.

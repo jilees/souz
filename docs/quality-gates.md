@@ -34,7 +34,8 @@ squash-equivalent PR head.
 
 Project dependencies declared in an unclassified configuration fail closed.
 Test-only edges should use a standard test source-set configuration so the
-gate can exclude them explicitly.
+gate can exclude them explicitly. The `kover` coverage aggregation configuration
+is also excluded unless it feeds a production configuration.
 
 Local-link checks validate filesystem targets. Markdown fragment identifiers
 are not part of the version 1 repository contract.

@@ -41,6 +41,7 @@ class ModuleBoundariesTest {
         assertNull(dependencySourceSet("testImplementation"))
         assertNull(dependencySourceSet("jvmTestImplementation"))
         assertNull(dependencySourceSet("testFixturesImplementation"))
+        assertNull(dependencySourceSet("kover"))
         assertEquals(UNCLASSIFIED_SOURCE_SET, dependencySourceSet("internal"))
     }
 }

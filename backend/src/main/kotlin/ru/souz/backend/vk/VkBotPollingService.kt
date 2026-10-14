@@ -34,6 +34,8 @@ class VkBotPollingService(
     private val pollLoopDelayMs: Long = 1_000,
     private val leaseTtlSeconds: Long = 45,
     maxConcurrency: Int = 4,
+    private val attachments: VkAttachments? = null,
+    private val attachmentDelivery: ru.souz.backend.attachments.AttachmentDelivery? = null,
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     private val owner = UUID.randomUUID().toString()
@@ -136,7 +138,7 @@ class VkBotPollingService(
             return binding
         }
         val text = message.text?.trim().orEmpty()
-        if (text.isEmpty()) return binding
+        if (text.isEmpty() && message.attachments.isEmpty()) return binding
         if (!binding.linked) {
             val secretHash = text.sha256Hex()
             if (binding.linkSecretHash != secretHash) {
@@ -169,6 +171,17 @@ class VkBotPollingService(
             reply(binding, token, message.peerId, "Сообщение слишком длинное.")
             return binding
         }
+        val files = if (message.attachments.isEmpty()) emptyList() else {
+            val receiver = attachments
+            if (receiver == null) {
+                reply(binding, token, message.peerId, "Обработка вложений пока не настроена.")
+                return binding
+            }
+            try { receiver.receive(binding, message) } catch (error: ru.souz.backend.attachments.AttachmentException) {
+                reply(binding, token, message.peerId, "Не удалось принять вложение: ${error.code}.")
+                return binding
+            }
+        }
         val responseText = try {
             val result = coroutineScope {
                 val typing = launch {
@@ -188,6 +201,7 @@ class VkBotPollingService(
                         userId = binding.userId,
                         chatId = binding.chatId,
                         content = text,
+                        attachments = files,
                         clientMessageId = "vk:${binding.id}:${message.id}",
                         requestOverrides = UserSettingsOverrides(streamingMessages = false),
                         onProgress = { replyFormatted(binding, token, message.peerId, it) },
@@ -195,6 +209,15 @@ class VkBotPollingService(
                 } finally {
                     typing.cancelAndJoin()
                 }
+            }
+            val replyFiles = result.assistantMessage?.attachments.orEmpty()
+            if (replyFiles.isNotEmpty()) {
+                val delivery = attachmentDelivery ?: error("Attachment delivery is unavailable.")
+                delivery.deliver(binding.userId, "vk:${binding.id}:${result.execution.id}", result.assistantMessage?.content.orEmpty(),
+                    replyFiles, 4_000, checkOwnership = { check(owns(binding.id)) },
+                    sendText = { replyFormatted(binding, token, message.peerId, it) },
+                    sendFile = { file, bytes -> botApi.sendFile(token, message.peerId, file, bytes).toString() })
+                return binding
             }
             result.assistantMessage?.content ?: when (result.execution.status) {
                 AgentExecutionStatus.COMPLETED -> "Готово."

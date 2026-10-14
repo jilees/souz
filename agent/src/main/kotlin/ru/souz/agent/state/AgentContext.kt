@@ -16,6 +16,8 @@ data class AgentContext<I>(
     val systemPrompt: String,
     val toolInvocationMeta: ToolInvocationMeta = ToolInvocationMeta.localDefault(),
     val runtimeEventSink: AgentRuntimeEventSink = AgentRuntimeEventSink.NONE,
+    val inputAttachments: List<ru.souz.agent.MessageAttachment> = emptyList(),
+    val replyAttachments: List<ru.souz.agent.MessageAttachment> = emptyList(),
 ) {
     /** Replaces advertised and executable tools without inheriting catalog categories. */
     internal fun withOnlyTools(tools: List<LLMToolSetup>): AgentContext<I> {
@@ -40,6 +42,8 @@ data class AgentContext<I>(
         systemPrompt = systemPrompt,
         toolInvocationMeta = toolInvocationMeta,
         runtimeEventSink = runtimeEventSink,
+        inputAttachments = inputAttachments,
+        replyAttachments = replyAttachments,
     )
 }
 

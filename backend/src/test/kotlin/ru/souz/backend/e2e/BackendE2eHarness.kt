@@ -139,6 +139,7 @@ internal fun backendE2eTest(
     hookConfig: HookConfig = HookConfig(),
     llmLimits: BackendLlmLimits = BackendLlmLimits(),
     sandboxFactory: ((SettingsProvider) -> RuntimeSandboxFactory)? = null,
+    attachments: ru.souz.backend.attachments.AttachmentStorageConfig? = null,
     block: suspend BackendE2eScope.() -> Unit,
 ) = testApplication {
     val backend = BackendE2eBackend(
@@ -156,6 +157,7 @@ internal fun backendE2eTest(
         hookConfig = hookConfig,
         llmLimits = llmLimits,
         sandboxFactory = sandboxFactory,
+        attachments = attachments,
     )
     application {
         backendApplication(backend.dependencies)
@@ -323,6 +325,7 @@ internal class BackendE2eBackend(
     private val hookConfig: HookConfig = HookConfig(),
     private val llmLimits: BackendLlmLimits = BackendLlmLimits(),
     private val sandboxFactory: ((SettingsProvider) -> RuntimeSandboxFactory)? = null,
+    attachments: ru.souz.backend.attachments.AttachmentStorageConfig? = null,
 ) : AutoCloseable {
     private val appConfig: BackendAppConfig = postgresAppConfig(
         schema = schema,
@@ -331,7 +334,7 @@ internal class BackendE2eBackend(
         telegramTokenEncryptionKey = E2E_TELEGRAM_TOKEN_KEY.takeIf { featureFlags.telegramBot },
         vkTokenEncryptionKey = E2E_VK_TOKEN_KEY.takeIf { featureFlags.vkBot },
         includeSkillOAuthConfig = false,
-    ).copy(hindsightApiUrl = hindsightUrl, hooks = hookConfig, llmLimits = llmLimits)
+    ).copy(hindsightApiUrl = hindsightUrl, hooks = hookConfig, llmLimits = llmLimits, attachments = attachments)
     private val localChatApi = localChatApiBackedBy(llm)
     private val localAvailability = localProviderAvailability()
     private val localRuntime = relaxedLocalRuntime()

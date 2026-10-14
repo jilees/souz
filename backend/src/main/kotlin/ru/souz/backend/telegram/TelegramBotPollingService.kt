@@ -29,6 +29,14 @@ import ru.souz.backend.settings.service.UserSettingsOverrides
 import kotlin.time.Duration.Companion.milliseconds
 
 fun interface TelegramTurnExecutor {
+    suspend fun executeWithAttachments(
+        userId: String, chatId: UUID, content: String, clientMessageId: String,
+        requestOverrides: UserSettingsOverrides, onProgress: suspend (String) -> Unit,
+        attachments: List<ru.souz.llms.FileContent>,
+    ): SendMessageResult {
+        require(attachments.isEmpty()) { "Attachment execution is unavailable." }
+        return execute(userId, chatId, content, clientMessageId, requestOverrides, onProgress)
+    }
     suspend fun execute(
         userId: String,
         chatId: UUID,
@@ -51,6 +59,8 @@ class TelegramBotPollingService(
     private val leaseTtlSeconds: Long = LEASE_TTL_SECONDS,
     maxConcurrency: Int = DEFAULT_MAX_CONCURRENCY,
     private val maxIncomingTextLength: Int = MAX_INCOMING_TEXT_LENGTH,
+    private val attachments: TelegramAttachments? = null,
+    private val attachmentDelivery: ru.souz.backend.attachments.AttachmentDelivery? = null,
 ) {
     private val logger = LoggerFactory.getLogger(TelegramBotPollingService::class.java)
     private val semaphore = Semaphore(maxConcurrency)
@@ -68,10 +78,21 @@ class TelegramBotPollingService(
         leaseTtlSeconds: Long = LEASE_TTL_SECONDS,
         maxConcurrency: Int = DEFAULT_MAX_CONCURRENCY,
         maxIncomingTextLength: Int = MAX_INCOMING_TEXT_LENGTH,
+        attachments: TelegramAttachments? = null,
+        attachmentDelivery: ru.souz.backend.attachments.AttachmentDelivery? = null,
     ) : this(
         repository = repository,
         botApi = botApi,
-        turnExecutor = executionService::executeChatTurnAndAwaitCompletion,
+        turnExecutor = object : TelegramTurnExecutor {
+            override suspend fun execute(userId: String, chatId: UUID, content: String, clientMessageId: String,
+                requestOverrides: UserSettingsOverrides, onProgress: suspend (String) -> Unit): SendMessageResult =
+                executionService.executeChatTurnAndAwaitCompletion(userId, chatId, content, clientMessageId, requestOverrides, onProgress)
+
+            override suspend fun executeWithAttachments(userId: String, chatId: UUID, content: String, clientMessageId: String,
+                requestOverrides: UserSettingsOverrides, onProgress: suspend (String) -> Unit,
+                attachments: List<ru.souz.llms.FileContent>): SendMessageResult =
+                executionService.executeChatTurnAndAwaitCompletion(userId, chatId, content, clientMessageId, requestOverrides, onProgress, attachments)
+        },
         tokenCrypto = tokenCrypto,
         scope = scope,
         clock = clock,
@@ -80,6 +101,8 @@ class TelegramBotPollingService(
         leaseTtlSeconds = leaseTtlSeconds,
         maxConcurrency = maxConcurrency,
         maxIncomingTextLength = maxIncomingTextLength,
+        attachments = attachments,
+        attachmentDelivery = attachmentDelivery,
     )
 
     fun start() {
@@ -165,19 +188,31 @@ class TelegramBotPollingService(
             }
             repository.clearError(leasedBinding.id)
             var currentBinding = leasedBinding
-            for (update in updates.result) {
+            val collected = collectAlbumUpdates(token, leasedBinding.lastUpdateId + 1L, updates.result)
+            var cursor = 0
+            while (cursor < collected.size) {
+                val update = collected[cursor++]
+                val group = mutableListOf(update)
+                val message = update.message
+                if (message?.mediaGroupId != null) {
+                    while (cursor < collected.size) {
+                        val next = collected[cursor].message ?: break
+                        if (next.mediaGroupId != message.mediaGroupId || next.chat.id != message.chat.id || next.from?.id != message.from?.id) break
+                        group += collected[cursor++]
+                    }
+                }
                 semaphore.withPermit {
                     if (!repository.hasActiveLease(currentBinding.id, instanceId, clock.instant())) {
                         return@coroutineScope
                     }
-                    currentBinding = handleUpdate(currentBinding, token, update)
+                    currentBinding = handleUpdate(currentBinding, token, update, group.mapNotNull { it.message })
                 }
                 if (!repository.hasActiveLease(currentBinding.id, instanceId, clock.instant())) {
                     return@coroutineScope
                 }
                 repository.updateLastUpdateId(
                     id = currentBinding.id,
-                    lastUpdateId = update.updateId,
+                    lastUpdateId = group.last().updateId,
                     owner = instanceId,
                 )
             }
@@ -186,15 +221,36 @@ class TelegramBotPollingService(
         }
     }
 
+    /** Poll the same offset until an album settles: a higher offset would acknowledge unprocessed files. */
+    private suspend fun collectAlbumUpdates(token: String, offset: Long, initial: List<TelegramUpdate>): List<TelegramUpdate> {
+        if (initial.none { it.message?.mediaGroupId != null }) return initial
+        val started = kotlin.time.TimeSource.Monotonic.markNow()
+        var changed = kotlin.time.TimeSource.Monotonic.markNow()
+        val collected = initial.associateByTo(linkedMapOf()) { it.updateId }
+        while (started.elapsedNow().inWholeMilliseconds < 5_000 && changed.elapsedNow().inWholeMilliseconds < 1_500) {
+            delay(250)
+            val response = botApi.getUpdates(token, offset, timeoutSeconds = 0, allowedUpdates = listOf("message"))
+            if (!response.ok) throw TelegramBotApiTransportException("Telegram album collection failed.")
+            for (update in response.result) {
+                if (update.updateId !in collected) {
+                    collected[update.updateId] = update
+                    changed = kotlin.time.TimeSource.Monotonic.markNow()
+                }
+            }
+        }
+        return collected.values.sortedBy { it.updateId }
+    }
+
     private suspend fun handleUpdate(
         binding: TelegramBotBinding,
         token: String,
         update: TelegramUpdate,
+        messages: List<TelegramMessage> = listOfNotNull(update.message),
     ): TelegramBotBinding {
         val message = update.message ?: return binding
         val chatType = message.chat.type
         val sender = message.from
-        val text = message.text?.trim().orEmpty()
+        val text = messages.mapNotNull { it.text ?: it.caption }.joinToString("\n").trim()
 
         if (!binding.linked) {
             if (chatType != PRIVATE_CHAT_TYPE || sender == null) {
@@ -246,7 +302,7 @@ class TelegramBotPollingService(
             return binding
         }
 
-        if (text.isBlank()) {
+        if (text.isBlank() && !message.hasAttachments) {
             return binding
         }
         if (text.length > maxIncomingTextLength) {
@@ -254,17 +310,37 @@ class TelegramBotPollingService(
             return binding
         }
 
+        val files = if (message.hasAttachments) {
+            val receiver = attachments
+            if (receiver == null) {
+                sendReplySafely(binding.id, token, message.chat.id, "Обработка вложений пока не настроена.")
+                return binding
+            }
+            try {
+                if (messages.size > 10) throw ru.souz.backend.attachments.AttachmentException("attachment_message_too_large")
+                messages.flatMap { receiver.receive(binding, token, it) }.also { files ->
+                    if (files.size > 10 || files.sumOf { it.sizeBytes } > 100_000_000) {
+                        throw ru.souz.backend.attachments.AttachmentException("attachment_message_too_large")
+                    }
+                }
+            } catch (error: ru.souz.backend.attachments.AttachmentException) {
+                if (error.code !in setOf("attachment_too_large", "attachment_audio_too_long", "attachment_unsupported_type", "attachment_message_too_large")) throw error
+                sendReplySafely(binding.id, token, message.chat.id, "Не удалось принять вложение: ${error.code}.")
+                return binding
+            }
+        } else emptyList()
         try {
             val result = coroutineScope {
                 val typingJob = launch { repeatTypingIndicator(binding.id, token, message.chat.id) }
                 try {
-                    turnExecutor.execute(
+                    turnExecutor.executeWithAttachments(
                         userId = binding.userId,
                         chatId = binding.chatId,
                         content = text,
                         clientMessageId = "telegram:${binding.id}:${update.updateId}",
                         requestOverrides = UserSettingsOverrides(streamingMessages = false),
                         onProgress = { sendFormattedReply(binding.id, token, message.chat.id, it) },
+                        attachments = files,
                     )
                 } finally {
                     typingJob.cancelAndJoin()
@@ -305,7 +381,20 @@ class TelegramBotPollingService(
                 return
             }
         }
-        sendFormattedReply(bindingId, token, chatId, responseText.ifBlank { FALLBACK_ASSISTANT_REPLY })
+        val files = result.assistantMessage?.attachments.orEmpty()
+        if (files.isEmpty()) {
+            sendFormattedReply(bindingId, token, chatId, responseText.ifBlank { FALLBACK_ASSISTANT_REPLY })
+        } else {
+            val delivery = attachmentDelivery ?: error("Attachment delivery is unavailable.")
+            delivery.deliver(result.execution.userId, "telegram:$bindingId:${result.execution.id}", responseText, files,
+                TELEGRAM_RICH_TEXT_LIMIT,
+                checkOwnership = { check(repository.hasActiveLease(bindingId, instanceId, clock.instant())) { "Telegram lease lost." } },
+                sendText = { botApi.sendMessage(token, chatId, it) },
+                sendFile = { file, bytes -> botApi.sendFile(token, chatId, file, bytes).toString() },
+                documentTextLimit = TELEGRAM_DOCUMENT_TEXT_LIMIT,
+                sendDocumentWithText = { file, bytes, caption -> botApi.sendFile(token, chatId, file, bytes, caption).toString() },
+            )
+        }
     }
 
     private suspend fun sendFormattedReply(bindingId: UUID, token: String, chatId: Long, text: String) {

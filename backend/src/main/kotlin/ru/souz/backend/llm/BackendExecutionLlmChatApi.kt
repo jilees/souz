@@ -40,6 +40,7 @@ internal class BackendExecutionLlmChatApi(
     private val delayMillis: suspend (Long) -> Unit = { delay(it) },
     private val providerApiOverride: ((LlmProvider) -> LLMChatAPI)? = null,
     private val hookBudget: HookLlmBudget? = null,
+    private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
 ) : LLMChatAPI {
     private val providerStateMutex = Mutex()
     private val credentials = mutableMapOf<LlmProvider, String?>()
@@ -219,12 +220,14 @@ internal class BackendExecutionLlmChatApi(
     }
 
     private suspend fun callProvider(provider: LlmProvider, body: LLMRequest.Chat, api: LLMChatAPI): LLMResponse.Chat {
-        val request = hookBudget?.limitRequest(body) ?: body
+        val prepared = prepareAttachments(body)
+        val request = hookBudget?.limitRequest(prepared) ?: prepared
         return withProviderCall(hookBudget, provider) { api.message(request) }
     }
 
     private fun retryingStream(provider: LlmProvider, api: LLMChatAPI, body: LLMRequest.Chat): Flow<LLMResponse.Chat> = flow {
-        val request = hookBudget?.limitRequest(body) ?: body
+        val prepared = prepareAttachments(body)
+        val request = hookBudget?.limitRequest(prepared) ?: prepared
         var attempt = 0
         while (true) {
             try {
@@ -248,6 +251,33 @@ internal class BackendExecutionLlmChatApi(
             } catch (retry: RetryFirstStreaming429) {
                 delayMillis(backoffForAttempt(attempt, retry.error.message))
                 attempt += 1
+            }
+        }
+    }
+
+    private suspend fun prepareAttachments(body: LLMRequest.Chat): LLMRequest.Chat {
+        if (body.messages.none { it.files.isNotEmpty() || it.images.isNotEmpty() }) return body
+        val input = attachmentInput ?: return body.copy(messages = body.messages.map { item ->
+            if (item.files.isEmpty() && item.images.isEmpty()) item else item.copy(
+                content = item.content + "\n[Attachment support is disabled; referenced files cannot be read. Do not invent their contents.]",
+                files = emptyList(), images = emptyList(), replyFiles = emptyList(),
+            )
+        })
+        return input.prepare(userId, body) { model, prompt, image ->
+            val named = settingsProvider.namedLlmModels.models[model]
+            val known = ru.souz.llms.findLLMModel(model)
+            require(named != null || known != null) { "attachment_vision_model_unknown" }
+            val response = message(body.copy(
+                model = named?.modelId ?: requireNotNull(known).alias,
+                provider = named?.provider ?: requireNotNull(known).provider,
+                connectionId = named?.connectionId,
+                messages = listOf(LLMRequest.Message(ru.souz.llms.LLMMessageRole.user, prompt, attachments = listOf(image))),
+                functions = emptyList(), isSummarization = false,
+            ))
+            when (response) {
+                is LLMResponse.Chat.Ok -> response.choices.lastOrNull()?.message?.content
+                    ?.takeIf { it.isNotBlank() } ?: error("attachment_vision_empty")
+                is LLMResponse.Chat.Error -> error("attachment_vision_failed")
             }
         }
     }

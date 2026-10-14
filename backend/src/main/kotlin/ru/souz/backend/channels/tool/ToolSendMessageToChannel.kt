@@ -21,7 +21,9 @@ class ToolSendMessageToChannel(
         @InputParamDescription(CHANNEL_ID_DESCRIPTION)
         val channelId: String,
         @InputParamDescription("Message text to deliver.")
-        val text: String,
+        val text: String = "",
+        @InputParamDescription("Optional saved attachment IDs to deliver. The destination must support files.")
+        val fileIds: List<String> = emptyList(),
     )
 
     data class Output(val success: Boolean, val detail: String? = null, val reason: String? = null)
@@ -54,7 +56,7 @@ class ToolSendMessageToChannel(
 
     override suspend fun suspendInvoke(input: Input, meta: ToolInvocationMeta): String {
         val text = input.text.trim()
-        if (text.isEmpty()) {
+        if (text.isEmpty() && input.fileIds.isEmpty()) {
             throw BadInputException("text must not be empty.")
         }
         val channelType = input.channelType.trim()
@@ -67,6 +69,8 @@ class ToolSendMessageToChannel(
             channelType = channelType,
             channelId = channelId,
             text = text,
+            fileIds = input.fileIds,
+            deliveryKey = meta.requestId,
         )
         return when (result) {
             is ChannelSendResult.Delivered -> restJsonMapper.writeValueAsString(Output(success = true, detail = result.detail))

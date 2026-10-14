@@ -11,6 +11,8 @@
 
 - Codex Responses requests map `LLMRequest.Chat.reasoningEffort` to `reasoning.effort`; omit the object when unset. Backend user settings persist the optional effort and pass it into each turn's agent settings.
 
+- The Codex image gateway collects `image_generation_call.result` from SSE output-item events and requires terminal completion. Empty final text/output does not negate an image event. Errors or a truncated stream never yield a successful image; no automatic retry follows a possibly billed operation. Keep encoded/decoded image limits and exclude image bytes from logs and persisted chat history.
+
 ## Why this is fragile
 
 Each Ktor client owns an engine, connection pool, plugins, and coroutine lifecycle. Constructing one in a provider adapter makes a cheap execution object retain expensive resources with no visible owner. Putting credentials or timeouts in shared client defaults also allows concurrent users and requests to affect each other. Giga token state is credential-specific and must never be stored in process-global system properties.

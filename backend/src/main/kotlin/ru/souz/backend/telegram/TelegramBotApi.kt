@@ -18,6 +18,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 
 interface TelegramBotApi {
+    suspend fun downloadFile(token: String, fileId: String, maxBytes: Int): ByteArray =
+        error("Telegram file download is unavailable.")
+
+    suspend fun sendFile(token: String, chatId: Long, file: ru.souz.llms.FileContent, bytes: ByteArray, text: String = ""): Long =
+        error("Telegram file delivery is unavailable.")
     suspend fun getMe(token: String): TelegramGetMeResponse
 
     suspend fun getUpdates(
@@ -48,6 +53,7 @@ interface TelegramBotApi {
 }
 
 internal const val TELEGRAM_RICH_TEXT_LIMIT = 32_768
+internal const val TELEGRAM_DOCUMENT_TEXT_LIMIT = TELEGRAM_RICH_TEXT_LIMIT - 64
 
 internal class HttpTelegramBotApi(
     private val apiBaseUrl: String = "https://api.telegram.org",
@@ -57,6 +63,60 @@ internal class HttpTelegramBotApi(
     private val client = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS))
         .build()
+
+    override suspend fun downloadFile(token: String, fileId: String, maxBytes: Int): ByteArray {
+        require(maxBytes in 1..100_000_000)
+        val response = request(token, "getFile", mapOf("file_id" to fileId)).bodyAs<TelegramFileResponse>()
+        if (!response.ok) throw TelegramBotApiTransportException("Telegram file lookup failed.")
+        val file = response.result ?: throw TelegramBotApiTransportException("Telegram file is missing.")
+        if ((file.fileSize ?: 0) > maxBytes) throw ru.souz.backend.attachments.AttachmentException("attachment_too_large")
+        val path = file.filePath ?: throw TelegramBotApiTransportException("Telegram file path is missing.")
+        require(path.matches(Regex("[a-zA-Z0-9_./-]+")) && !path.startsWith('/') && path.split('/').none { it == ".." })
+        return kotlinx.coroutines.withTimeout(120_000) {
+            runInterruptible(Dispatchers.IO) {
+                val download = client.send(HttpRequest.newBuilder(URI("$apiBaseUrl/file/bot$token/$path"))
+                    .timeout(Duration.ofSeconds(120)).GET().build(), HttpResponse.BodyHandlers.ofInputStream())
+                download.body().use { input ->
+                    if (download.statusCode() != 200) throw TelegramBotApiTransportException("Telegram file download failed.")
+                    val bytes = input.readNBytes(maxBytes + 1)
+                    if (bytes.size > maxBytes) throw ru.souz.backend.attachments.AttachmentException("attachment_too_large")
+                    bytes
+                }
+            }
+        }
+    }
+
+    override suspend fun sendFile(token: String, chatId: Long, file: ru.souz.llms.FileContent, bytes: ByteArray, text: String): Long {
+        val part = when (file.presentation) {
+            ru.souz.llms.FilePresentation.image -> "photo"
+            ru.souz.llms.FilePresentation.voice -> "voice"
+            ru.souz.llms.FilePresentation.audio -> "audio"
+            else -> "document"
+        }
+        require(text.isEmpty() || part == "document" && text.length <= TELEGRAM_DOCUMENT_TEXT_LIMIT)
+        val method = if (text.isNotEmpty()) "sendRichMessage" else "send" + part.replaceFirstChar { it.uppercase() }
+        val fields = mutableMapOf("chat_id" to chatId.toString())
+        if (text.isNotEmpty()) fields["rich_message"] = mapper.writeValueAsString(mapOf(
+            "markdown" to "$text\n\n![](tg://document?id=attachment)",
+            "media" to listOf(mapOf("id" to "attachment", "media" to mapOf("type" to "document", "media" to "attach://document"))),
+        ))
+        val uploadBytes = if (part == "photo") runInterruptible(Dispatchers.Default) { telegramPhoto(bytes) } else bytes
+        val uploadFile = if (part == "photo") file.copy(
+            name = file.name.substringBeforeLast('.', file.name) + ".jpg", mimeType = "image/jpeg", sizeBytes = uploadBytes.size.toLong(),
+        ) else file
+        val multipart = ru.souz.backend.attachments.AttachmentMultipart(part, uploadFile, uploadBytes, fields)
+        return runInterruptible(Dispatchers.IO) {
+            val response = client.send(HttpRequest.newBuilder(URI("$apiBaseUrl/bot$token/$method"))
+                .timeout(Duration.ofSeconds(120)).header("Content-Type", multipart.contentType)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(multipart.body)).build(), HttpResponse.BodyHandlers.ofString())
+            val node = mapper.readTree(response.body())
+            if (response.statusCode() != 200 || node["ok"]?.asBoolean() != true) {
+                throw TelegramBotApiTransportException("Telegram file delivery failed.")
+            }
+            node["result"]?.get("message_id")?.longValue()
+                ?: throw TelegramBotApiTransportException("Telegram delivery receipt is missing.")
+        }
+    }
 
     override suspend fun getMe(token: String): TelegramGetMeResponse =
         request(
@@ -294,7 +354,29 @@ data class TelegramMessage(
     val from: TelegramUser? = null,
     val chat: TelegramChat,
     val text: String? = null,
+    val caption: String? = null,
+    val document: TelegramFile? = null,
+    val photo: List<TelegramFile> = emptyList(),
+    val voice: TelegramFile? = null,
+    val audio: TelegramFile? = null,
+    @param:JsonProperty("media_group_id") val mediaGroupId: String? = null,
 )
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class TelegramFile(
+    @param:JsonProperty("file_id") val fileId: String,
+    @param:JsonProperty("file_unique_id") val fileUniqueId: String? = null,
+    @param:JsonProperty("file_size") val fileSize: Long? = null,
+    @param:JsonProperty("file_name") val fileName: String? = null,
+    @param:JsonProperty("mime_type") val mimeType: String? = null,
+    @param:JsonProperty("file_path") val filePath: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    val duration: Int? = null,
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+private data class TelegramFileResponse(val ok: Boolean, val result: TelegramFile? = null)
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class TelegramChat(

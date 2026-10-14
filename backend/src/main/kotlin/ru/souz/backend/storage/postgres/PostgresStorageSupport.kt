@@ -263,6 +263,7 @@ internal fun ResultSet.toMessage(): ChatMessage =
         chatId = getObject("chat_id", java.util.UUID::class.java),
         seq = getLong("seq"),
         role = parseChatRole(getString("role")),
+        attachments = postgresStorageMapper.readValue(getString("attachments")),
         content = getString("content"),
         metadata = postgresStorageMapper.readValue<Map<String, String>>(getString("metadata")),
         createdAt = instant("created_at"),

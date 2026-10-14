@@ -198,7 +198,16 @@ class CodexChatAPI(
 
     private fun mapMessageToInputItem(msg: LLMRequest.Message): Map<String, Any?>? {
         return when (msg.role) {
-            LLMMessageRole.user -> mapOf("type" to "message", "role" to "user", "content" to msg.content)
+            LLMMessageRole.user -> mapOf("type" to "message", "role" to "user", "content" to
+                if (msg.attachments.isNullOrEmpty()) msg.content else buildList {
+                    add(mapOf("type" to "input_text", "text" to msg.content))
+                    for (image in msg.attachments) {
+                        require(image.startsWith("data:image/") || image.startsWith("https://") || image.startsWith("http://")) {
+                            "Codex image input must be an image data URL or HTTP(S) URL."
+                        }
+                        add(mapOf("type" to "input_image", "image_url" to image))
+                    }
+                })
             LLMMessageRole.assistant, LLMMessageRole.function_in_progress -> {
                 if (msg.functionsStateId != null) {
                     // assistant tool call

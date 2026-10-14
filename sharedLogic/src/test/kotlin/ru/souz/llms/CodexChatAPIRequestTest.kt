@@ -24,6 +24,15 @@ import kotlin.test.assertTrue
 
 class CodexChatAPIRequestTest {
     @Test
+    fun `user image is an input image alongside its caption`() {
+        val image = "data:image/png;base64,aGVsbG8="
+        val item = invokeMapMessageToInputItem(createApi(), LLMRequest.Message(
+            LLMMessageRole.user, "Describe this", attachments = listOf(image)))
+        assertEquals(listOf(mapOf("type" to "input_text", "text" to "Describe this"),
+            mapOf("type" to "input_image", "image_url" to image)), item["content"])
+    }
+
+    @Test
     fun `reasoning effort is nested for Responses and omitted when unset`() {
         val api = createApi()
         val configured = invokeBuildResponsesRequest(api, chatRequest().copy(reasoningEffort = "low"))

@@ -16,6 +16,17 @@ import ru.souz.tool.web.internal.WebToolSupport
 
 class HttpVkBotApiTest {
     @Test
+    fun `media URLs reject alternate origins ports and embedded credentials`() {
+        for (url in listOf("https://sun1.userapi.com/file", "https://vk.com/doc", "https://psv4.vkuseraudio.net/voice")) {
+            assertEquals(url, vkMediaUri(url).toString())
+        }
+        for (url in listOf("http://vk.com/file", "https://vk.com.evil.test/file", "https://evilvk.com/file",
+            "https://user:secret@vk.com/file", "https://127.0.0.1/file", "https://vk.com:8443/file", "https://vk.com/file#fragment")) {
+            assertFailsWith<IllegalArgumentException> { vkMediaUri(url) }
+        }
+    }
+
+    @Test
     fun `HTTP adapter handles VK envelopes encodes credentials and rejects failed sends`() = runBlocking {
         val requests = CopyOnWriteArrayList<Pair<String, Map<String, String>>>()
         val userAgents = CopyOnWriteArrayList<String?>()

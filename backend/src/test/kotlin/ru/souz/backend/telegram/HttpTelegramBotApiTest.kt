@@ -12,6 +12,60 @@ import kotlinx.coroutines.runBlocking
 
 class HttpTelegramBotApiTest {
     @Test
+    fun `files use bounded downloads and native multipart methods`() = runBlocking {
+        val uploads = LinkedBlockingQueue<Triple<String, String, String>>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { call ->
+            val path = call.requestURI.path
+            val bytes = when {
+                path.endsWith("/getFile") -> """{"ok":true,"result":{"file_id":"remote","file_path":"documents/readme.txt"}}""".toByteArray()
+                path.contains("/file/") -> "payload".toByteArray()
+                else -> {
+                    uploads.put(Triple(path, call.requestHeaders.getFirst("Content-Type"), call.requestBody.reader().readText()))
+                    """{"ok":true,"result":{"message_id":17}}""".toByteArray()
+                }
+            }
+            call.sendResponseHeaders(200, bytes.size.toLong())
+            call.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        try {
+            val api = HttpTelegramBotApi("http://127.0.0.1:${server.address.port}")
+            assertEquals("payload", api.downloadFile("test", "remote", 7).decodeToString())
+            assertFailsWith<ru.souz.backend.attachments.AttachmentException> { api.downloadFile("test", "remote", 6) }
+            for ((presentation, part) in listOf(
+                ru.souz.llms.FilePresentation.document to "Document",
+                ru.souz.llms.FilePresentation.voice to "Voice",
+                ru.souz.llms.FilePresentation.audio to "Audio",
+            )) {
+                val file = ru.souz.llms.FileContent(ru.souz.llms.FileReference("saved"), "отчёт.txt", "text/plain", 7, presentation)
+                assertEquals(17L, api.sendFile("test", 42, file, "payload".toByteArray()))
+                val (path, type, body) = uploads.remove()
+                assertEquals("/bottest/send$part", path)
+                kotlin.test.assertTrue(type.startsWith("multipart/form-data; boundary="))
+                kotlin.test.assertTrue(body.contains("name=\"${part.lowercase()}\"; filename=\"отчёт.txt\""))
+                kotlin.test.assertTrue(body.contains("name=\"chat_id\"\r\n\r\n42"))
+                kotlin.test.assertTrue(body.endsWith("--\r\n"))
+            }
+            val document = ru.souz.llms.FileContent(ru.souz.llms.FileReference("html"), "page.html", "text/html", 7)
+            val text = "**Готово** — [страница](https://example.com). 😀" + "я".repeat(2000)
+            assertEquals(17L, api.sendFile("test", 42, document, "payload".toByteArray(), text))
+            val (path, _, body) = uploads.remove()
+            assertEquals("/bottest/sendRichMessage", path)
+            val rich = jacksonObjectMapper().readTree(body.substringAfter("name=\"rich_message\"\r\n\r\n").substringBefore("\r\n--"))
+            assertEquals("$text\n\n![](tg://document?id=attachment)", rich["markdown"].asText())
+            assertEquals("attachment", rich["media"][0]["id"].asText())
+            assertEquals("document", rich["media"][0]["media"]["type"].asText())
+            assertEquals("attach://document", rich["media"][0]["media"]["media"].asText())
+            kotlin.test.assertTrue(body.contains("name=\"document\"; filename=\"page.html\""))
+            assertFailsWith<IllegalArgumentException> {
+                api.sendFile("test", 42, document, "payload".toByteArray(), "x".repeat(TELEGRAM_DOCUMENT_TEXT_LIMIT + 1))
+            }
+            assertEquals(0, uploads.size)
+        } finally { server.stop(0) }
+    }
+
+    @Test
     fun `rich message preserves Markdown and reports Telegram rejection`() = runBlocking {
         val requests = LinkedBlockingQueue<Pair<String, String>>()
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
