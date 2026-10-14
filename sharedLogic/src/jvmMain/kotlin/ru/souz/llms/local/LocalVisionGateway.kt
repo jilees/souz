@@ -15,7 +15,7 @@ class LocalVisionGateway(
         requestVisionText(
             settingsProvider = settingsProvider,
             input = input,
-            attachment = input.imagePath.toString(),
+            attachments = input.images.map { it.imagePath.toString() },
             failurePrefix = "Local image understanding failed",
             chatRequest = chatApi::message,
         )

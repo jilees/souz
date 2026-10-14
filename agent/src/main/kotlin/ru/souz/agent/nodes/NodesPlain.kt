@@ -13,7 +13,8 @@ internal object NodesPlain {
     fun inputToHistory(name: String = "Input->History"): Node<String, String> = Node(name) { ctx ->
         val history = ArrayList(ctx.history).apply {
             if (isEmpty()) add(ctx.systemPrompt.toSystemPromptMessage())
-            add(LLMRequest.Message(LLMMessageRole.user, ctx.input))
+            add(LLMRequest.Message(LLMMessageRole.user, ctx.input, files = ctx.inputAttachments,
+                images = ctx.inputAttachments.filter { it.mimeType.startsWith("image/") }.map { ru.souz.llms.ImageContent(it.file) }))
         }
         ctx.map(history = history) { ctx.input }
     }
@@ -41,6 +42,7 @@ internal object NodesPlain {
     ): Node<LLMResponse.Chat.Ok, String> = Node(name) { ctx ->
         val messages = executeFunctionCalls(ctx, executor).map { it.message }
         ctx.map(history = ctx.history + messages) { ctx.history.last().content }
+            .copy(replyAttachments = (ctx.replyAttachments + messages.flatMap { it.replyFiles }).distinctBy { it.file })
     }
 
     suspend fun executeFunctionCalls(

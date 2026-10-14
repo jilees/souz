@@ -30,6 +30,18 @@ import ru.souz.llms.http.providerHttpClientDefaults
 
 class CodexChatAPIRequestTest {
     @Test
+    fun `user image is an input image alongside its caption`() = runTest {
+        val image = "data:image/png;base64,aGVsbG8="
+        val request = captureRequest(chatRequest().copy(messages = listOf(
+            LLMRequest.Message(LLMMessageRole.user, "Describe this", attachments = listOf(image)),
+        )))
+        val input = request["input"] as List<*>
+        val item = input.single() as Map<*, *>
+        assertEquals(listOf(mapOf("type" to "input_text", "text" to "Describe this"),
+            mapOf("type" to "input_image", "image_url" to image)), item["content"])
+    }
+
+    @Test
     fun `Codex overload is normalized for both event shapes and incomplete output stays an error`() = runTest {
         val overload = """{"code":"server_is_overloaded","message":"Please try again later."}"""
         val cases = listOf(

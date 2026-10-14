@@ -58,6 +58,8 @@ kotlin {
             dependencies {
                 implementation(projects.native)
                 implementation(libs.commons.csv)
+                implementation(libs.zxing.core)
+                implementation(libs.zxing.javase)
                 implementation(libs.tika.core)
                 implementation(libs.tika.parsersStandardPackage)
                 implementation(libs.bundles.letsPlot)

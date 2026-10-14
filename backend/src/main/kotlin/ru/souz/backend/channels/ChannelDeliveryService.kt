@@ -4,6 +4,8 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import ru.souz.backend.attachments.toContent
+import ru.souz.backend.crypto.sha256Hex
 import ru.souz.backend.chat.model.Chat
 import ru.souz.backend.chat.model.ChatRole
 import ru.souz.backend.chat.model.CROSS_CHANNEL_MESSAGE_METADATA_KEY
@@ -65,13 +67,57 @@ class ChannelDeliveryService(
         }
     }
 
-    suspend fun deliver(userId: String, chatId: UUID, text: String) {
+    internal suspend fun sendFiles(
+        userId: String, chatId: UUID, text: String, fileIds: List<String>, channel: String, textLimit: Int,
+        storage: ru.souz.backend.attachments.AttachmentStorage,
+        delivery: ru.souz.backend.attachments.AttachmentDelivery,
+        deliveryKey: String?, sendText: suspend (String) -> Unit,
+        sendFile: suspend (ru.souz.llms.FileContent, ByteArray) -> String,
+        documentTextLimit: Int = textLimit,
+        sendDocumentWithText: (suspend (ru.souz.llms.FileContent, ByteArray, String) -> String)? = null,
+    ): ChannelSendResult {
+        val sentText = StringBuilder()
+        val sentFiles = mutableListOf<ru.souz.llms.FileContent>()
+        val key = "forward:$channel:$chatId:${deliveryKey ?: UUID.randomUUID()}:" +
+            ru.souz.llms.restJsonMapper.writeValueAsString(listOf(text, fileIds)).sha256Hex()
+        val historyId = UUID.nameUUIDFromBytes(key.toByteArray())
+        var complete = false
+        return try {
+            require(fileIds.size <= 10)
+            val files = fileIds.distinct().map {
+                val saved = storage.get(userId, ru.souz.backend.attachments.attachmentId(it))
+                val presentation = if (channel == "Telegram" && saved.mimeType in setOf("image/png", "image/jpeg")) {
+                    ru.souz.llms.FilePresentation.image
+                } else ru.souz.llms.FilePresentation.document
+                saved.toContent(presentation)
+            }
+            delivery.deliver(userId, key, text, files, textLimit,
+                checkOwnership = { check(resolveTarget(userId, chatId) != null) },
+                onAccepted = { chunk, file -> if (chunk != null) sentText.append(chunk); if (file != null) sentFiles += file },
+                sendText = sendText, sendFile = sendFile, documentTextLimit = documentTextLimit,
+                sendDocumentWithText = sendDocumentWithText)
+            complete = true
+            ChannelSendResult.Delivered("Sent via $channel.")
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { ChannelSendResult.Failed("$channel delivery failed; ${sentFiles.size} file(s) were accepted. Do not automatically resend an uncertain part.") }
+        finally {
+            if (sentText.isNotEmpty() || sentFiles.isNotEmpty()) withContext(NonCancellable) {
+                if (messageRepository.getById(userId, chatId, historyId) == null) {
+                    deliver(userId, chatId, if (complete) text else sentText.toString(), sentFiles, historyId)
+                }
+            }
+        }
+    }
+
+    suspend fun deliver(userId: String, chatId: UUID, text: String, attachments: List<ru.souz.llms.FileContent> = emptyList(), id: UUID = UUID.randomUUID()) {
         val message = messageRepository.append(
             userId,
             chatId,
             ChatRole.ASSISTANT,
             text,
             metadata = mapOf(CROSS_CHANNEL_MESSAGE_METADATA_KEY to "true"),
+            attachments = attachments,
+            id = id,
         )
         chatRepository.touchUpdatedAt(userId, chatId, message.createdAt)
         eventService.append(

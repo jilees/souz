@@ -13,11 +13,13 @@ class AnthropicVisionGateway(
 ) : VisionGateway {
 
     override suspend fun analyze(input: VisionInput): String {
-        val uploaded = chatApi.uploadFile(File(input.imagePath.toString()))
+        val attachments = input.images.map { image ->
+            chatApi.uploadFile(File(image.imagePath.toString())).id
+        }
         return requestVisionText(
             settingsProvider = settingsProvider,
             input = input,
-            attachment = uploaded.id,
+            attachments = attachments,
             failurePrefix = "Anthropic image understanding failed",
             chatRequest = chatApi::message,
         )

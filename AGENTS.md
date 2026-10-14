@@ -58,6 +58,8 @@ Only these direct production project dependencies are allowed. Standard test-sou
 
 ## Optional backend capabilities
 
+- [Channel attachments](docs/channel-attachments.md) use private per-user S3 buckets and explicit file selection for Telegram/VK replies.
+
 - [User personality](docs/personality-settings.md) is independent of the system prompt and synchronizes to Orion.
 
 - Manual VPS deployment and the legacy hook database transition are documented in [the runtime guide](docs/backend-docker-sandbox-rollout.md).

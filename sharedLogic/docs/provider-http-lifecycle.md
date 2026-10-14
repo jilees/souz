@@ -12,6 +12,7 @@
 
 - Codex SSE `error`, `response.failed`, and `response.incomplete` events emit `codex.stream_failure` at WARN with the model, HTTP request/response IDs, error code/type/message/parameter and incomplete reason. Diagnostic scalar values are bounded to 2,000 characters; request bodies, response output and authorization headers are excluded. Use the host's execution context to correlate failures across chat and tool calls.
 - Codex maps SSE `server_is_overloaded` to `LLMResponse.Chat.Error(503, message)`, preserving object/string error messages. A standalone SSE error also prevents partial-output fallback success. Backend retries cover 429 and Codex 503 within the existing retry budget; incomplete output and unknown errors are not retryable.
+- The Codex image gateway collects `image_generation_call.result` from SSE output-item events and requires terminal completion. Empty final text/output does not negate an image event. Errors or a truncated stream never yield a successful image; no automatic retry follows a possibly billed operation. Keep encoded/decoded image limits and exclude image bytes from logs and persisted chat history.
 
 ## Why this is fragile
 

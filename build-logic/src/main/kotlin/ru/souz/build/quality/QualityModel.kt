@@ -233,6 +233,8 @@ internal data class DependencyEdge(
 internal const val UNCLASSIFIED_SOURCE_SET = "<unclassified>"
 
 internal fun dependencySourceSet(configurationName: String): String? {
+    // Coverage aggregation is non-production; inheritance into production is checked by the caller.
+    if (configurationName == "kover") return null
     val mainConfigurations = mapOf(
         "api" to "main",
         "implementation" to "main",

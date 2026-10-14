@@ -3,6 +3,7 @@
 ## Invariants
 
 - Filesystem tools resolve a `RuntimeSandbox` from the current `ToolInvocationMeta`. The resolver maps invocation metadata to `SandboxScope` and may cache sandboxes by scope; tools must not cache a resolved path or sandbox for later users or conversations.
+- Batched `ViewImage` keeps sandbox path and size checks for every image. Keep all bridged temporary files alive until the shared vision request finishes; closing each file scope before requesting the next image leaves the provider with deleted paths. Preserve input order so PDF page labels in the question match the attachments.
 - `FileSystemSkillRegistryRepository` and `RunSkillCommand` must use the same single-user bundle layout.
 - Skill metadata, immutable hash-addressed bundles, and validation records stay behind `SandboxFileSystem`. Bundle loading rejects escaping paths, symlinks, non-regular files, binary content, and invalid UTF-8.
 - `RunSkillCommand` accepts only a skill activated for the current turn and keeps its script and working directory within that skill bundle.

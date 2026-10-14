@@ -13,6 +13,20 @@ data class VisionInput(
     val mimeType: String,
     val sizeBytes: Long,
     val question: String,
+    val additionalImages: List<VisionImage> = emptyList(),
+) {
+    val images: List<VisionImage>
+        get() = listOf(VisionImage(imagePath, mimeType, sizeBytes)) + additionalImages
+
+    init {
+        require(additionalImages.size < MAX_VISION_IMAGES) { "At most $MAX_VISION_IMAGES images are supported per request" }
+    }
+}
+
+data class VisionImage(
+    val imagePath: Path,
+    val mimeType: String,
+    val sizeBytes: Long,
 )
 
 /**
@@ -57,3 +71,4 @@ fun interface ImageGenerationGateway {
 }
 
 const val DEFAULT_MAX_VISION_IMAGE_BYTES: Long = 20L * 1024L * 1024L
+const val MAX_VISION_IMAGES: Int = 5

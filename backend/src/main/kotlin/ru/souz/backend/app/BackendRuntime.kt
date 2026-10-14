@@ -13,6 +13,7 @@ import ru.souz.backend.client.ClientThreadRecoveryService
 import ru.souz.backend.memory.hindsight.HistoryMemoryWorker
 import ru.souz.jobs.JobRun
 import ru.souz.jobs.impl.PostgresJobService
+import ru.souz.backend.attachments.AttachmentCleanupWorker
 
 /** Process-wide backend runtime container with shared services and LLM resources. */
 class BackendRuntime private constructor(
@@ -42,6 +43,7 @@ class BackendRuntime private constructor(
         telegramBotPollingService?.start()
         vkBotPollingService?.start()
         di.direct.instanceOrNull<HistoryMemoryWorker>()?.start(applicationScope)
+        di.direct.instanceOrNull<AttachmentCleanupWorker>()?.start(applicationScope)
     }
 
     override fun close() {

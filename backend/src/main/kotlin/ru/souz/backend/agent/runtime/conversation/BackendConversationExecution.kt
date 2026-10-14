@@ -8,4 +8,5 @@ internal data class BackendConversationExecution(
     val output: String,
     val usage: LLMResponse.Usage,
     val session: AgentConversationSession,
+    val attachments: List<ru.souz.llms.FileContent> = emptyList(),
 )

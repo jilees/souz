@@ -30,6 +30,7 @@ interface AgentExecutionRepository {
         usage: AgentExecutionUsage,
         output: String? = null,
         assistantMessageId: UUID? = null,
+        attachments: List<ru.souz.llms.FileContent> = emptyList(),
     ): CommittedAgentTurn?
     suspend fun start(execution: AgentExecution, userMessageId: UUID): AgentExecution?
     suspend fun get(userId: String, executionId: UUID): AgentExecution?

@@ -31,8 +31,9 @@ internal fun AgentConversationSession.toState(key: AgentConversationKey): AgentC
         rowVersion = rowVersion,
     )
 
-internal fun AgentConversationState.toConversationSession(): AgentConversationSession =
-    AgentConversationSession(
+internal fun AgentConversationState.toConversationSession(): AgentConversationSession {
+    require(schemaVersion in 1..DEFAULT_SCHEMA_VERSION) { "Unsupported agent session schema version: $schemaVersion" }
+    return AgentConversationSession(
         history = history,
         temperature = temperature,
         locale = locale.languageTagOrDefault(),
@@ -40,6 +41,7 @@ internal fun AgentConversationState.toConversationSession(): AgentConversationSe
         basedOnMessageSeq = basedOnMessageSeq,
         rowVersion = rowVersion,
     )
+}
 
 private fun String.toLocale(): Locale =
     Locale.forLanguageTag(this)
@@ -52,5 +54,5 @@ private fun String.toZoneId(): ZoneId =
 private fun Locale.languageTagOrDefault(): String =
     toLanguageTag().takeIf { it.isNotBlank() } ?: DEFAULT_LOCALE.toLanguageTag()
 
-private const val DEFAULT_SCHEMA_VERSION: Int = 1
+private const val DEFAULT_SCHEMA_VERSION: Int = 2
 private val DEFAULT_LOCALE: Locale = Locale.forLanguageTag("ru-RU")

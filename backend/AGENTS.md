@@ -26,6 +26,8 @@ Before changing this module, read the relevant pain-point topics below.
 
 ## Pain points
 
+- [Attachments](docs/attachments.md) — ownership, expiry, model input and channel delivery.
+
 - [Personality](../docs/personality-settings.md) — persistence, current-turn style and Orion delivery.
 - [Scheduled tasks](docs/scheduled-tasks.md) — Orion ownership, transient RPC and source-channel delivery.
 - [Named LLM connections](docs/named-llm-connections.md) — server model names, independent endpoints and keys, subagents and summarization.

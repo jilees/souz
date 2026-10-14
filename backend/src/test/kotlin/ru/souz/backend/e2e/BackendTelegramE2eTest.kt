@@ -450,9 +450,19 @@ class BackendTelegramE2eTest {
     )
 }
 
-private class FakeTelegramBotApi : TelegramBotApi {
+internal class FakeTelegramBotApi : TelegramBotApi {
     data class SentMessage(val chatId: Long, val text: String)
     data class ChatAction(val chatId: Long, val action: String)
+
+    val downloads = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+    val sentFiles = CopyOnWriteArrayList<Pair<ru.souz.llms.FileContent, ByteArray>>()
+    val fileTexts = CopyOnWriteArrayList<String>()
+    override suspend fun downloadFile(token: String, fileId: String, maxBytes: Int) = downloads.getValue(fileId)
+    override suspend fun sendFile(token: String, chatId: Long, file: ru.souz.llms.FileContent, bytes: ByteArray, text: String): Long {
+        sentFiles += file to bytes
+        fileTexts += text
+        return sentFiles.size.toLong()
+    }
 
     val requestedOffsets = CopyOnWriteArrayList<Long>()
     val sentMessages = CopyOnWriteArrayList<SentMessage>()
@@ -521,7 +531,7 @@ private class FakeTelegramBotApi : TelegramBotApi {
     override suspend fun deleteWebhook(token: String, dropPendingUpdates: Boolean) = Unit
 }
 
-private class PausedTelegramPoll {
+internal class PausedTelegramPoll {
     val entered = CompletableDeferred<Unit>()
     val release = CompletableDeferred<Unit>()
     private val response = AtomicReference<List<TelegramUpdate>>(emptyList())

@@ -46,6 +46,11 @@ class ToolReadPdfPages(private val filesToolUtil: FilesToolUtil) : ToolSetup<Too
 
         if (file.name.substringAfterLast('.', "").lowercase() != "pdf") return "Error: Expecting .pdf file"
 
+        val requestedEnd = input.endPage ?: input.startPage
+        if (input.startPage < 1 || requestedEnd < input.startPage || requestedEnd - input.startPage >= 10) {
+            return "Error: Request between 1 and 10 pages, starting at page 1 or later."
+        }
+        if ((file.sizeBytes ?: 0) > 20_000_000) return "Error: PDF exceeds 20 MB."
         return try {
             filesToolUtil.withReadableLocalPath(file, meta, prefix = "pdf-read-", suffix = ".pdf") { localPath ->
                 val document = Loader.loadPDF(
@@ -62,6 +67,7 @@ class ToolReadPdfPages(private val filesToolUtil: FilesToolUtil) : ToolSetup<Too
                     }
 
                     val totalPages = document.numberOfPages
+                    if (totalPages > 500) return@withReadableLocalPath "Error: PDF exceeds 500 pages."
                     val start = input.startPage.coerceAtLeast(1)
                     val end = (input.endPage ?: start).coerceAtMost(totalPages)
 
@@ -80,7 +86,17 @@ class ToolReadPdfPages(private val filesToolUtil: FilesToolUtil) : ToolSetup<Too
                     // Настройка: не пытаться читать текст, скрытый слоями (иногда мешает)
                     stripper.suppressDuplicateOverlappingText = true
 
-                    val text = stripper.getText(document).trim()
+                    val output = object : java.io.Writer() {
+                        val text = StringBuilder()
+                        override fun write(buffer: CharArray, offset: Int, length: Int) {
+                            if (text.length + length > 50_000) throw IOException("PDF text exceeds 50000 characters; request fewer pages.")
+                            text.append(buffer, offset, length)
+                        }
+                        override fun flush() = Unit
+                        override fun close() = Unit
+                    }
+                    stripper.writeText(document, output)
+                    val text = output.text.toString().trim()
 
                     if (text.isBlank()) {
                         """
