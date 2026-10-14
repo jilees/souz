@@ -47,6 +47,7 @@ internal class BackendExecutionLlmChatApi(
     private val hookBudget: HookLlmBudget? = null,
     private val metrics: BackendMetrics? = null,
     private val namedModels: Map<String, NamedLlmModel> = emptyMap(),
+    private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
 ) : LLMChatAPI {
     private val providerStateMutex = Mutex()
     private val credentials = mutableMapOf<LlmProvider, String?>()
@@ -73,7 +74,7 @@ internal class BackendExecutionLlmChatApi(
             is ChatRoute.Ready -> route
             is ChatRoute.Rejected -> return route.error
         }
-        return retryChat(provider) { callProvider(provider, request, apiFor(provider, namedModel)) }
+        return retryChat(provider) { callProvider(provider, request, apiFor(provider, namedModel), body.model.takeIf(namedModels::containsKey)) }
     }
 
     override suspend fun messageStream(body: LLMRequest.Chat): Flow<LLMResponse.Chat> {
@@ -82,7 +83,7 @@ internal class BackendExecutionLlmChatApi(
             is ChatRoute.Rejected -> return flow { emit(route.error) }
         }
         val api = apiFor(provider, namedModel)
-        return retryingStream(provider, api, request)
+        return retryingStream(provider, api, request, body.model.takeIf(namedModels::containsKey))
     }
 
     override suspend fun embeddings(body: LLMRequest.Embeddings): LLMResponse.Embeddings {
@@ -225,8 +226,9 @@ internal class BackendExecutionLlmChatApi(
         }
     }
 
-    private suspend fun callProvider(provider: LlmProvider, body: LLMRequest.Chat, api: LLMChatAPI): LLMResponse.Chat {
-        val request = hookBudget?.limitRequest(body) ?: body
+    private suspend fun callProvider(provider: LlmProvider, body: LLMRequest.Chat, api: LLMChatAPI, modelName: String? = null): LLMResponse.Chat {
+        val prepared = prepareAttachments(body, modelName)
+        val request = hookBudget?.limitRequest(prepared) ?: prepared
         return withProviderCall(hookBudget, provider) {
             measureAttempt(provider, request.model) { outcome ->
                 api.message(request).also { response ->
@@ -237,8 +239,9 @@ internal class BackendExecutionLlmChatApi(
         }
     }
 
-    private fun retryingStream(provider: LlmProvider, api: LLMChatAPI, body: LLMRequest.Chat): Flow<LLMResponse.Chat> = flow {
-        val request = hookBudget?.limitRequest(body) ?: body
+    private fun retryingStream(provider: LlmProvider, api: LLMChatAPI, body: LLMRequest.Chat, modelName: String?): Flow<LLMResponse.Chat> = flow {
+        val prepared = prepareAttachments(body, modelName)
+        val request = hookBudget?.limitRequest(prepared) ?: prepared
         var attempt = 0
         while (true) {
             try {
@@ -264,6 +267,32 @@ internal class BackendExecutionLlmChatApi(
             } catch (retry: RetryFirstStreamingError) {
                 waitForRetry(provider, attempt, retry.error)
                 attempt += 1
+            }
+        }
+    }
+
+    private suspend fun prepareAttachments(body: LLMRequest.Chat, modelName: String?): LLMRequest.Chat {
+        if (body.messages.none { it.files.isNotEmpty() || it.images.isNotEmpty() }) return body
+        val input = attachmentInput ?: return body.copy(messages = body.messages.map { item ->
+            if (item.files.isEmpty() && item.images.isEmpty()) item else item.copy(
+                content = item.content + "\n[Attachment support is disabled; referenced files cannot be read. Do not invent their contents.]",
+                files = emptyList(), images = emptyList(), replyFiles = emptyList(),
+            )
+        })
+        return input.prepare(userId, body, modelName) { model, prompt, image ->
+            val named = namedModels[model]
+            val known = ru.souz.llms.findLLMModel(model)
+            require(named != null || known != null) { "attachment_vision_model_unknown" }
+            val response = message(body.copy(
+                model = if (named != null) model else requireNotNull(known).alias,
+                provider = if (named != null) LlmProvider.OPENAI else requireNotNull(known).provider,
+                messages = listOf(LLMRequest.Message(ru.souz.llms.LLMMessageRole.user, prompt, attachments = listOf(image))),
+                functions = emptyList(), isSummarization = false,
+            ))
+            when (response) {
+                is LLMResponse.Chat.Ok -> response.choices.lastOrNull()?.message?.content
+                    ?.takeIf { it.isNotBlank() } ?: error("attachment_vision_empty")
+                is LLMResponse.Chat.Error -> error("attachment_vision_failed")
             }
         }
     }

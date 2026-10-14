@@ -49,6 +49,7 @@ internal class AgentExecutionRequestFactory(
         latestDeviceContextJson: String = "{}",
         userMessageMetadataExtras: Map<String, String> = emptyMap(),
         clientToolsEnabled: Boolean = false,
+        attachments: List<ru.souz.llms.FileContent> = emptyList(),
     ): PreparedChatTurn {
         val effectiveSettings = effectiveSettingsResolver.resolve(userId, requestOverrides)
         val provider = findLLMModel(effectiveSettings.defaultModel)?.provider ?: LlmProvider.OPENAI
@@ -100,6 +101,7 @@ internal class AgentExecutionRequestFactory(
             runtimeRequest = BackendConversationTurnRequest(
                 reasoningEffort = effectiveSettings.reasoningEffort,
                 prompt = content,
+                attachments = attachments,
                 model = effectiveSettings.defaultModel,
                 contextSize = effectiveSettings.contextSize,
                 locale = effectiveSettings.locale.toLanguageTag(),

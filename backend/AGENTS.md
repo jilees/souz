@@ -27,6 +27,10 @@ Before changing this module, read the relevant pain-point topics below.
 
 ## Pain points
 
+- [User file storage](../docs/s3-storage.md) — shared private bucket, external ownership, retention and bounded transfers.
+
+- [Attachments](docs/attachments.md) — ownership, expiry, model input and channel delivery.
+
 - [Personality](../docs/personality-settings.md) — persistence, current-turn style and Orion delivery.
 - [Named LLM connections](docs/named-llm-connections.md) — server model names, independent endpoints and keys, subagents and summarization.
 - [Metrics accounting](docs/metrics-accounting.md) — commit boundaries, bounded labels, waiting time and replica ownership; see the [metric reference](docs/metrics.md).

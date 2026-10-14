@@ -60,6 +60,7 @@ Only these direct production project dependencies are allowed. Standard test-sou
 
 ## Optional backend capabilities
 
+- [Channel attachments](docs/channel-attachments.md) use owner-scoped private S3 storage and explicit file selection for Telegram/VK replies.
 - The Docker runtime provides a per-user browser and explicit Skill environment forwarding; see [the runtime guide](docs/backend-docker-sandbox-rollout.md).
 - [Scheduled tasks](backend/docs/scheduled-tasks.md) use the backend's PostgreSQL-backed JobService.
 - [User personality](docs/personality-settings.md) is independent of the system prompt and synchronizes to Orion.
@@ -75,3 +76,7 @@ Only these direct production project dependencies are allowed. Standard test-sou
 - Desktop entry point: `./gradlew :desktopApp:run`.
 - Backend entry point: `./gradlew :backend:run`.
 - For documentation-only changes, validate local links and run `git diff --check`; runtime tests are unnecessary unless source behavior also changes.
+
+## User file storage
+
+- [User file storage](docs/s3-storage.md) provides one private, operator-provisioned S3 bucket and ownership-scoped file access. Read [storage invariants](docs/pain-points.md) before changing it.

@@ -20,7 +20,7 @@ class ChannelDeliveryServiceTest {
 
     @Test
     fun `complete delivery persists source Markdown`() = runTest {
-        coEvery { service.deliver(any(), any(), any()) } just Runs
+        coEvery { service.deliver(any(), any(), any(), any(), any()) } just Runs
         val sent = mutableListOf<String>()
 
         val result = service.sendChunks("user", chatId, "**abcdefgh**", "VK", listOf("abcd", "efgh"), { it }) {
@@ -29,14 +29,14 @@ class ChannelDeliveryServiceTest {
 
         assertIs<ChannelSendResult.Delivered>(result)
         assertEquals(listOf("abcd", "efgh"), sent)
-        coVerify(exactly = 1) { service.deliver("user", chatId, "**abcdefgh**") }
+        coVerify(exactly = 1) { service.deliver("user", chatId, "**abcdefgh**", emptyList(), any()) }
     }
 
     @Test
     fun `failure and cancellation persist only accepted chunks`() = runTest {
         for (cancelled in listOf(false, true)) for (accepted in 0..1) {
             val delivery = spyk(ChannelDeliveryService(mockk(), mockk(), mockk()))
-            coEvery { delivery.deliver(any(), any(), any()) } just Runs
+            coEvery { delivery.deliver(any(), any(), any(), any(), any()) } just Runs
             var attempted = 0
             val send = suspend {
                 delivery.sendChunks("user", chatId, "**abcdefgh**", "VK", listOf("abcd", "efgh"), { it }) {
@@ -49,8 +49,8 @@ class ChannelDeliveryServiceTest {
 
             if (cancelled) assertFailsWith<CancellationException> { send() }
             else assertIs<ChannelSendResult.Failed>(send())
-            coVerify(exactly = accepted) { delivery.deliver("user", chatId, "abcd") }
-            coVerify(exactly = accepted) { delivery.deliver(any(), any(), any()) }
+            coVerify(exactly = accepted) { delivery.deliver("user", chatId, "abcd", emptyList(), any()) }
+            coVerify(exactly = accepted) { delivery.deliver(any(), any(), any(), any(), any()) }
         }
     }
 }

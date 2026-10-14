@@ -64,7 +64,8 @@ internal class NodesSummarization(
     private fun summaryToHistory(name: String = "summary->history"): Node<LLMResponse.Chat.Ok, String> =
         Node(name) { ctx ->
             val message = ctx.input.choices.mapNotNull { it.toMessage() }.last()
-            val summary = message.copy(content = "$SUMMARIZATION_PREFIX:\n${message.content}")
+            val retainedFiles = ctx.history.flatMap { it.files + it.replyFiles }.distinctBy { it.file }
+            val summary = message.copy(content = "$SUMMARIZATION_PREFIX:\n${message.content}", files = retainedFiles)
             val response = ctx.history.last()
             l.info("Summarization\n\n{}", summary.content)
             ctx.map(history = listOf(ctx.systemPrompt.toSystemPromptMessage(), summary, response)) { response.content }

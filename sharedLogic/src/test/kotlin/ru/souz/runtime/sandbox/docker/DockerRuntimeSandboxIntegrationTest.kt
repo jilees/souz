@@ -88,6 +88,40 @@ class DockerRuntimeSandboxIntegrationTest {
     }
 
     @Test
+    fun `PDF skill renders Cyrillic and images and refuses external resources`() = runTest {
+        val sandbox = createSandbox()
+        val fs = sandbox.fileSystem
+        val image = java.awt.image.BufferedImage(12, 12, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val encoded = java.io.ByteArrayOutputStream().also { output ->
+            javax.imageio.stream.MemoryCacheImageOutputStream(output).use {
+                javax.imageio.ImageIO.write(image, "png", it)
+            }
+        }.toByteArray()
+        val inline = java.util.Base64.getEncoder().encodeToString(encoded)
+        val source = fs.resolvePath("~/document.html")
+        fs.writeText(source, "<h1>Проверка Союза</h1><p>PDF fixture</p><img src=\"data:image/png;base64,$inline\">")
+        suspend fun render(output: String) = sandbox.commandExecutor.execute(SandboxCommandRequest(
+            command = listOf("/opt/souz/pdf-venv/bin/python", "/opt/souz/skills/pdf-document/scripts/render_pdf.py", source.path, output),
+            timeoutMillis = 60_000,
+        ))
+        val target = "/souz/home/document.pdf"
+        val rendered = render(target)
+        assertEquals(0, rendered.exitCode, rendered.stdout + rendered.stderr)
+        val bytes = fs.openInputStream(fs.resolveExistingFile(target)).use { it.readBytes() }
+        org.apache.pdfbox.Loader.loadPDF(bytes).use { document ->
+            assertEquals(1, document.numberOfPages)
+            assertContains(org.apache.pdfbox.text.PDFTextStripper().getText(document), "Проверка Союза")
+            val page = document.getPage(0)
+            assertTrue(page.resources.xObjectNames.any { page.resources.getXObject(it) is org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject })
+        }
+        fs.writeText(source, "<img src=\"http://127.0.0.1/private\">")
+        val blocked = render("/souz/home/forbidden.pdf")
+        assertEquals(1, blocked.exitCode)
+        assertContains(blocked.stdout, "forbidden resource")
+        assertFalse(Files.exists(sandbox.hostRoot.resolve("home/forbidden.pdf")))
+    }
+
+    @Test
     fun `browser executes page javascript and preserves state across conversation calls`() = runTest {
         val sandbox = createSandbox()
         val page = sandbox.fileSystem.resolvePath("~/browser-fixture.html")
@@ -305,8 +339,11 @@ class DockerRuntimeSandboxIntegrationTest {
         return sandbox
     }
 
-    private fun createTempDirectory(prefix: String): Path =
-        Files.createTempDirectory(prefix).also(createdPaths::add)
+    private fun createTempDirectory(prefix: String): Path {
+        // Desktop Docker/Colima shares the checkout, but not necessarily macOS's private temp root.
+        val root = Files.createDirectories(repositoryRoot().resolve("sharedLogic/build/docker-tests"))
+        return Files.createTempDirectory(root, prefix).also(createdPaths::add)
+    }
 
     private fun ensureDockerImage() {
         val inspect = docker(

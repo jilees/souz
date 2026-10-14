@@ -29,6 +29,21 @@ import ru.souz.tool.web.ToolWebImageSearch
 
 class BackendExecutionToolCatalogTest {
     @Test
+    fun `client search executions cannot select reply attachments while bot executions can`() {
+        for (clientSearch in listOf(true, false)) {
+            val catalog = backendExecutionToolCatalog(
+                compiledToolCatalog = TestToolCatalog(ToolCategory.FILES to listOf("PrepareAttachment", "AttachFileToReply")),
+                executionLlmToolCatalog = TestToolCatalog(),
+                enabledCompiledToolNames = null,
+                clientToolCatalog = if (clientSearch) TestToolCatalog(ToolCategory.WEB_SEARCH to listOf("web.search")) else TestToolCatalog(),
+                includeFewShotExamples = false,
+            )
+            assertTrue("PrepareAttachment" in toolNames(catalog))
+            assertEquals(!clientSearch, "AttachFileToReply" in toolNames(catalog))
+        }
+    }
+
+    @Test
     fun `compiled tool outcomes are recorded through Skill delegation and counted once for direct calls`() = runTest {
         val failures = mapOf(
             "success" to null,

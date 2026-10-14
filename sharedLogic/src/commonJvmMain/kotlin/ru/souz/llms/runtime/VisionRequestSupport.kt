@@ -8,7 +8,7 @@ import ru.souz.llms.LLMResponse
 internal suspend fun requestVisionText(
     settingsProvider: SettingsProvider,
     input: VisionInput,
-    attachment: String,
+    attachments: List<String>,
     failurePrefix: String,
     chatRequest: suspend (LLMRequest.Chat) -> LLMResponse.Chat,
 ): String {
@@ -21,7 +21,7 @@ internal suspend fun requestVisionText(
                 LLMRequest.Message(
                     role = LLMMessageRole.user,
                     content = input.question,
-                    attachments = listOf(attachment),
+                    attachments = attachments,
                 )
             ),
         ),

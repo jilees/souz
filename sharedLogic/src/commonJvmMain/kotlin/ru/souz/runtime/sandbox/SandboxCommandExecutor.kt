@@ -29,6 +29,8 @@ data class SandboxCommandResult(
     val stdout: String,
     val stderr: String,
     val timedOut: Boolean = false,
+    val files: List<ru.souz.llms.FileContent> = emptyList(),
+    val replyFiles: List<ru.souz.llms.FileContent> = emptyList(),
 )
 
 interface SandboxCommandExecutor {

@@ -1,5 +1,15 @@
 package ru.souz.backend.app
 
+import ru.souz.backend.attachments.AttachmentStorage
+import ru.souz.backend.attachments.AttachmentCleanupWorker
+import ru.souz.backend.attachments.S3AttachmentObjects
+import ru.souz.backend.storage.postgres.PostgresAttachmentRepository
+import ru.souz.backend.attachments.BackendAttachmentAccess
+import ru.souz.backend.attachments.AttachmentDelivery
+import ru.souz.backend.attachments.BackendAttachmentInput
+import ru.souz.backend.telegram.TelegramAttachments
+import ru.souz.tool.files.AttachmentTools
+
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.SerializationFeature
@@ -166,6 +176,26 @@ fun backendDiModule(
 
     bindSingleton { BackendApplicationScope() }
     bindSingleton<Clock> { Clock.systemUTC() }
+    appConfig.attachments?.let { config ->
+        bindSingleton { S3AttachmentObjects(config) }
+        bindSingleton { PostgresAttachmentRepository(instance<HikariDataSource>()) }
+        bindSingleton { AttachmentStorage(config, instance(), instance(), instance()) }
+        bindSingleton { AttachmentCleanupWorker(instance()) }
+        bindSingleton { AttachmentDelivery(instance(), instance<HikariDataSource>()) }
+        bindSingleton { BackendAttachmentInput(instance(), config, instance()) }
+        bindSingleton { BackendAttachmentAccess(instance(), instance(), config) }
+        bindSingleton { AttachmentTools(instance<BackendAttachmentAccess>()) }
+        bindSingleton { ru.souz.tool.files.DocumentMediaTools(instance()) }
+        bindSingleton { ru.souz.backend.attachments.AttachmentMediaOperations(instance<HikariDataSource>()) }
+        bindSingleton {
+            ru.souz.backend.attachments.AttachmentMedia(config, instance(), instance<ProviderHttpClients>().openAi, instance(), instance(),
+                codexImageGateway = if (config.imageProvider == "CODEX") ru.souz.llms.codex.CodexImageGenerationGateway(
+                    instance<SettingsProvider>(), instance<CodexOAuthService>(), instance<ProviderHttpClients>().openAi, config.maxFileBytes,
+                ) else null,
+            )
+        }
+        bindSingleton { ru.souz.backend.attachments.AttachmentMediaTools(instance()) }
+    }
     bindSingleton<BackendFeatureFlags> { appConfig.featureFlags }
     bindSingleton { BackendMetrics() }
     bindSingleton<HikariDataSource> {
@@ -225,6 +255,7 @@ fun backendDiModule(
                 instance<HikariDataSource>().close()
                 instance<BackendMetrics>().close()
             },
+            closeAttachmentStorage = { instanceOrNull<S3AttachmentObjects>()?.close() },
         )
     }
     bindSingleton { AgentEventBus(instance()) }
@@ -318,6 +349,7 @@ fun backendDiModule(
     bindSingleton {
         BackendConversationRuntimeFactory(
             namedModels = instance<NamedLlmConfig>().models,
+            attachmentInput = instanceOrNull(),
             skillClassifier = instance(),
             baseSettingsProvider = instance(),
             credentialResolver = instance(),
@@ -392,6 +424,7 @@ fun backendDiModule(
     }
     if (appConfig.featureFlags.telegramBot) {
         bindSingleton<TelegramBotApi> { HttpTelegramBotApi() }
+        appConfig.attachments?.let { config -> bindSingleton { TelegramAttachments(instance(), instance(), config) } }
         bindSingleton {
             TelegramBotTokenCrypto(
                 rawBase64Key = appConfig.telegramTokenEncryptionKey
@@ -415,6 +448,8 @@ fun backendDiModule(
                 tokenCrypto = instance(),
                 scope = instance<BackendApplicationScope>(),
                 maxConcurrency = appConfig.telegramPollingMaxConcurrency,
+                attachments = instanceOrNull(),
+                attachmentDelivery = instanceOrNull(),
             )
         }
         bindSingleton {
@@ -423,11 +458,14 @@ fun backendDiModule(
                 deliveryService = instance(),
                 telegramBotApi = instance(),
                 tokenCrypto = instance(),
+                attachmentStorage = instanceOrNull(),
+                attachmentDelivery = instanceOrNull(),
             )
         }
     }
     if (appConfig.featureFlags.vkBot) {
         bindSingleton<VkBotApi> { HttpVkBotApi() }
+        appConfig.attachments?.let { config -> bindSingleton { ru.souz.backend.vk.VkAttachments(instance(), instance(), config) } }
         bindSingleton {
             VkBotTokenCrypto(
                 rawBase64Key = appConfig.vkTokenEncryptionKey
@@ -451,6 +489,8 @@ fun backendDiModule(
                 tokenCrypto = instance(),
                 scope = instance<BackendApplicationScope>(),
                 maxConcurrency = appConfig.vkPollingMaxConcurrency,
+                attachments = instanceOrNull(),
+                attachmentDelivery = instanceOrNull(),
             )
         }
         bindSingleton {
@@ -459,6 +499,8 @@ fun backendDiModule(
                 deliveryService = instance(),
                 vkBotApi = instance(),
                 tokenCrypto = instance(),
+                attachmentStorage = instanceOrNull(),
+                attachmentDelivery = instanceOrNull(),
             )
         }
     }
@@ -504,6 +546,9 @@ fun backendDiModule(
         AgentToolCatalog.compose(
             instance<RuntimeToolsFactory>().catalog,
             instance<BackendChannelToolCatalog>().catalog,
+            instanceOrNull<AttachmentTools>()?.catalog ?: AgentToolCatalog(),
+            instanceOrNull<ru.souz.backend.attachments.AttachmentMediaTools>()?.catalog ?: AgentToolCatalog(),
+            instanceOrNull<ru.souz.tool.files.DocumentMediaTools>()?.catalog ?: AgentToolCatalog(),
             AgentToolCatalog(mapOf(ToolCategory.SCHEDULING to listOf(
                 ToolCreateScheduledTask(instance(), instance(), instance(), appConfig.scheduledTasks, instance()).toGiga(),
                 ToolListScheduledTasks(instance()).toGiga(),

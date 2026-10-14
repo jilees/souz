@@ -1,6 +1,7 @@
 package ru.souz.backend.app
 
 import java.net.URI
+import ru.souz.backend.attachments.AttachmentStorageConfig
 import ru.souz.backend.common.BackendConfigurationException
 import ru.souz.backend.config.BackendConfigSource
 import ru.souz.backend.config.BackendFeatureFlags
@@ -153,6 +154,7 @@ data class BackendAppConfig(
     val hooks: HookConfig = HookConfig(),
     val scheduledTasks: ScheduledTaskConfig = ScheduledTaskConfig(),
     val policyPrompt: String? = null,
+    val attachments: AttachmentStorageConfig? = null,
 ) {
     fun validate(): BackendAppConfig {
         server.validate()
@@ -200,6 +202,7 @@ data class BackendAppConfig(
     companion object {
         fun load(source: BackendConfigSource = SystemBackendConfigSource): BackendAppConfig =
             BackendAppConfig(
+                attachments = AttachmentStorageConfig.load(source),
                 featureFlags = BackendFeatureFlags.load(source),
                 hooks = HookConfig(
                     owners = source.value("SOUZ_HOOK_OWNERS", "souz.hooks.owners")

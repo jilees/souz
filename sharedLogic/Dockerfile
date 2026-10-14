@@ -5,8 +5,13 @@ LABEL ru.souz.runtime-sandbox.fixture="paper-summarize-academic"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash coreutils findutils python3 ca-certificates curl git \
-        python3-requests \
+        python3-requests ffmpeg tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng \
+        python3-venv libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
+
+# Isolate the PDF renderer from Python dependencies used by other Skills.
+RUN python3 -m venv /opt/souz/pdf-venv \
+    && /opt/souz/pdf-venv/bin/pip install --no-cache-dir weasyprint==70.0
 
 # Lightpanda provides the per-user browser in the Docker sandbox.
 # Linux x86-64 nightly; use LIGHTPANDA_URL to select a compatible binary.

@@ -61,7 +61,8 @@ internal class BackendConversationRuntime(
 
         val result = executor.execute(
             agentId = AgentId.SKILLS_GRAPH,
-            context = seedContext.copy(settings = seedContext.settings.copy(reasoningEffort = request.reasoningEffort)),
+            context = seedContext.copy(settings = seedContext.settings.copy(reasoningEffort = request.reasoningEffort),
+                inputAttachments = request.attachments),
             input = request.prompt,
             eventSink = eventSink,
             onActiveRunReady = onRuntimeReady,
@@ -79,6 +80,7 @@ internal class BackendConversationRuntime(
             output = result.output,
             usage = executionApi.cumulativeUsage(),
             session = nextSession,
+            attachments = result.attachments,
         )
     }
 
@@ -114,6 +116,7 @@ internal class BackendConversationRuntime(
                                 .flatMap { it.toAgentHistoryMessages().asSequence() }
                                 .toList(),
                             input = inputMessage.content,
+                            attachments = inputMessage.attachments,
                         )
                         observedMessageSeq = inputMessage.seq
                         input
@@ -175,7 +178,7 @@ private val ChatMessage.isClientHistory: Boolean
 private fun ChatMessage.toAgentHistoryMessages(): List<LLMRequest.Message> =
     when (val toolArguments = metadata[CLIENT_HISTORY_MESSAGE_METADATA_KEY]) {
         null -> if (metadata[CROSS_CHANNEL_MESSAGE_METADATA_KEY] == "true") {
-            listOf(LLMRequest.Message(role = LLMMessageRole.assistant, content = content))
+            listOf(LLMRequest.Message(role = LLMMessageRole.assistant, content = content, files = attachments))
         } else {
             emptyList()
         }

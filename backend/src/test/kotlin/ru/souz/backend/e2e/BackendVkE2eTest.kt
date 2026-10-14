@@ -251,7 +251,14 @@ class BackendVkE2eTest {
 private fun update(id: Long, text: String, sender: Long = 701, peer: Long = sender) =
     VkLongPollUpdate("message_new", VkMessageObjectWrapper(VkMessage(id, sender, peer, text)))
 
-private class ScriptedVkApi : VkBotApi {
+internal class ScriptedVkApi : VkBotApi {
+    val downloads = mutableMapOf<String, ByteArray>()
+    val files = mutableListOf<Pair<ru.souz.llms.FileContent, ByteArray>>()
+    override suspend fun downloadFile(url: String, maxBytes: Int) = downloads.getValue(url)
+    override suspend fun sendFile(groupToken: String, peerId: Long, file: ru.souz.llms.FileContent, bytes: ByteArray): Long {
+        files += file to bytes
+        return files.size.toLong()
+    }
     val responses = ArrayDeque<VkLongPollResponse>()
     val cursors = mutableListOf<String>()
     val sent = mutableListOf<Pair<Long, String>>()
