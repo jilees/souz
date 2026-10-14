@@ -1,5 +1,10 @@
 package ru.souz.llms
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
+import org.slf4j.LoggerFactory
+
 import com.fasterxml.jackson.module.kotlin.readValue
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -24,6 +29,109 @@ import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.http.providerHttpClientDefaults
 
 class CodexChatAPIRequestTest {
+    @Test
+    fun `Codex overload is normalized for both event shapes and incomplete output stays an error`() = runTest {
+        val overload = """{"code":"server_is_overloaded","message":"Please try again later."}"""
+        val cases = listOf(
+            "event: error\ndata: $overload\n\n" to 503,
+            "event: response.failed\ndata: {\"response\":{\"error\":$overload}}\n\n" to 503,
+            "event: error\ndata: $overload\n\nevent: response.failed\ndata: {\"response\":{\"error\":null}}\n\n" to 503,
+            "event: response.failed\ndata: {\"response\":{\"error\":{\"code\":\"invalid_request\",\"message\":\"Bad request\"}}}\n\n" to -1,
+            "event: response.incomplete\ndata: {\"response\":{\"error\":null,\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n" to -1,
+        )
+        for ((terminal, status) in cases) {
+            val partial = "event: response.output_item.done\ndata: {\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"partial\"}]}}\n\n"
+            val fixture = streamingFixture(partial + terminal + "data: [DONE]\n\n")
+            try {
+                val error = assertIs<LLMResponse.Chat.Error>(fixture.api.messageStream(chatRequest()).toList().single())
+                assertEquals(status, error.status)
+                assertTrue(error.message.isNotBlank())
+                if (status == 503) assertEquals("Please try again later.", error.message)
+            } finally {
+                fixture.client.close()
+            }
+        }
+    }
+
+    @Test
+    fun `stream failures log diagnostic fields without response output or credentials`() = runTest {
+        val fixture = streamingFixture(
+            """
+            event: response.created
+            data: {"response":{"id":"resp_test"}}
+
+            event: error
+            data: {"type":"error","code":"server_error","message":"upstream unavailable","param":"model"}
+
+            event: response.failed
+            data: {"response":{"error":{"type":"server_error","code":"overloaded","message":"try again"},"output":[{"text":"private output"}],"authorization":"private credential"}}
+
+            event: response.incomplete
+            data: {"response":{"error":null,"incomplete_details":{"reason":"max_output_tokens"}}}
+
+            data: [DONE]
+
+            """.trimIndent()
+        )
+        withFailureLogs { logs ->
+            try {
+                val responses = fixture.api.messageStream(chatRequest()).toList()
+                assertTrue(responses.all { it is LLMResponse.Chat.Error })
+                val failures = logs.filter { it.formattedMessage == "Codex stream failure" }
+                assertEquals(3, failures.size)
+                val fields = failures.map { event -> event.keyValuePairs.associate { it.key to it.value } }
+                fields.forEach {
+                    assertEquals("codex.stream_failure", it["event"])
+                    assertEquals("req_test", it["request_id"])
+                    assertEquals("resp_test", it["response_id"])
+                    assertEquals(200, it["http_status"])
+                    assertEquals(chatRequest().model, it["model"])
+                }
+                assertEquals("server_error", fields[0]["error_code"])
+                assertEquals("upstream unavailable", fields[0]["error_message"])
+                assertEquals("model", fields[0]["error_param"])
+                assertEquals("overloaded", fields[1]["error_code"])
+                assertEquals("server_error", fields[1]["error_type"])
+                assertEquals("try again", fields[1]["error_message"])
+                assertEquals("max_output_tokens", fields[2]["incomplete_reason"])
+                assertTrue(failures.all { it.level.levelStr == "WARN" })
+                assertTrue(fields.none { "private" in it.toString() || "access-token" in it.toString() })
+            } finally {
+                fixture.client.close()
+            }
+        }
+    }
+
+    @Test
+    fun `string error diagnostic is bounded and single line`() = runTest {
+        val message = "first\nsecond\r" + "x".repeat(3_000)
+        val payload = restJsonMapper.writeValueAsString(mapOf("response" to mapOf("error" to message)))
+        val fixture = streamingFixture("event: response.failed\ndata: $payload\n\ndata: [DONE]\n\n")
+        withFailureLogs { logs ->
+            try {
+                assertIs<LLMResponse.Chat.Error>(fixture.api.message(chatRequest()))
+                val event = logs.single { it.formattedMessage == "Codex stream failure" }
+                val diagnostic = event.keyValuePairs.single { it.key == "error_message" }.value as String
+                assertEquals(2_000, diagnostic.length)
+                assertTrue(diagnostic.startsWith("first second "))
+            } finally {
+                fixture.client.close()
+            }
+        }
+    }
+
+    private suspend fun withFailureLogs(block: suspend (List<ILoggingEvent>) -> Unit) {
+        val logger = LoggerFactory.getLogger(CodexChatAPI::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            block(appender.list)
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+    }
+
     @Test
     fun `reasoning effort is nested for Responses and omitted when unset`() = runTest {
         val configured = captureRequest(chatRequest().copy(reasoningEffort = "low"))
@@ -142,10 +250,17 @@ class CodexChatAPIRequestTest {
         return CodexChatAPI(settingsProvider, oauthService, client)
     }
 
+    private data class StreamingFixture(val api: CodexChatAPI, val client: HttpClient)
+
+    private fun streamingFixture(streamBody: String): StreamingFixture {
+        val client = HttpClient(responseEngine(streamBody)) { providerHttpClientDefaults() }
+        return StreamingFixture(createApi(client), client)
+    }
+
     private fun responseEngine(streamBody: String) = MockEngine {
         respond(
             content = streamBody,
-            headers = headersOf(HttpHeaders.ContentType, ContentType.Text.EventStream.toString()),
+            headers = headersOf(HttpHeaders.ContentType to listOf(ContentType.Text.EventStream.toString()), "x-request-id" to listOf("req_test")),
         )
     }
 

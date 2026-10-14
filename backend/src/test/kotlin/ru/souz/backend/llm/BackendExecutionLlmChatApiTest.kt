@@ -447,6 +447,152 @@ class BackendExecutionLlmChatApiTest {
     }
 }
 
+class BackendCodexRetryTest {
+    @Test
+    fun `real Codex adapter overload reaches backend retries in both modes`() = runTest {
+        for (streaming in listOf(false, true)) {
+            val requests = mutableListOf<JsonNode>()
+            val delays = mutableListOf<Long>()
+            val settings = LlmSettingsStub().apply { codexAccessToken = "test-token"; codexAccountId = "test-account" }
+            val client = HttpClient(MockEngine { request ->
+                requests.add(restJsonMapper.readTree(request.body.toByteArray()))
+                val body = if (requests.size == 1) {
+                    "event: error\ndata: {\"code\":\"server_is_overloaded\",\"message\":\"Try later\"}\n\n" +
+                        "event: response.failed\ndata: {\"response\":{\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"Try later\"}}}\n\n"
+                } else {
+                    "event: response.output_item.done\ndata: {\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer\"}]}}\n\n" +
+                        "event: response.completed\ndata: {\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":2,\"total_tokens\":5}}}\n\n"
+                }
+                respond(body + "data: [DONE]\n\n", headers = headersOf(HttpHeaders.ContentType, ContentType.Text.EventStream.toString()))
+            }) { providerHttpClientDefaults() }
+            facadeFixture(settingsProvider = settings, providerApiOverride = null, client = client,
+                retryPolicy = BackendProviderRetryPolicy(), delayMillis = { delays += it }).use { fixture ->
+                val request = chat("test-model").copy(provider = LlmProvider.CODEX)
+                val response = if (streaming) fixture.api.messageStream(request).toList().single() else fixture.api.message(request)
+                assertEquals("answer", assertIs<LLMResponse.Chat.Ok>(response).choices.single().message.content)
+                assertEquals(2, requests.size)
+                assertEquals(requests[0], requests[1])
+                assertEquals(listOf(500L), delays)
+            }
+        }
+    }
+
+    @Test
+    fun `Codex overload retries are bounded and other provider errors remain unchanged`() = runTest {
+        for (streaming in listOf(false, true)) {
+            for ((provider, status, retries) in listOf(
+                Triple(LlmProvider.CODEX, 503, 2), Triple(LlmProvider.CODEX, 401, 2),
+                Triple(LlmProvider.CODEX, -1, 2), Triple(LlmProvider.OPENAI, 503, 2),
+                Triple(LlmProvider.CODEX, 503, 0), Triple(LlmProvider.CODEX, 429, 2),
+            )) {
+                val requests = mutableListOf<LLMRequest.Chat>()
+                val delays = mutableListOf<Long>()
+                val failure = LLMResponse.Chat.Error(status, "unavailable")
+                val upstream = StubChatApi(
+                    message = { requests += it; failure },
+                    stream = { requests += it; flowOf(failure) },
+                )
+                facadeFixture(
+                    retryPolicy = BackendProviderRetryPolicy(max429Retries = retries),
+                    delayMillis = { delays += it }, providerApiOverride = { upstream },
+                ).use { fixture ->
+                    val request = chat("test-model").copy(provider = provider)
+                    val response = if (streaming) fixture.api.messageStream(request).toList().single()
+                        else fixture.api.message(request)
+                    assertEquals(failure, response)
+                    val expected = if (provider == LlmProvider.CODEX && status in listOf(429, 503)) retries else 0
+                    assertEquals(List(expected + 1) { request }, requests)
+                    assertEquals(listOf(500L, 1_000L).take(expected), delays)
+                    assertEquals(usage(0, 0, 0, 0), fixture.api.cumulativeUsage())
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `Codex stream is never replayed after a published result`() = runTest {
+        var attempts = 0
+        val failure = LLMResponse.Chat.Error(503, "overloaded")
+        val success = ok("test-model", usage(1, 2, 3, 0))
+        facadeFixture(
+            retryPolicy = BackendProviderRetryPolicy(),
+            delayMillis = { error("Must not retry after output") },
+            providerApiOverride = { StubChatApi(stream = { attempts++; flowOf(success, failure) }) },
+        ).use { fixture ->
+            assertEquals(listOf(success, failure), fixture.api.messageStream(chat("test-model").copy(provider = LlmProvider.CODEX)).toList())
+            assertEquals(1, attempts)
+            assertEquals(success.usage, fixture.api.cumulativeUsage())
+        }
+    }
+
+    @Test
+    fun `cancellation during Codex backoff prevents another model call`() = runTest {
+        for (streaming in listOf(false, true)) {
+            var attempts = 0
+            val upstream = StubChatApi(
+                message = { attempts++; LLMResponse.Chat.Error(503, "overloaded") },
+                stream = { attempts++; flowOf(LLMResponse.Chat.Error(503, "overloaded")) },
+            )
+            facadeFixture(
+                retryPolicy = BackendProviderRetryPolicy(), providerApiOverride = { upstream },
+                delayMillis = { throw CancellationException("cancelled during backoff") },
+            ).use { fixture ->
+                val request = chat("test-model").copy(provider = LlmProvider.CODEX)
+                assertFailsWith<CancellationException> {
+                    if (streaming) fixture.api.messageStream(request).toList() else fixture.api.message(request)
+                }
+                assertEquals(1, attempts)
+            }
+        }
+    }
+
+    @Test
+    fun `retry after a completed tool only repeats the following model request`() = runTest {
+        for (streaming in listOf(false, true)) {
+            val tool = CountingSideEffectTool()
+            val settings = LlmSettingsStub().apply { useStreaming = streaming }
+            val requests = mutableListOf<LLMRequest.Chat>()
+            fun response(request: LLMRequest.Chat): LLMResponse.Chat {
+                requests += request
+                if (requests.size == 2) return LLMResponse.Chat.Error(503, "overloaded")
+                val call = requests.size == 1
+                return ok(request.model, usage(1, 1, 2, 0)).copy(choices = listOf(LLMResponse.Choice(
+                    LLMResponse.Message(if (call) "" else "done", LLMMessageRole.assistant,
+                        functionCall = if (call) LLMResponse.FunctionCall("SideEffect", emptyMap()) else null,
+                        functionsStateId = if (call) "call_once" else null),
+                    0, if (call) LLMResponse.FinishReason.function_call else LLMResponse.FinishReason.stop,
+                )))
+            }
+            facadeFixture(
+                settingsProvider = settings, retryPolicy = BackendProviderRetryPolicy(),
+                providerApiOverride = { StubChatApi(message = { response(it) }, stream = { flowOf(response(it)) }) },
+            ).use { fixture ->
+                val agent = ru.souz.ToolLoopGraphBasedAgent(fixture.api, settings)
+                val context = ru.souz.agent.state.AgentContext(
+                    input = "Do work", settings = ru.souz.agent.state.AgentSettings("test-model", LlmProvider.CODEX, 0f,
+                        ru.souz.agent.state.AgentTools(listOf(tool))), history = emptyList(),
+                    activeTools = listOf(tool.fn), systemPrompt = "Test",
+                )
+                assertEquals("done", agent.execute(context).output)
+                assertEquals(1, tool.calls)
+                assertEquals(3, requests.size)
+                assertEquals(requests[1], requests[2])
+                assertEquals(1, requests[2].messages.count { it.role == LLMMessageRole.function })
+                assertEquals(usage(2, 2, 4, 0), fixture.api.cumulativeUsage())
+            }
+        }
+    }
+}
+
+private class CountingSideEffectTool : ru.souz.llms.LLMToolSetup {
+    var calls = 0
+    override val fn = LLMRequest.Function("SideEffect", "Do work", LLMRequest.Parameters("object", emptyMap()))
+    override suspend fun invoke(functionCall: LLMResponse.FunctionCall): LLMRequest.Message {
+        calls++
+        return LLMRequest.Message(LLMMessageRole.function, "work completed", name = fn.name)
+    }
+}
+
 private class FacadeFixture(
     val api: BackendExecutionLlmChatApi,
     val credentialResolver: CountingCredentialResolver,
