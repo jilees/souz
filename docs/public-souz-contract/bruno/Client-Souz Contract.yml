@@ -186,6 +186,7 @@ items:
                           "device_tools"
                         ]
                       },
+                      "voice": {"embeddingId": "6a705d45-95a7-49a4-992a-871ee83a9196"},
                       "content": {
                         "type": "text",
                         "source": "voice",

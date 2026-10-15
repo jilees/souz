@@ -21,6 +21,9 @@
     "meta": {
       "locale": "ru-RU",
       "timeZone": "Europe/Moscow"
+    },
+    "voice": {
+      "embeddingId": "6a705d45-95a7-49a4-992a-871ee83a9196"
     }
   }
 }

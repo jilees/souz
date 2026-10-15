@@ -25,6 +25,7 @@ data class MemoryContext(
     val conversationId: ConversationId?,
     val sessionId: MemorySessionId?,
     val projectId: ProjectId?,
+    val voiceEmbeddingId: String? = null,
 )
 
 fun legacyMemoryContext(): MemoryContext = MemoryContext(
@@ -66,6 +67,8 @@ data class CompletedTurnMemoryInput(
     val assistantMessage: String,
     val evidence: List<CompletedTurnEvidence> = emptyList(),
     val timeZone: String? = null,
+    val precedingUserMessage: String? = null,
+    val precedingAssistantMessage: String? = null,
 )
 
 /**

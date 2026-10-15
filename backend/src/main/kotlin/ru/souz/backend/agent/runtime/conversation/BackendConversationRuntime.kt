@@ -56,6 +56,11 @@ internal class BackendConversationRuntime(
                 requestId = request.executionId,
                 locale = request.locale,
                 timeZone = request.timeZone,
+                attributes = buildMap {
+                    if (request.clientToolsEnabled) put("voiceContext", "true")
+                    request.inputMessageId?.let { put("userMessageId", it) }
+                    request.voiceEmbeddingId?.let { put("voiceEmbeddingId", it) }
+                },
             ),
         )
 
@@ -117,6 +122,11 @@ internal class BackendConversationRuntime(
                                 .toList(),
                             input = inputMessage.content,
                             attachments = inputMessage.attachments,
+                            messageAttributes = buildMap {
+                                put("voiceContext", "true")
+                                put("userMessageId", inputMessage.id.toString())
+                                inputMessage.metadata["voiceEmbeddingId"]?.let { put("voiceEmbeddingId", it) }
+                            },
                         )
                         observedMessageSeq = inputMessage.seq
                         input

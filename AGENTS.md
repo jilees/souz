@@ -58,6 +58,8 @@ Only these direct production project dependencies are allowed. Standard test-sou
 
 ## Optional backend capabilities
 
+- [Voice memory](docs/voice-memory.md) uses per-speaker Hindsight banks and durable JEV routing alongside household memory.
+
 - [Channel attachments](docs/channel-attachments.md) use private per-user S3 buckets and explicit file selection for Telegram/VK replies.
 
 - [User personality](docs/personality-settings.md) is independent of the system prompt and synchronizes to Orion.
@@ -65,6 +67,17 @@ Only these direct production project dependencies are allowed. Standard test-sou
 - Manual VPS deployment and the legacy hook database transition are documented in [the runtime guide](docs/backend-docker-sandbox-rollout.md).
 - The Docker runtime provides a per-user browser and explicit Skill environment forwarding; see [the runtime guide](docs/backend-docker-sandbox-rollout.md).
 - [Scheduled tasks](docs/scheduled-tasks.md) use workspace hooks and a live Orion scheduler connection.
+
+## Deployment access discovery
+
+Before asking for VPS connection details, consult existing local project memory.
+On the maintainer's workstation it is under
+`~/.claude/projects/-Users-jiles-Projects-souz/memory/`: start with
+`reference_vps_access.md`, `project_skills_folder_migration.md`, and
+`project_backend_pinned_enabled_tools.md`. Use the recorded SSH key and a reused
+connection; do not copy credentials into the repository or tool output. Verify
+live `/souz` mounts before inspecting user Skills; historical shared paths can be
+stale. An offline Remote Desktop Commander connection does not imply SSH is offline.
 
 ## Verification
 

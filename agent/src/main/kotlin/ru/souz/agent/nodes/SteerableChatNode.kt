@@ -22,6 +22,7 @@ import ru.souz.llms.LLMResponse
 internal class SteerableChatNode(
     private val nodesLLM: NodesLLM,
     private val controller: ActiveRunInputController,
+    private val nodesMemory: NodesMemory? = null,
 ) : Node<String, LLMResponse.Chat> {
     override val name: String = "LLM"
 
@@ -34,7 +35,7 @@ internal class SteerableChatNode(
         while (true) {
             val request = when (val step = controller.nextLlmStep()) {
                 is NextLlmStep.QueuedInput -> {
-                    current = current.appendInputs(step.inputs)
+                    current = current.appendInputs(step.inputs, runtime)
                     continue
                 }
 
@@ -52,7 +53,7 @@ internal class SteerableChatNode(
             }
 
             if (queuedInputs != null) {
-                current = current.appendInputs(queuedInputs)
+                current = current.appendInputs(queuedInputs, runtime)
                 continue
             }
 
@@ -98,7 +99,7 @@ internal class SteerableChatNode(
     private val LLMResponse.Chat.Ok.isToolUse: Boolean
         get() = choices.any { it.message.functionCall != null }
 
-    private fun AgentContext<*>.appendInputs(inputs: List<ActiveRunInput>): AgentContext<String> {
+    private suspend fun AgentContext<*>.appendInputs(inputs: List<ActiveRunInput>, runtime: GraphRuntime): AgentContext<String> {
         require(inputs.isNotEmpty()) { "Queued input is required" }
         val nextHistory = buildList {
             addAll(history)
@@ -108,6 +109,12 @@ internal class SteerableChatNode(
                     images = input.attachments.filter { it.mimeType.startsWith("image/") }.map { ru.souz.llms.ImageContent(it.file) }))
             }
         }
-        return map(history = nextHistory) { inputs.last().input }
+        val attributes = inputs.lastOrNull { it.messageAttributes != null }?.messageAttributes
+        val meta = if (attributes == null) toolInvocationMeta else toolInvocationMeta.copy(
+            attributes = (toolInvocationMeta.attributes - "voiceEmbeddingId" - "userMessageId") + attributes,
+        )
+        val next = map(history = nextHistory) { inputs.last().input }.copy(toolInvocationMeta = meta)
+        val refresh = toolInvocationMeta.attributes["voiceEmbeddingId"] != null || meta.attributes["voiceEmbeddingId"] != null
+        return if (refresh && nodesMemory != null) nodesMemory.recall(refreshSpeaker = true).execute(next, runtime) else next
     }
 }

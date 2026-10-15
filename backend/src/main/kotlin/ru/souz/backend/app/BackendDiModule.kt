@@ -326,6 +326,7 @@ fun backendDiModule(
                 apiToken = appConfig.hindsightApiToken,
                 clock = instance(),
                 retainAsync = appConfig.hindsightRetainAsync,
+                captureRepository = instance(),
             )
         } else {
             NoopConversationMemoryRuntime
@@ -334,7 +335,8 @@ fun backendDiModule(
     if (appConfig.hindsightApiUrl != null) {
         bindSingleton { PostgresHistoryMemoryRepository(instance(), instance()) }
         bindSingleton {
-            HistoryMemoryWorker(instance(), instance<ConversationMemoryRuntime>() as HindsightConversationMemoryRuntime, instance())
+            HistoryMemoryWorker(instance(), instance<ConversationMemoryRuntime>() as HindsightConversationMemoryRuntime, instance(),
+                ru.souz.backend.memory.hindsight.VoiceMemoryRouting { instance<ru.souz.jev.JevClient>() })
         }
     }
     bindSingleton {

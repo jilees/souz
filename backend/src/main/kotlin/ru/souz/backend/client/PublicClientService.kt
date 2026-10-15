@@ -84,6 +84,11 @@ internal class PublicClientService(
         val requestId = frame.requestId.required("requestId")
         validateDevice(chat, frame.payload.device)
         frame.payload.content.validatedText()
+        frame.payload.voice?.let { voice ->
+            if (voice.embeddingId.length != 36 || voice.embeddingId.uuid("payload.voice.embeddingId").toString() != voice.embeddingId.lowercase()) {
+                throw ClientContractException("invalid_request", "payload.voice.embeddingId must be a canonical UUID.")
+            }
+        }
         val requestedThreadId = frame.threadId?.uuid("threadId")
         val key = ClientRequestKey(
             chatId = chat.id,
@@ -96,7 +101,7 @@ internal class PublicClientService(
                     "device" to frame.payload.device.copy(capabilities = frame.payload.device.capabilities.toSortedSet()),
                     "content" to frame.payload.content,
                     "meta" to frame.payload.meta,
-                )
+                ).apply { frame.payload.voice?.let { put("voice", it.copy(embeddingId = it.embeddingId.lowercase())) } }
             ),
         )
         val result = clientRequestRepository.resolveMessage(
@@ -383,6 +388,7 @@ internal class PublicClientService(
         put("source", frame.payload.content.source)
         put("device", mapper.writeValueAsString(frame.payload.device))
         put("requestId", frame.requestId)
+        frame.payload.voice?.let { put("voiceEmbeddingId", it.embeddingId.lowercase()) }
         frame.payload.meta?.let { put("requestMeta", mapper.writeValueAsString(it)) }
     }
 

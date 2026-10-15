@@ -27,6 +27,8 @@ data class ActiveRunInput(
     val history: List<LLMRequest.Message> = emptyList(),
     val input: String,
     val attachments: List<MessageAttachment> = emptyList(),
+    /** Host-owned identity for this input; a non-null map replaces the previous message identity. */
+    val messageAttributes: Map<String, String>? = null,
 )
 
 data class AgentExecutionResult(
