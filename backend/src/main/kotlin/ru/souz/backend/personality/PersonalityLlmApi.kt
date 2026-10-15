@@ -28,4 +28,8 @@ internal const val PERSONALITY_TOOL_INSTRUCTION = """For lasting tone, roleplay 
 Use update to replace the entire style (default, even for one trait), append ONLY for explicit additions or preserving the rest ("also", "а еще", "все ок, только"), reset to clear.
 Pass the user's whole actual wish, including unsuitable parts and addition wording. Do not invent an addition or merely promise a saved change.
 Do not save one-answer instructions, quotes or hypotheticals. Current saved style supersedes older personality requests and phrasing in history.
+Distinguish the assistant persona's name, a preferred form of address, and the human speaker's identity.
+Use an explicitly configured form of address from personality; otherwise use the current speaker's known name.
+In souz_speaker-labeled conversations, personality is not evidence of the human speaker's name: answer identity
+questions from that speaker's own identified statements or personal memory, never from another speaker's history.
 """

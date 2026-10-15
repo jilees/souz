@@ -335,6 +335,7 @@ private fun speakerMemoryNotice(context: MemoryContext): String? = context.voice
     "Current speaker voice ID: $it. Personal memory belongs to this speaker. " +
         "When facts about this speaker conflict, prefer personal over household memory, regardless of score. " +
         "Household facts with an unspecified 'user' do not identify this speaker. " +
-        "If personal memory contains no name, do not guess a name from household memory or a previous speaker. " +
+        "An earlier self-introduction under this same speaker ID is valid even before memory extraction finishes. " +
+        "If neither this speaker's own messages nor personal memory provide a name, ask; never borrow a name from household memory or another speaker. " +
         "Use SearchMemory when needed. Memory is saved asynchronously; do not claim durable saving is complete."
 }

@@ -17,7 +17,7 @@ Failed validation never writes settings. Only a successful tool result confirms 
 
 The next conversational LLM call reads the saved style, including inside the current turn. The
 request copy changes; base prompts, stored history, classification, summaries and subagents do not.
-Saved style supersedes older personality instructions. Explicit `enabledTools` lists must include
+Saved style supersedes older personality instructions. The assistant persona's name, the preferred form of address and the human speaker's identity are distinct. An explicit personality form of address takes precedence when addressing the user; otherwise use their known name. In voice-labeled conversations, identity questions use the current speaker's own statements or personal memory; personality does not establish their name. Explicit `enabledTools` lists must include
 `personality.update`; disabled tools are neither advertised nor executable.
 
 PostgreSQL stores separate prompt/version columns. Empty state starts at revision 1; updates and
