@@ -113,6 +113,7 @@ class BackendVoiceMemoryE2eTest {
             submitVoice(chat, owner, bob, "bob", "What is my name?")
             val request = llm.requests.last()
             assertTrue(request.messages.first().content.contains("Different IDs are different speakers"))
+            assertTrue(request.messages.first().content.contains("Use an explicitly configured form of address from personality"))
             assertTrue(request.messages.any { it.content == "[souz_speaker id=\"$alice\"]\nCall me Alice" })
             assertTrue(request.messages.any { it.content == "[souz_speaker id=\"$bob\"]\nWhat is my name?" })
             submitVoice(chat, owner, null, "unknown", "And me?")

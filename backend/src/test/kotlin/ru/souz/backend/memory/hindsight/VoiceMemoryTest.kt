@@ -64,7 +64,8 @@ class VoiceMemoryTest {
                 val context = MemoryContext(MemoryOwnerId("owner"), null, null, null, "voice")
                 val result = memory.retrieveMemory(MemoryRetrievalRequest(context, "hi"))
                 assertEquals(listOf("household"), result.facts.map { it.scope })
-                assertTrue(result.renderedPromptBlock.orEmpty().contains("do not guess a name"))
+                assertTrue(result.renderedPromptBlock.orEmpty().contains("never borrow a name"))
+                assertTrue(result.renderedPromptBlock.orEmpty().contains("this same speaker ID"))
             }
         }
     }
