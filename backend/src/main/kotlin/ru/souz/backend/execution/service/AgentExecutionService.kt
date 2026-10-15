@@ -218,7 +218,8 @@ class AgentExecutionService internal constructor(
         launchExecution(
             execution = runningExecution,
             conversationKey = prepared.conversationKey,
-            turnRequest = prepared.runtimeRequest.copy(inputMessageSeq = userMessage.seq),
+            turnRequest = prepared.runtimeRequest.copy(inputMessageSeq = userMessage.seq, inputMessageId = userMessage.id.toString(),
+                voiceEmbeddingId = userMessage.metadata["voiceEmbeddingId"]),
             eventSink = eventSink,
         )
 

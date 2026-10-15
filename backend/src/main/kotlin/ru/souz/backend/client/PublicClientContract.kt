@@ -110,10 +110,13 @@ data class ClientRequestMeta(
     val model: String? = null,
 )
 
+data class ClientVoice(val embeddingId: String)
+
 data class MessageSubmitPayload(
     val device: ClientDevice,
     val content: RecognizedTextContent,
     val meta: ClientRequestMeta? = null,
+    val voice: ClientVoice? = null,
 )
 
 data class MessageSubmitFrame(

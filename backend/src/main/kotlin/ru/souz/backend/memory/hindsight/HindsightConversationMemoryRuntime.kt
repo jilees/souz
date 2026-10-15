@@ -17,6 +17,9 @@ import io.ktor.http.isSuccess
 import java.io.IOException
 import java.time.Clock
 import java.util.UUID
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import ru.souz.backend.storage.postgres.PostgresHistoryMemoryRepository
 import kotlinx.coroutines.CancellationException
 import org.slf4j.LoggerFactory
 import ru.souz.memory.CompletedTurnMemoryInput
@@ -39,12 +42,13 @@ internal const val UNSUPPORTED_MEMORY_MUTATION_NOTICE =
         "Do not claim the operation succeeded; explain that exact-ID memory deletion is unavailable."
 
 /** Hindsight-backed memory using the trusted Souz user ID as the bank ID. */
-class HindsightConversationMemoryRuntime(
+internal class HindsightConversationMemoryRuntime(
     private val httpClient: HttpClient,
     baseUrl: String,
     private val apiToken: String? = null,
     private val clock: Clock = Clock.systemUTC(),
     private val retainAsync: Boolean = true,
+    private val captureRepository: PostgresHistoryMemoryRepository? = null,
 ) : ConversationMemoryRuntime {
     private val baseUrl = baseUrl.trimEnd('/')
     private val logger = LoggerFactory.getLogger(HindsightConversationMemoryRuntime::class.java)
@@ -60,7 +64,7 @@ class HindsightConversationMemoryRuntime(
         val bankId = request.context.ownerId.value
         val maxFacts = request.maxFacts ?: MemorySearchPolicy.DEFAULT_MAX_FACTS
         return try {
-            val items = recall(
+            val items = recallBanks(
                 context = request.context,
                 query = request.query,
                 maxFacts = maxFacts,
@@ -70,14 +74,14 @@ class HindsightConversationMemoryRuntime(
                 .takeIf(List<String>::isNotEmpty)
                 ?.joinToString(prefix = "$UNTRUSTED_MEMORY_NOTICE\n", separator = "\n") { "- $it" }
             MemoryRetrievalResult(
-                renderedPromptBlock = block,
+                renderedPromptBlock = listOfNotNull(speakerMemoryNotice(request.context), block).takeIf { it.isNotEmpty() }?.joinToString("\n"),
                 facts = items.map { it.toPromptFact(request.context) },
             )
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
             logger.warn("Hindsight recall failed for bank {}: {}", bankId, error.message)
-            MemoryRetrievalResult(renderedPromptBlock = null)
+            MemoryRetrievalResult(renderedPromptBlock = speakerMemoryNotice(request.context))
         }
     }
 
@@ -86,7 +90,7 @@ class HindsightConversationMemoryRuntime(
         semanticQuery: String,
         lexicalHints: List<String>,
         maxFacts: Int,
-    ): List<ConversationMemoryRuntime.SearchFact> = recall(
+    ): List<ConversationMemoryRuntime.SearchFact> = recallBanks(
         context = context,
         query = (listOf(semanticQuery) + lexicalHints).joinToString(" "),
         maxFacts = maxFacts,
@@ -113,6 +117,10 @@ class HindsightConversationMemoryRuntime(
         }
 
         val bankId = input.context.ownerId.value
+        if (input.context.voiceEmbeddingId != null) {
+            enqueueVoice(input, tags.isEmpty())
+            return
+        }
         try {
             val content = (
                 dialogueMemoryRecords(MemorySanitizer.redact(input.userMessage.trim()), mapOf("role" to "user")) +
@@ -151,16 +159,79 @@ class HindsightConversationMemoryRuntime(
         }
     }
 
+    private suspend fun enqueueVoice(input: CompletedTurnMemoryInput, sharedGlobally: Boolean) {
+        val embeddingId = requireNotNull(input.context.voiceEmbeddingId)
+        val messageId = UUID.fromString(requireNotNull(input.userMessageId))
+        val chatId = UUID.fromString(requireNotNull(input.conversationId))
+        val timestamp = memoryTimestamp(clock.instant(), input.timeZone)
+        val sources = listOf(
+            HistoryMemorySource(messageId.toString(), 1, "user", input.userMessage, timestamp, input.userMessage, embeddingId),
+            HistoryMemorySource(messageId.toString(), 2, "assistant", input.assistantMessage, timestamp, input.userMessage),
+        )
+        val context = listOf(
+            HistoryMemorySource("preceding-user", 0, "user", input.precedingUserMessage.orEmpty(), timestamp, input.precedingUserMessage),
+            HistoryMemorySource("preceding-assistant", 0, "assistant", input.precedingAssistantMessage.orEmpty(), timestamp, input.precedingUserMessage),
+        )
+        val header = "CURRENT SPEAKER: $embeddingId. Personal facts concern this speaker, not the account owner or other mentioned people. " +
+            "Previous context may have a different speaker.\n"
+        val documents = historyMemoryDocuments(messageId, sources, context, header).mapIndexed { index, document ->
+            document.copy(id = "souz-voice-$messageId-${index + 1}", sharedGlobally = sharedGlobally)
+        }
+        requireNotNull(captureRepository).enqueueVoiceTurn(input.context.ownerId.value, chatId, messageId, embeddingId, documents)
+    }
+
+    internal suspend fun captureVoiceBank(fragment: HistoryMemoryFragment, bank: String, documents: List<HistoryMemoryDocument>) {
+        require(bank == fragment.userId || bank == personalMemoryBank(fragment.userId, requireNotNull(fragment.voiceEmbeddingId)))
+        for (document in documents) {
+            retain(bank, mapOf(
+                "content" to document.content,
+                "timestamp" to document.timestamp,
+                "document_id" to document.id,
+                "tags" to if (bank != fragment.userId || document.sharedGlobally) emptyList() else listOf("chat:${fragment.chatId}"),
+                "metadata" to mapOf("source" to "souz-voice", "speaker" to requireNotNull(fragment.voiceEmbeddingId),
+                    "source_message_ids" to document.sourceIds.joinToString(",")),
+            ), retryOnIoFailure = false)
+        }
+    }
+
+    private suspend fun recallBanks(context: MemoryContext, query: String, maxFacts: Int, maxTokens: Int): List<RecalledMemory> {
+        val voice = context.voiceEmbeddingId ?: return recall(context, query, maxFacts, maxTokens)
+        require(maxFacts in 1..MemorySearchPolicy.MAX_FACTS && maxTokens > 0)
+        return coroutineScope {
+            suspend fun read(bank: String, personal: Boolean): List<RecalledMemory> = try {
+                val budget = if (personal) maxTokens - maxTokens / 2 else maxTokens / 2
+                if (budget == 0) emptyList() else recall(context, if (personal) "Current speaker name, identity and: $query" else query,
+                    maxFacts, budget, bank, personal).map {
+                    it.copy(id = "$bank:${it.id}", bankScope = if (personal) "personal" else "household")
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (!(personal && error is HindsightHttpFailure && error.statusCode == 404)) {
+                    logger.warn("Hindsight scoped recall failed scope={} category={}", if (personal) "personal" else "household", error.javaClass.simpleName)
+                }
+                emptyList()
+            }
+            val personal = async { read(personalMemoryBank(context.ownerId.value, voice), true) }
+            val household = async { read(context.ownerId.value, false) }
+            val personalFacts = personal.await()
+            val householdFacts = household.await()
+            val personalLimit = maxFacts - minOf(householdFacts.size, maxFacts / 2)
+            (personalFacts.take(personalLimit) + householdFacts).take(maxFacts)
+        }
+    }
+
     private suspend fun recall(
         context: MemoryContext,
         query: String,
         maxFacts: Int,
         maxTokens: Int,
+        bankId: String = context.ownerId.value,
+        personal: Boolean = false,
     ): List<RecalledMemory> {
         require(maxFacts in 1..MemorySearchPolicy.MAX_FACTS)
         require(maxTokens > 0)
         val response = httpClient.post(
-            "$baseUrl/v1/default/banks/${context.ownerId.value.encodeURLPathPart()}/memories/recall"
+            "$baseUrl/v1/default/banks/${bankId.encodeURLPathPart()}/memories/recall"
         ) {
             jsonRequest(apiToken)
             setBody(
@@ -168,7 +239,7 @@ class HindsightConversationMemoryRuntime(
                     put("query", query)
                     put("max_tokens", maxTokens)
                     put("types", listOf("world", "experience"))
-                    val chatTags = context.chatTags()
+                    val chatTags = if (personal) emptyList() else context.chatTags()
                     put("tags", chatTags)
                     put("tags_match", if (chatTags.isEmpty()) "exact" else "any")
                 }
@@ -223,7 +294,7 @@ internal class HindsightHttpFailure(val statusCode: Int) : IllegalStateException
 internal class HindsightRetainRejected : IllegalStateException("Hindsight retain was not accepted")
 
 private fun RecalledMemory.scope(context: MemoryContext): String =
-    if (tags.orEmpty().any { it in context.chatTags() }) "session" else "global"
+    bankScope ?: if (tags.orEmpty().any { it in context.chatTags() }) "session" else "global"
 
 private fun RecalledMemory.toPromptFact(context: MemoryContext): MemoryPromptFact = MemoryPromptFact(
     factId = id,
@@ -232,6 +303,7 @@ private fun RecalledMemory.toPromptFact(context: MemoryContext): MemoryPromptFac
 )
 
 private fun RecalledMemory.promptText(): String = buildString {
+    bankScope?.let { append("[$it] ") }
     append(text.trim().replace('\r', ' ').replace('\n', ' '))
     if (metadata?.get("source") == "souz-history") {
         append(" [reported dialogue; claims unverified; document=").append(document_id)
@@ -249,6 +321,7 @@ private data class RecalledMemory(
     val scores: Map<String, Float?>? = null,
     val document_id: String? = null,
     val metadata: Map<String, String>? = null,
+    val bankScope: String? = null,
 ) {
     init {
         require(id.isNotBlank()) { "Hindsight recall returned a blank memory id" }
@@ -256,4 +329,12 @@ private data class RecalledMemory(
     }
 
     val score: Float get() = scores?.get("final") ?: 0f
+}
+
+private fun speakerMemoryNotice(context: MemoryContext): String? = context.voiceEmbeddingId?.let {
+    "Current speaker voice ID: $it. Personal memory belongs to this speaker. " +
+        "When facts about this speaker conflict, prefer personal over household memory, regardless of score. " +
+        "Household facts with an unspecified 'user' do not identify this speaker. " +
+        "If personal memory contains no name, do not guess a name from household memory or a previous speaker. " +
+        "Use SearchMemory when needed. Memory is saved asynchronously; do not claim durable saving is complete."
 }

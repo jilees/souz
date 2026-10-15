@@ -46,9 +46,11 @@ class ToolSearchMemoryTest {
                 userId = "owner-7",
                 conversationId = "conversation-9",
                 requestId = "request-3",
+                attributes = mapOf("voiceEmbeddingId" to "voice-1"),
             ),
         )
 
+        assertEquals("voice-1", capturedContext?.voiceEmbeddingId)
         assertEquals("owner-7", capturedContext?.ownerId?.value)
         assertEquals("conversation-9", capturedContext?.conversationId?.value)
         assertEquals("conversation-9", capturedContext?.sessionId?.value)

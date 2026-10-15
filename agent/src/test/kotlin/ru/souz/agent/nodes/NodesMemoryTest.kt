@@ -69,12 +69,14 @@ class NodesMemoryTest {
                 userId = "backend-user",
                 conversationId = "backend-chat",
                 requestId = "request-1",
+                attributes = mapOf("voiceEmbeddingId" to "voice-1"),
             ),
         )
 
         val result = nodesMemory.recall().execute(context, graphRuntime())
 
         val request = assertNotNull(memoryRuntime.retrievalRequest)
+        assertEquals("voice-1", request.context.voiceEmbeddingId)
         assertEquals("backend-user", request.context.ownerId.value)
         assertEquals("backend-chat", request.context.conversationId?.value)
         assertEquals("backend-chat", request.context.sessionId?.value)

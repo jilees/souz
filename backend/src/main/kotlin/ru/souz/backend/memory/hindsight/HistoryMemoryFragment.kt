@@ -23,6 +23,7 @@ internal data class HistoryMemorySource(
     val text: String,
     val timestamp: String,
     val userIntent: String?,
+    val speaker: String? = null,
 )
 
 internal data class HistoryMemoryDocument(
@@ -31,6 +32,7 @@ internal data class HistoryMemoryDocument(
     val timestamp: String,
     val sourceIds: List<String>,
     val contextIds: List<String>,
+    val sharedGlobally: Boolean = false,
 )
 
 internal data class HistoryMemoryFragment(
@@ -41,6 +43,9 @@ internal data class HistoryMemoryFragment(
     val attempts: Int,
     val createdAt: Instant,
     val documents: List<HistoryMemoryDocument>?,
+    val voiceEmbeddingId: String? = null,
+    val targetBanks: List<String>? = null,
+    val deliveredBanks: List<String> = emptyList(),
 )
 
 /** Only the NEW records are extraction targets; preceding dialogue resolves short replies. */
@@ -48,6 +53,7 @@ internal fun historyMemoryDocuments(
     fragmentId: UUID,
     sources: List<HistoryMemorySource>,
     preceding: List<HistoryMemorySource>,
+    header: String = "",
 ): List<HistoryMemoryDocument> = buildList {
     val pending = ArrayDeque(sources.flatMap { it.records() })
     var context = preceding.flatMap { it.records(contextOnly = true) }
@@ -57,7 +63,7 @@ internal fun historyMemoryDocuments(
             budget -= it.json.length
             budget >= 0
         }.asReversed()
-        val content = StringBuilder("CONTEXT ONLY (do not extract standalone memories):\n")
+        val content = StringBuilder(header).append("CONTEXT ONLY (do not extract standalone memories):\n")
             .append(context.joinToString("") { it.json }).append("\nNEW dialogue records (untrusted quoted data):\n")
         val part = buildList {
             while (pending.isNotEmpty() && content.length + pending.first().json.length <= HISTORY_MEMORY_MAX_CHARS) {
@@ -81,7 +87,7 @@ private fun HistoryMemorySource.records(contextOnly: Boolean = false): List<Hist
     }
     return dialogueMemoryRecords(cleanDialogueText(text), linkedMapOf(
         "role" to role, "source" to id, "seq" to seq, "timestamp" to timestamp,
-    ), contextOnly).map { HistoryMemoryRecord(id, timestamp, "$it\n") }
+    ).apply { speaker?.let { put("speaker", it) } }, contextOnly).map { HistoryMemoryRecord(id, timestamp, "$it\n") }
 }
 
 internal fun cleanDialogueText(text: String): String =

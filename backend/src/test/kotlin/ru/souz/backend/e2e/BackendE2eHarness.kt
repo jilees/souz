@@ -402,6 +402,7 @@ internal class BackendE2eBackend(
         }
         if (providerClients != null) {
             bindSingleton<ProviderHttpClients>(overrides = true) { providerClients }
+            bindSingleton<ru.souz.jev.JevClient>(overrides = true) { ru.souz.jev.JevClient(providerClients.jev, token = "test-jev-token") }
         }
         if (telegramApi != null) {
             bindSingleton<TelegramBotApi>(overrides = true) { telegramApi }

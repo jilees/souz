@@ -68,6 +68,18 @@ An unrecognized command can return an ordinary apology in `reply`; transport err
 
 Active-thread submit/tool/cancel operations must reach the runtime owner in multi-replica deployments. Durable replay and thread status can be read from any process.
 
+## Voice identity
+
+`message.submit.payload.voice` optionally carries `{"embeddingId":"6a705d45-95a7-49a4-992a-871ee83a9196"}`.
+The identifier is a canonical UUID, stable within the Souz `userId` across devices, chats and emulator restarts.
+Souz normalizes UUID case. Missing/null `voice` means an unidentified speaker for that message, including active-thread continuations.
+A changed voice changes the submit payload hash; it cannot reuse an accepted request ID with a different speaker.
+`history.append` has no voice identity and retains its shared chat-scoped behavior.
+
+With Hindsight enabled, identified voice inputs recall personal and household memory, with personal facts preferred for the current speaker.
+Completed voice turns enter durable JEV routing to personal, household, both or neither bank. ACK and final reply do not confirm completed memory extraction.
+See [voice memory](../voice-memory.md) for routing, retries and the boundaries of this experiment.
+
 ## Destination device
 
 `assistant.message`, `thread.completed`, `message.created`, and `tool.call.started` with `payload.name:"user.ask"` require non-null `payload.deviceId`, a nonblank string identifying the device that should receive the user-facing content or question. `payload.deviceType` is optional; when present, it must be non-null and one of `tv_box`, `smart_speaker`, `smartphone`, or `unknown`.

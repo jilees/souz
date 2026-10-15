@@ -14,3 +14,7 @@ See [User file storage](s3-storage.md) for the storage contract and verification
 - Never log S3 exception bodies or credentials. Cleanup must retry without exposing signed transport details.
 - Keep this layer independent of channels, model payloads and sandbox working copies.
 - Test MinIO images must be anonymously pullable on a clean CI runner and pinned by a multi-platform digest. A cached local image does not verify registry availability.
+
+## Voice memory
+
+See [Voice and personal memory](voice-memory.md) for speaker attribution, per-person and household recall, durable JEV capture routing, and verification. Voice identity is metadata within an authenticated account, not authorization. Retain household bank IDs and frozen per-bank delivery state across deployment.

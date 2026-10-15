@@ -16,6 +16,7 @@ internal class HistoryMemoryWorker(
     private val repository: PostgresHistoryMemoryRepository,
     private val memory: HindsightConversationMemoryRuntime,
     private val clock: Clock = Clock.systemUTC(),
+    private val voiceRouting: VoiceMemoryRouting? = null,
 ) {
     private val logger = LoggerFactory.getLogger(HistoryMemoryWorker::class.java)
 
@@ -32,6 +33,16 @@ internal class HistoryMemoryWorker(
         }
     }
 
+    private suspend fun captureVoice(fragment: HistoryMemoryFragment, documents: List<HistoryMemoryDocument>) {
+        val banks = fragment.targetBanks ?: requireNotNull(voiceRouting).banks(
+            fragment.userId, requireNotNull(fragment.voiceEmbeddingId), documents,
+        ).also { check(repository.saveVoiceRouting(fragment, it)) { "History memory lease lost" } }
+        for (bank in banks.filterNot { it in fragment.deliveredBanks }) {
+            memory.captureVoiceBank(fragment, bank, documents)
+            check(repository.markVoiceDelivered(fragment, bank)) { "History memory lease lost" }
+        }
+    }
+
     internal suspend fun processNext(): Boolean {
         val fragment = repository.claim() ?: return false
         try {
@@ -44,7 +55,9 @@ internal class HistoryMemoryWorker(
                 }
                 try {
                     val documents = repository.documents(fragment)
-                    if (documents.isNotEmpty()) memory.captureHistory(fragment.userId, fragment.chatId, documents)
+                    if (fragment.voiceEmbeddingId != null) {
+                        captureVoice(fragment, documents)
+                    } else if (documents.isNotEmpty()) memory.captureHistory(fragment.userId, fragment.chatId, documents)
                     check(repository.complete(fragment)) { "History memory lease lost" }
                     logger.info("History memory captured chatId={} fragmentId={} attempt={} documents={}",
                         fragment.chatId, fragment.id, fragment.attempts, documents.size)

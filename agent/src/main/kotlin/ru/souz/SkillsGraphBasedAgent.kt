@@ -63,7 +63,7 @@ class SkillsGraphBasedAgent internal constructor(
             classifySkills = true,
         )
         val contextEnrich = nodesCommon.nodeAppendAdditionalData()
-        val chat = SteerableChatNode(nodesLLM, controller)
+        val chat = SteerableChatNode(nodesLLM, controller, nodesMemory)
         val chatOk: Node<LLMResponse.Chat, LLMResponse.Chat.Ok> = Node("Chat.Ok") { ctx ->
             ctx.map { ctx.input as LLMResponse.Chat.Ok }
         }

@@ -415,6 +415,21 @@ components:
           $ref: "#/components/schemas/RecognizedTextContent"
         meta:
           $ref: "#/components/schemas/RequestMeta"
+        voice:
+          description: Optional speaker identity for this message only. Omission or null clears the current speaker; never inherited from an earlier input.
+          anyOf:
+            - $ref: "#/components/schemas/Voice"
+            - type: "null"
+    Voice:
+      type: object
+      additionalProperties: false
+      required: [embeddingId]
+      properties:
+        embeddingId:
+          type: string
+          format: uuid
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          description: Stable voice identifier within the trusted Souz userId, shared across devices and chats. Case is normalized. It does not change account ownership or permissions.
     HistoryAppendPayload:
       type: object
       additionalProperties: false

@@ -27,9 +27,10 @@ import ru.souz.memory.NoopConversationMemoryRuntime
 private const val INJECTED_MEMORY_PREFIX = "<souz_memory_context>\n"
 private const val INJECTED_MEMORY_SUFFIX = "\n</souz_memory_context>"
 internal const val INJECTED_MEMORY_MESSAGE_NAME = "souz_injected_memory"
+private const val SPEAKER_MESSAGE_NAME = "souz_current_speaker"
 
 internal fun LLMRequest.Message.isInjectedMemoryContextMessage(): Boolean =
-    role == LLMMessageRole.user && name == INJECTED_MEMORY_MESSAGE_NAME
+    role == LLMMessageRole.user && name in setOf(INJECTED_MEMORY_MESSAGE_NAME, SPEAKER_MESSAGE_NAME)
 
 /** Nodes responsible for persistent conversation-memory recall and completed-turn capture. */
 internal class NodesMemory(
@@ -40,11 +41,19 @@ internal class NodesMemory(
     private val logger = LoggerFactory.getLogger(NodesMemory::class.java)
 
     /** Removes previous memory augmentation and optionally retrieves memory for the current input. */
-    fun recall(name: String = "Memory recall"): Node<String, String> = Node(name) { ctx ->
-        val memoryBlock = if (automaticMemoryRecall) retrieveMemoryBlock(ctx) else null
+    fun recall(name: String = "Memory recall", refreshSpeaker: Boolean = false): Node<String, String> = Node(name) { ctx ->
+        val memoryBlock = if (automaticMemoryRecall || refreshSpeaker || ctx.toolInvocationMeta.attributes["voiceEmbeddingId"] != null) retrieveMemoryBlock(ctx) else null
         val history = ctx.history
             .filterNot(LLMRequest.Message::isInjectedMemoryContextMessage)
             .toMutableList()
+
+        if (memoryRuntime !== NoopConversationMemoryRuntime && ctx.toolInvocationMeta.attributes["voiceContext"] == "true" &&
+            ctx.toolInvocationMeta.attributes["voiceEmbeddingId"] == null) {
+            val notice = LLMRequest.Message(LLMMessageRole.user,
+                "No voice identified for this input. Do not inherit a previous speaker's identity or personal memory.", name = SPEAKER_MESSAGE_NAME)
+            val latestUser = history.indexOfLast { it.role == LLMMessageRole.user }
+            if (latestUser >= 0) history.add(latestUser, notice) else history += notice
+        }
 
         memoryBlock?.let { block ->
             val message = LLMRequest.Message(
@@ -139,6 +148,12 @@ internal class NodesMemory(
             assistantMessage = "",
             evidence = evidenceFrom(evidenceMessages),
             timeZone = meta.timeZone,
+            precedingUserMessage = ctx.history.take(userMessageIndex).lastOrNull {
+                it.role == LLMMessageRole.user && !it.isInjectedMemoryContextMessage()
+            }?.content,
+            precedingAssistantMessage = ctx.history.take(userMessageIndex).lastOrNull {
+                it.role == LLMMessageRole.assistant && it.functionCall == null
+            }?.content,
         )
     }
 
@@ -175,6 +190,7 @@ internal class NodesMemory(
         conversationId = conversationId?.let(::ConversationId),
         sessionId = conversationId?.let(::MemorySessionId),
         projectId = null,
+        voiceEmbeddingId = attributes["voiceEmbeddingId"],
     )
 
     private fun LLMRequest.Message.toEvidence(): CompletedTurnEvidence? {

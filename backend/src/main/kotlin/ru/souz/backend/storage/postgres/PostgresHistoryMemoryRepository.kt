@@ -25,7 +25,7 @@ internal class PostgresHistoryMemoryRepository(
             """
             insert into history_memory_fragments as f(id, user_id, chat_id, first_seq, source_ids, created_at, available_at)
             values (coalesce((select id from history_memory_fragments
-              where chat_id = ? and attempts = 0 and completed_at is null
+              where chat_id = ? and voice_embedding_id is null and attempts = 0 and completed_at is null
                 and cardinality(source_ids) < 16 and available_at > ?
               order by first_seq desc limit 1 for update), ?), ?, ?, ?, array[?]::uuid[], ?, ?)
             on conflict (id) do update set source_ids = f.source_ids || excluded.source_ids,
@@ -44,6 +44,41 @@ internal class PostgresHistoryMemoryRepository(
             statement.setInstant(9, now.plusSeconds(30))
             statement.executeUpdate()
         }
+    }
+
+    /** Freezes a completed voice turn before any classifier/provider call. Duplicate captures keep the first payload. */
+    suspend fun enqueueVoiceTurn(userId: String, chatId: UUID, messageId: UUID, embeddingId: String, documents: List<HistoryMemoryDocument>) {
+        dataSource.write { connection ->
+            connection.prepareStatement("""
+                insert into history_memory_fragments(id, user_id, chat_id, first_seq, source_ids,
+                    created_at, available_at, payload, voice_embedding_id)
+                select ?, user_id, chat_id, seq, array[id], ?, ?, ?::jsonb, ? from messages
+                where user_id = ? and chat_id = ? and id = ? and role = 'user'
+                on conflict (chat_id, first_seq) do nothing
+            """.trimIndent()).use { statement ->
+                statement.setObject(1, UUID.nameUUIDFromBytes("souz-voice:$userId:$messageId".toByteArray()))
+                statement.setInstant(2, clock.instant())
+                statement.setInstant(3, clock.instant())
+                statement.setString(4, postgresStorageMapper.writeValueAsString(documents))
+                statement.setObject(5, UUID.fromString(embeddingId))
+                statement.setString(6, userId)
+                statement.setObject(7, chatId)
+                statement.setObject(8, messageId)
+                statement.executeUpdate()
+            }
+        }
+    }
+
+    suspend fun saveVoiceRouting(fragment: HistoryMemoryFragment, banks: List<String>): Boolean =
+        update(fragment, "target_banks = ?::text[]", postgresArray(banks))
+
+    suspend fun markVoiceDelivered(fragment: HistoryMemoryFragment, bank: String): Boolean =
+        update(fragment, "delivered_banks = array_append(delivered_banks, ?::text)", bank)
+
+    // Bank IDs contain only server-derived UUIDs and fixed namespace separators.
+    private fun postgresArray(banks: List<String>): String {
+        require(banks.all { it.matches(Regex("[a-zA-Z0-9:-]+")) })
+        return banks.joinToString(prefix = "{", postfix = "}")
     }
 
     suspend fun claim(): HistoryMemoryFragment? = dataSource.write { connection ->
@@ -81,7 +116,7 @@ internal class PostgresHistoryMemoryRepository(
                 from history_memory_fragments f join messages m on m.user_id = f.user_id and m.chat_id = f.chat_id
                 where f.id = ? and m.id = any(f.source_ids || array(
                   select unnest(source_ids) from history_memory_fragments
-                  where chat_id = f.chat_id and first_seq < f.first_seq order by first_seq desc limit 16
+                  where chat_id = f.chat_id and voice_embedding_id is null and first_seq < f.first_seq order by first_seq desc limit 16
                 )) order by m.seq
                 """.trimIndent(),
             ).use { statement ->
@@ -146,4 +181,7 @@ private fun ResultSet.fragment(): HistoryMemoryFragment = HistoryMemoryFragment(
     attempts = getInt("attempts"),
     createdAt = instant("created_at"),
     documents = getString("payload")?.let { postgresStorageMapper.readValue(it) },
+    voiceEmbeddingId = getObject("voice_embedding_id", UUID::class.java)?.toString(),
+    targetBanks = (getArray("target_banks")?.array as? Array<*>)?.map { it.toString() },
+    deliveredBanks = (getArray("delivered_banks").array as Array<*>).map { it.toString() },
 )
