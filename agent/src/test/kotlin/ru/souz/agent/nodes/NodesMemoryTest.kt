@@ -244,6 +244,28 @@ class NodesMemoryTest {
     }
 
     @Test
+    fun `summary receives speaker labels and preserves speaker mode for following unknown inputs`() = runTest {
+        val api = mockk<LLMChatAPI> {
+            coEvery { message(any()) } answers {
+                val request = firstArg<LLMRequest.Chat>()
+                assertTrue(request.messages.any { it.content == "[souz_speaker id=\"voice-a\"]\nCall me Alice" })
+                assertTrue(request.messages.last().content.contains("сохраняй точный id"))
+                okResponse("voice-a: Alice")
+            }
+        }
+        val settings = mockk<AgentSettingsProvider> { every { summarizationContextSize } returns 1 }
+        val graph = buildGraph<LLMResponse.Chat.Ok, String> {
+            nodeInput.edgeTo(NodesSummarization(api, settings).summarize()).edgeTo(nodeFinish)
+        }
+        val context = completedContext("Call me Alice", "Okay")
+        val result = graph.start(context.copy(history = context.history.map {
+            if (it.role == LLMMessageRole.user) it.copy(name = "souz_speaker_voice-a") else it
+        }))
+        assertTrue(result.history.hasSpeakerContext())
+        assertEquals("souz_speaker_unknown", speakerMessageName(emptyMap(), result.history))
+    }
+
+    @Test
     fun `summarization retries stay inside finalization and capture only after success`() = runTest {
         for (succeeds in listOf(false, true)) {
             var attempts = 0

@@ -97,6 +97,36 @@ class BackendVoiceMemoryE2eTest {
     }
 
     @Test
+    fun `same chat retains distinct speaker labels across restart without rewriting user text`() {
+        val schema = newPostgresSchema("voice_labels")
+        val owner = UUID.randomUUID().toString()
+        val alice = UUID.randomUUID().toString()
+        val bob = UUID.randomUUID().toString()
+        var chat = ""
+        backendE2eTest("voice_labels_first", schema = schema) {
+            chat = createPublicChat(owner)
+            submitVoice(chat, owner, null, "legacy", "Call me Old")
+            submitVoice(chat, owner, alice, "alice", "Call me Alice")
+            assertTrue(llm.requests.last().messages.any { it.content == "[souz_speaker id=\"unknown\"]\nCall me Old" })
+        }
+        backendE2eTest("voice_labels_restored", schema = schema) {
+            submitVoice(chat, owner, bob, "bob", "What is my name?")
+            val request = llm.requests.last()
+            assertTrue(request.messages.first().content.contains("Different IDs are different speakers"))
+            assertTrue(request.messages.any { it.content == "[souz_speaker id=\"$alice\"]\nCall me Alice" })
+            assertTrue(request.messages.any { it.content == "[souz_speaker id=\"$bob\"]\nWhat is my name?" })
+            submitVoice(chat, owner, null, "unknown", "And me?")
+            assertTrue(llm.requests.last().messages.any { it.content == "[souz_speaker id=\"unknown\"]\nAnd me?" })
+            sql { connection ->
+                connection.prepareStatement("select content from messages where user_id = ? and role = 'user'").use {
+                    it.setString(1, owner)
+                    it.executeQuery().use { rows -> while (rows.next()) assertFalse(rows.getString(1).contains("souz_speaker")) }
+                }
+            }
+        }
+    }
+
+    @Test
     fun `routing and independent delivery survive restart without repeating the successful bank`() {
         val remote = VoiceMemoryRemote().apply { personal = true; household = true; failHousehold = true }
         val clock = VoiceTestClock()
@@ -184,6 +214,8 @@ class BackendVoiceMemoryE2eTest {
             assertTrue(bob in injections[1] && alice !in injections[1])
             assertTrue("No voice identified" in injections[2] && bob !in injections[2])
             assertTrue(bob in injections[3])
+            val userLabels = llm.requests.last().messages.filter { it.content.startsWith("[souz_speaker") }
+            assertEquals(listOf(alice, bob, "unknown", bob), userLabels.map { it.content.substringAfter("id=\"").substringBefore('"') })
             awaitVoiceQueue(chat)
             assertTrue(backend.captureHistoryMemory())
             assertEquals(listOf("person:$owner:$bob"), remote.retains.map { it.bank })
@@ -230,7 +262,10 @@ private fun BackendE2eScope.voiceFrame(chat: String, owner: String, voice: Strin
 private suspend fun BackendE2eScope.submitVoice(chat: String, owner: String, voice: String?, request: String, text: String) {
     withPublicSocket(chat) { socket ->
         socket.send(Frame.Text(voiceFrame(chat, owner, voice, request, text)))
-        assertEquals("accepted", readJson(socket)["status"].asText())
+        // Reconnecting to this chat may replay completed events before the new request ACK.
+        var ack = readJson(socket)
+        while (ack.path("kind").asText() != "ack" || ack.path("requestId").asText() != request) ack = readJson(socket)
+        assertEquals("accepted", ack["status"].asText())
         assertEquals("thread.status", readJson(socket)["type"].asText())
         assertEquals("thread.completed", readJson(socket)["type"].asText())
     }

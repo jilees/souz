@@ -141,7 +141,7 @@ internal fun <T> AgentContext<T>.toGigaRequest(history: List<LLMRequest.Message>
     return LLMRequest.Chat(
         model = ctx.settings.model,
         provider = ctx.settings.provider,
-        messages = history,
+        messages = renderSpeakerContext(history),
         functions = ctx.activeTools,
         temperature = ctx.settings.temperature,
         maxTokens = ctx.settings.contextSize,

@@ -50,7 +50,7 @@ internal class NodesSummarization(
     private fun nodeSummarize(name: String = "llmSummarize"): Node<LLMResponse.Chat.Ok, LLMResponse.Chat.Ok> =
         Node(name, retryable = true) { ctx ->
             val summaryResponse: LLMResponse.Chat = withContext(Dispatchers.IO) {
-                val conversation = ctx.history + LLMRequest.Message(LLMMessageRole.user, SUMMARIZATION_PROMPT)
+                val conversation = ctx.history + LLMRequest.Message(LLMMessageRole.user, SUMMARIZATION_PROMPT, name = "souz_summarization_request")
                 val request = ctx.toGigaRequest(conversation).copy(functions = emptyList(), isSummarization = true)
                 llmApi.message(request)
             }
@@ -65,7 +65,8 @@ internal class NodesSummarization(
         Node(name) { ctx ->
             val message = ctx.input.choices.mapNotNull { it.toMessage() }.last()
             val retainedFiles = ctx.history.flatMap { it.files + it.replyFiles }.distinctBy { it.file }
-            val summary = message.copy(content = "$SUMMARIZATION_PREFIX:\n${message.content}", files = retainedFiles)
+            val summary = message.copy(content = "$SUMMARIZATION_PREFIX:\n${message.content}", files = retainedFiles,
+                name = SPEAKER_SUMMARY_NAME.takeIf { ctx.history.hasSpeakerContext() })
             val response = ctx.history.last()
             l.info("Summarization\n\n{}", summary.content)
             ctx.map(history = listOf(ctx.systemPrompt.toSystemPromptMessage(), summary, response)) { response.content }
@@ -119,6 +120,7 @@ private const val SUMMARIZATION_PROMPT = """
 ВАЖНО:
 - Не используй общие фразы ("мы искали файл"). Пиши конкретику ("мы искали файл 100 ошибок в го в папке /Downloads").
 - Сохраняй все пути к файлам и названия функций точно как в оригинале.
+- Если есть метки souz_speaker, сохраняй точный id рядом с каждым личным фактом и обращением. Не объединяй разных говорящих. Факты без подтверждённого id помечай unknown.
 """
 
 private const val SUMMARIZATION_PREFIX = """

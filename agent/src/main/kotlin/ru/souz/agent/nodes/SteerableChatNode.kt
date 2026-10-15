@@ -105,7 +105,8 @@ internal class SteerableChatNode(
             addAll(history)
             inputs.forEach { input ->
                 addAll(input.history)
-                add(LLMRequest.Message(LLMMessageRole.user, input.input, files = input.attachments,
+                add(LLMRequest.Message(LLMMessageRole.user, input.input,
+                    name = speakerMessageName(input.messageAttributes.orEmpty(), this), files = input.attachments,
                     images = input.attachments.filter { it.mimeType.startsWith("image/") }.map { ru.souz.llms.ImageContent(it.file) }))
             }
         }

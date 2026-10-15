@@ -13,7 +13,8 @@ internal object NodesPlain {
     fun inputToHistory(name: String = "Input->History"): Node<String, String> = Node(name) { ctx ->
         val history = ArrayList(ctx.history).apply {
             if (isEmpty()) add(ctx.systemPrompt.toSystemPromptMessage())
-            add(LLMRequest.Message(LLMMessageRole.user, ctx.input, files = ctx.inputAttachments,
+            add(LLMRequest.Message(LLMMessageRole.user, ctx.input,
+                name = speakerMessageName(ctx.toolInvocationMeta.attributes, ctx.history), files = ctx.inputAttachments,
                 images = ctx.inputAttachments.filter { it.mimeType.startsWith("image/") }.map { ru.souz.llms.ImageContent(it.file) }))
         }
         ctx.map(history = history) { ctx.input }
