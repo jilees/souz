@@ -12,6 +12,12 @@ Identified voice messages automatically recall both banks even when `SOUZ_FEATUR
 
 Each accepted message carries its own voice and durable message ID. Active-run input updates those values when consumed and refreshes memory before another LLM attempt. Missing voice clears the prior identity. In-flight tools keep the identity with which they started. Only the latest submitted input and accepted final response are new capture evidence; superseded inputs are not independently completed turns. Names use ordinary memory capture and recall; there are no name-specific tools or profile tables.
 
+## Speaker attribution in conversation
+
+Identified input stores its speaker ID in structural message metadata in the agent snapshot. At the model boundary, each conversational user message in a voice-labeled dialogue gets a leading `[souz_speaker id="<embeddingId>"]` label. Old, imported and unidentified messages are labeled `unknown`; raw user text and memory capture remain unchanged. Mid-run inputs retain their individual labels, and snapshots preserve them across restarts. Summarization preserves speaker IDs beside personal facts and retains the labeled-dialogue mode.
+
+The backend appends the same conditional speaker instruction to every effective system prompt, including custom overrides. Personal facts belong only to the identified speaker; assistant replies, unattributed history and another person's statements cannot establish the current speaker's name. Explicit self-corrections override old personal memory. Channels without voice-labeled history, including Telegram and VK, keep ordinary behavior. This guides the model and does not make identity inference deterministic.
+
 ## Capture and JEV
 
 `HINDSIGHT_API_URL` enables memory. Voice routing also requires `JEV_TOKEN`; the existing application-owned JEV HTTP client and `JEV_MODEL` are reused lazily. A missing token or classifier failure leaves the turn queued for retry, without falling back to the household bank.
