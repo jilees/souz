@@ -155,6 +155,7 @@ data class BackendAppConfig(
     val scheduledTasks: ScheduledTaskConfig = ScheduledTaskConfig(),
     val policyPrompt: String? = null,
     val attachments: AttachmentStorageConfig? = null,
+    val imageModel: String = "gpt-image-1",
 ) {
     fun validate(): BackendAppConfig {
         server.validate()
@@ -203,6 +204,7 @@ data class BackendAppConfig(
         fun load(source: BackendConfigSource = SystemBackendConfigSource): BackendAppConfig =
             BackendAppConfig(
                 attachments = AttachmentStorageConfig.load(source),
+                imageModel = ru.souz.backend.config.loadImageModel(source),
                 featureFlags = BackendFeatureFlags.load(source),
                 hooks = HookConfig(
                     owners = source.value("SOUZ_HOOK_OWNERS", "souz.hooks.owners")

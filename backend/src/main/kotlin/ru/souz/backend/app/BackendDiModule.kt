@@ -188,11 +188,7 @@ fun backendDiModule(
         bindSingleton { ru.souz.tool.files.DocumentMediaTools(instance()) }
         bindSingleton { ru.souz.backend.attachments.AttachmentMediaOperations(instance<HikariDataSource>()) }
         bindSingleton {
-            ru.souz.backend.attachments.AttachmentMedia(config, instance(), instance<ProviderHttpClients>().openAi, instance(), instance(),
-                codexImageGateway = if (config.imageProvider == "CODEX") ru.souz.llms.codex.CodexImageGenerationGateway(
-                    instance<SettingsProvider>(), instance<CodexOAuthService>(), instance<ProviderHttpClients>().openAi, config.maxFileBytes,
-                ) else null,
-            )
+            ru.souz.backend.attachments.AttachmentMedia(config, instance(), instance<ProviderHttpClients>().openAi, instance(), instance())
         }
         bindSingleton { ru.souz.backend.attachments.AttachmentMediaTools(instance()) }
     }
@@ -351,6 +347,8 @@ fun backendDiModule(
     bindSingleton {
         BackendConversationRuntimeFactory(
             namedModels = instance<NamedLlmConfig>().models,
+            imageModel = appConfig.imageModel,
+            attachmentMediaTools = instanceOrNull(),
             attachmentInput = instanceOrNull(),
             skillClassifier = instance(),
             baseSettingsProvider = instance(),

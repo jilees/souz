@@ -1,6 +1,7 @@
 package ru.souz.backend.e2e
 
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.engine.mock.toByteArray
 import io.ktor.client.request.get
 import io.ktor.client.request.patch
 import io.ktor.client.request.put
@@ -154,43 +155,88 @@ class BackendAttachmentsE2eTest {
     }
 
     @Test
-    fun `generated voice and image are cached and delivered using their explicit media connection`() {
-        for (voice in listOf(true, false)) {
+    fun `image tools share model credentials and parameters while attachment retries reuse the saved file`() {
+        for (route in listOf("voice", "openai", "codex", "named")) {
+            val voice = route == "voice"
             val tool = if (voice) "SynthesizeVoice" else "GenerateAttachmentImage"
-            val argument = if (voice) "text" else "prompt"
             val api = FakeTelegramBotApi()
+            val workspace = java.nio.file.Files.createTempDirectory("souz-images-")
+            val output = workspace.resolve("result.png")
             val asset = if (voice) javaClass.getResourceAsStream("/attachments/tone.ogg")!!.use { it.readBytes() }
-            else java.io.ByteArrayOutputStream().also { output ->
-                javax.imageio.stream.MemoryCacheImageOutputStream(output).use {
-                    javax.imageio.ImageIO.write(java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", it)
+                else java.io.ByteArrayOutputStream().also { outputStream ->
+                    javax.imageio.stream.MemoryCacheImageOutputStream(outputStream).use {
+                        javax.imageio.ImageIO.write(java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", it)
+                    }
+                }.toByteArray()
+            val model = when (route) { "codex" -> "gpt-6.1-sol"; "named" -> "custom-image"; else -> "gpt-image-1" }
+            val configFile = workspace.resolve("llm.json")
+            java.nio.file.Files.writeString(configFile, """{"openaiConnections":{"images":{"baseUrl":"https://images.test/v1","apiKeyEnv":"IMAGE_KEY"}},"models":{"illustrator":{"connection":"images","modelId":"custom-image"}}}""")
+            val env = buildMap {
+                put("SOUZ_IMAGE_MODEL", when (route) { "codex" -> "CodexGpt61Sol"; "named" -> "illustrator"; else -> model })
+                if (route == "openai") put("OPENAI_API_KEY", "openai-image-key")
+                if (route == "codex") {
+                    put("CODEX_ACCESS_TOKEN", "codex-token")
+                    put("CODEX_ACCOUNT_ID", "codex-account")
                 }
-            }.toByteArray()
+                if (route == "named") {
+                    put("IMAGE_KEY", "named-image-key")
+                    put("SOUZ_LLM_CONFIG_FILE", configFile.toString())
+                }
+            }
+            val settings = object : ru.souz.backend.config.BackendConfigSource {
+                override fun env(key: String): String? = env[key]
+                override fun property(key: String): String? = null
+            }
             var calls = 0
             val http = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { request ->
                 calls++
-                assertEquals(if (voice) "/v1/audio/speech" else "/v1/images/generations", request.url.encodedPath)
-                assertEquals(if (voice) null else "Bearer media-test-key", request.headers[io.ktor.http.HttpHeaders.Authorization])
-                val body = ru.souz.llms.restJsonMapper.readTree((request.body as io.ktor.http.content.OutgoingContent.ByteArrayContent).bytes())
-                assertEquals(if (voice) "orion-tts" else "gpt-image-2.5-flare", body["model"].asText())
+                val body = ru.souz.llms.restJsonMapper.readTree(request.body.toByteArray())
                 if (voice) {
-                    assertEquals("opus", body["response_format"].asText())
+                    assertEquals("http://orion.test/v1/audio/speech", request.url.toString())
+                    assertEquals(null, request.headers[io.ktor.http.HttpHeaders.Authorization])
+                    assertEquals("orion-tts", body["model"].asText())
                     respond(asset, headers = io.ktor.http.headersOf(io.ktor.http.HttpHeaders.ContentType, "audio/ogg"))
                 } else {
-                    assertEquals("png", body["output_format"].asText())
-                    val response = ru.souz.llms.restJsonMapper.writeValueAsString(mapOf("data" to listOf(mapOf("b64_json" to java.util.Base64.getEncoder().encodeToString(asset)))))
-                    respond(response, headers = io.ktor.http.headersOf(io.ktor.http.HttpHeaders.ContentType, "application/json"))
+                    assertEquals(model, body["model"].asText())
+                    val expectedUrl = when (route) {
+                        "codex" -> "https://chatgpt.com/backend-api/codex/responses"
+                        "named" -> "https://images.test/v1/images/generations"
+                        else -> "https://api.openai.com/v1/images/generations"
+                    }
+                    assertEquals(expectedUrl, request.url.toString())
+                    val key = when (route) { "codex" -> "codex-token"; "named" -> "named-image-key"; else -> "openai-image-key" }
+                    assertEquals("Bearer $key", request.headers[io.ktor.http.HttpHeaders.Authorization])
+                    val options = if (route == "codex") body["tools"][0] else body
+                    assertEquals("png", options["output_format"].asText())
+                    assertEquals("1024x1024", options["size"].asText())
+                    assertEquals("medium", options["quality"].asText())
+                    assertEquals("Привет", if (route == "codex") body["input"][0]["content"].asText() else body["prompt"].asText())
+                    val encoded = java.util.Base64.getEncoder().encodeToString(asset)
+                    val response = if (route == "codex") {
+                        assertEquals("codex-account", request.headers["Chatgpt-Account-Id"])
+                        "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"image_generation_call\",\"status\":\"completed\",\"result\":\"$encoded\"}}\n\n" +
+                            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n"
+                    } else """{"data":[{"b64_json":"$encoded"}]}"""
+                    respond(response, headers = io.ktor.http.headersOf(io.ktor.http.HttpHeaders.ContentType, if (route == "codex") "text/event-stream" else "application/json"))
                 }
             }) { providerHttpClientDefaults() }
-            var phase = 0
+            var phase = if (voice) 1 else 0
             var fileId = ""
+            val trace = mutableListOf<String>()
             try {
-                backendE2eTest("telegram_voice", featureFlags = BackendFeatureFlags(wsEvents = true, telegramBot = true),
-                    telegramApi = api, attachments = AttachmentMinio.config("http://orion.test/v1/audio/speech", "media-test-key"),
+                backendE2eTest("image_routes", featureFlags = BackendFeatureFlags(wsEvents = true, telegramBot = true),
+                    telegramApi = api, attachments = AttachmentMinio.config("http://orion.test/v1/audio/speech", "stt-only-key"),
+                    settingsSource = settings,
+                    sandboxFactory = { provider -> ru.souz.runtime.sandbox.DefaultRuntimeSandboxFactory(provider,
+                        ru.souz.runtime.sandbox.RuntimeSandboxModeResolver { "local" }, workspace, workspace.resolve("state"), workspace) },
                     providerClients = ru.souz.llms.http.ProviderHttpClients(http, http), llm = E2eLlmApi { request ->
+                        trace += request.messages.last().content.orEmpty()
                         when (phase++) {
-                            0, 1 -> toolCallReply(request, "RunSkillCommand", mapOf("skillId" to tool,
-                                "arguments" to mapOf(argument to "Привет")))
-                            2 -> {
+                            0 -> toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "GenerateImage",
+                                "arguments" to mapOf("prompt" to " Привет ", "outputPath" to output.toString())))
+                            1, 2 -> toolCallReply(request, "RunSkillCommand", mapOf("skillId" to tool,
+                                "arguments" to mapOf((if (voice) "text" else "prompt") to "Привет")))
+                            3 -> {
                                 fileId = Regex("\"fileId\":\"([^\"]+)\"").find(request.messages.last().content)!!.groupValues[1]
                                 toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "AttachFileToReply",
                                     "arguments" to mapOf("fileId" to fileId, "presentation" to if (voice) "voice" else "image")))
@@ -209,17 +255,19 @@ class BackendAttachmentsE2eTest {
                     api.enqueue(update(1, secret))
                     backend.pollTelegramOnce()
                     client.patch(BackendHttpRoutes.SETTINGS) {
-                        trusted(user); jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}","enabledTools":["$tool","AttachFileToReply"]}""")
+                        trusted(user); jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}","enabledTools":["GenerateImage","$tool","AttachFileToReply"]}""")
                     }
                     api.enqueue(update(2, "Скажи привет"))
                     backend.pollTelegramOnce()
-                    assertEquals(1, calls)
+                    assertEquals(if (voice) 1 else 2, calls, route)
+                    assertEquals(1, api.sentFiles.size, "route=$route phase=$phase fileId=$fileId trace=$trace")
                     val sent = api.sentFiles.single()
                     assertEquals(if (voice) ru.souz.llms.FilePresentation.voice else ru.souz.llms.FilePresentation.image, sent.first.presentation)
                     assertContentEquals(asset, sent.second)
                     assertEquals(fileId, sent.first.file.fileId)
+                    if (!voice) assertContentEquals(asset, java.nio.file.Files.readAllBytes(output))
                 }
-            } finally { http.close() }
+            } finally { http.close(); workspace.toFile().deleteRecursively() }
         }
     }
 

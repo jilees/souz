@@ -19,15 +19,11 @@ class AttachmentStorageConfig(
     val mediaApiKey: String? = null,
     val sttEndpoint: String = "https://api.openai.com/v1/audio/transcriptions",
     val sttModel: String = "gpt-transcribe",
-    val imageEndpoint: String = "https://api.openai.com/v1/images/generations",
-    val imageModel: String = "gpt-image-2.5-flare",
     val ttsEndpoint: String? = null,
     val ttsVoice: String = "joy",
-    val imageProvider: String = "OPENAI",
 ) {
     init {
-        require(imageProvider in setOf("OPENAI", "CODEX")) { "Invalid attachment image provider." }
-        for (address in listOfNotNull(sttEndpoint, imageEndpoint, ttsEndpoint)) {
+        for (address in listOfNotNull(sttEndpoint, ttsEndpoint)) {
             val media = URI(address)
             require(media.scheme in setOf("http", "https") && media.host != null && media.rawUserInfo == null &&
                 media.rawQuery == null && media.rawFragment == null) { "Invalid attachment media endpoint." }
@@ -73,9 +69,6 @@ class AttachmentStorageConfig(
                 mediaApiKey = value("MEDIA_API_KEY"),
                 sttEndpoint = value("STT_ENDPOINT") ?: "https://api.openai.com/v1/audio/transcriptions",
                 sttModel = value("STT_MODEL") ?: "gpt-transcribe",
-                imageEndpoint = value("IMAGE_ENDPOINT") ?: "https://api.openai.com/v1/images/generations",
-                imageModel = value("IMAGE_MODEL") ?: if (value("IMAGE_PROVIDER") == "CODEX") "gpt-6.1-sol" else "gpt-image-2.5-flare",
-                imageProvider = value("IMAGE_PROVIDER") ?: "OPENAI",
                 ttsEndpoint = value("TTS_ENDPOINT"),
                 ttsVoice = value("TTS_VOICE") ?: "joy",
                 maxConcurrentUploads = parsed("MAX_CONCURRENT_UPLOADS", 16, "Invalid attachment concurrent upload limit.", String::toIntOrNull),

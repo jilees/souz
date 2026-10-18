@@ -33,8 +33,10 @@ import ru.souz.backend.client.BackendClientSkills
 import ru.souz.backend.client.CLIENT_TOOL_ROUTING_INSTRUCTIONS
 import ru.souz.backend.common.backendLogContext
 import ru.souz.backend.hooks.HookLlmBudget
-import ru.souz.backend.hooks.HookLlmBudget.Companion.withProviderCall
 import ru.souz.backend.hooks.HookStore
+import ru.souz.backend.attachments.AttachmentMediaTools
+import ru.souz.backend.llm.imageGenerationGateway
+import ru.souz.backend.llm.resolveImageModel
 import ru.souz.backend.config.NamedLlmModel
 import ru.souz.backend.llm.BackendExecutionLlmChatApi
 import ru.souz.backend.llm.ProviderCredentialResolver
@@ -50,10 +52,8 @@ import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.http.ProviderHttpClients
 import ru.souz.llms.local.LocalChatAPI
 import ru.souz.llms.local.LocalVisionGateway
-import ru.souz.llms.openai.OpenAIImageGenerationGateway
 import ru.souz.llms.openai.OpenAIVisionGateway
 import ru.souz.llms.runtime.LLMCapabilityResolver
-import ru.souz.llms.runtime.ImageGenerationGateway
 import ru.souz.memory.ConversationMemoryRuntime
 import ru.souz.runtime.files.FilesToolUtil
 import ru.souz.tool.RuntimePassThroughToolsFilter
@@ -98,11 +98,15 @@ internal class BackendConversationRuntimeFactory(
     private val executionQuotas: ExecutionQuotaManager,
     private val metrics: BackendMetrics? = null,
     private val namedModels: Map<String, NamedLlmModel> = emptyMap(),
+    imageModel: String = "gpt-image-1",
+    private val attachmentMediaTools: AttachmentMediaTools? = null,
     private val userSettingsRepository: UserSettingsRepository,
     private val personalitySync: PersonalitySync,
     private val testLlmApiFactory: (suspend (SettingsProvider) -> LLMChatAPI)? = null,
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
 ) {
+    private val imageSelection = resolveImageModel(imageModel, namedModels)
+
     internal suspend fun create(
         key: AgentConversationKey,
         request: BackendConversationTurnRequest,
@@ -158,10 +162,10 @@ internal class BackendConversationRuntimeFactory(
                 LlmProvider.CODEX to OpenAIVisionGateway(settingsProvider, executionApi),
             ),
         )
-        val imageGenerationGateway = OpenAIImageGenerationGateway(
-            settingsProvider = settingsProvider,
-            client = providerHttpClients.openAi,
-            apiKeyProvider = { executionApi.credentialFor(LlmProvider.OPENAI) },
+        val imageGenerationGateway = imageGenerationGateway(
+            model = imageSelection, settings = settingsProvider, clients = providerHttpClients,
+            oauth = codexOAuthService, openAiCredential = { executionApi.credentialFor(LlmProvider.OPENAI) },
+            hookBudget = hookBudget,
         )
         val executionLlmToolCatalog = LlmBackedToolCatalog(
             llmApi = executionApi,
@@ -169,14 +173,16 @@ internal class BackendConversationRuntimeFactory(
             filesToolUtil = filesToolUtil,
             webResearchClient = webResearchClient,
             visionGateway = visionGateway,
-            imageGenerationGateway = ImageGenerationGateway { input ->
-                withProviderCall(hookBudget, LlmProvider.OPENAI) { imageGenerationGateway.generate(input) }
-            },
+            imageGenerationGateway = imageGenerationGateway,
         )
         val clientTools = chatRepository.clientTools(key.userId, key.chatId())
         val clientToolCatalog = clientSkills.catalog(clientTools)
         val executionToolCatalog = backendExecutionToolCatalog(
-            compiledToolCatalog = toolCatalog,
+            compiledToolCatalog = toolCatalog.mapTools { _, tool ->
+                if (tool.fn.name == "GenerateAttachmentImage" && attachmentMediaTools != null) {
+                    attachmentMediaTools.imageTool(imageGenerationGateway, imageSelection)
+                } else tool
+            },
             executionLlmToolCatalog = AgentToolCatalog.compose(
                 executionLlmToolCatalog.catalog,
                 AgentToolCatalog(mapOf(ToolCategory.CONFIG to listOf(

@@ -30,7 +30,7 @@ class ToolGenerateImage(
 
     override val name: String = NAME
     override val description: String =
-        "Generate a new image with the current provider, save it to a safe file path, and return the saved path."
+        "Generate a new image with the configured image model, save it to a safe file path, and return the saved path."
 
     override val fewShotExamples: List<FewShotExample> = listOf(
         FewShotExample(

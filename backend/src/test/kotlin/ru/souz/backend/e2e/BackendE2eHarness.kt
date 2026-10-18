@@ -1,5 +1,7 @@
 package ru.souz.backend.e2e
 
+import ru.souz.backend.config.loadImageModel
+
 import ru.souz.agent.skills.SkillClassifier
 
 import ru.souz.backend.execution.service.AgentExecutionLauncher
@@ -373,6 +375,7 @@ internal class BackendE2eBackend(
         scheduledTasks = scheduledTasks,
         llmLimits = llmLimits,
         policyPrompt = E2E_POLICY_PROMPT,
+        imageModel = settingsSource?.let(::loadImageModel) ?: "gpt-image-1",
         attachments = attachments,
     )
     private val localChatApi = localChatApiBackedBy(llm)
