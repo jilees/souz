@@ -58,6 +58,7 @@ internal class PublicClientService(
     private val applicationScope: CoroutineScope,
     private val namedModelNames: Set<String> = emptySet(),
     private val mapper: ObjectMapper = jacksonObjectMapper().registerKotlinModule(),
+    private val attachmentStorage: ru.souz.backend.attachments.AttachmentStorage? = null,
 ) {
     private val logger = LoggerFactory.getLogger(PublicClientService::class.java)
 
@@ -167,10 +168,20 @@ internal class PublicClientService(
             return rejectedTool(chat.id, threadId, toolCallId, "invalid_request", validationError, now)
         }
         val context = ToolCallContext(chat.userId, chat.id.toString(), threadId.toString(), toolCallId)
+        val payloadHash = PublicPayloadHash.ofJson(
+            mapper.valueToTree(linkedMapOf("status" to status, "result" to frame.result, "error" to frame.error))
+        )
+        suspend fun prepareResult() = ClientToolOutcome(status, frame.result, frame.error).storeImages(
+            chat.userId, "client-tool:${chat.id}:$threadId:$toolCallId:$payloadHash", attachmentStorage,
+        )
         registry.acceptChannelTool(context, now)?.let { pending ->
+            val outcome = try { prepareResult() } catch (cancelled: CancellationException) {
+                pending.result.complete(ClientToolOutcome("failed", null, ClientError("client_tool_failed", "Client tool result processing was cancelled.")))
+                throw cancelled
+            }
             return HandledClientFrame(
                 response = acceptedTool(chat.id, threadId, toolCallId, duplicate = false, now),
-                afterSend = { pending.result.complete(ClientToolOutcome(status, frame.result, frame.error)) },
+                afterSend = { pending.result.complete(outcome) },
                 onSendFailure = { pending.result.complete(ClientToolOutcome(
                     "failed", null, ClientError("client_tool_failed", "Could not acknowledge client tool result."),
                 )) },
@@ -181,9 +192,6 @@ internal class PublicClientService(
         if (existing.target != "client") {
             return rejectedTool(chat.id, threadId, toolCallId, "tool_call_not_found", "Client tool call not found.", now)
         }
-        val payloadHash = PublicPayloadHash.ofJson(
-            mapper.valueToTree(linkedMapOf("status" to status, "result" to frame.result, "error" to frame.error))
-        )
         if (existing.status != ToolCallStatus.RUNNING) {
             return terminalToolResult(chat.id, threadId, toolCallId, existing, payloadHash, now)
         }
@@ -197,11 +205,12 @@ internal class PublicClientService(
         if (!registry.contains(threadId)) {
             return rejectedTool(chat.id, threadId, toolCallId, "message_rejected", "Thread runtime is unavailable on this Souz instance.", now)
         }
+        val outcome = prepareResult()
         val completed = toolCallRepository.completeClientCall(
             context = context,
-            status = status.toToolCallStatus(),
-            resultJson = frame.result?.let(mapper::writeValueAsString),
-            errorJson = frame.error?.let(mapper::writeValueAsString),
+            status = outcome.status.toToolCallStatus(),
+            resultJson = outcome.result?.let(mapper::writeValueAsString),
+            errorJson = outcome.error?.let(mapper::writeValueAsString),
             payloadHash = payloadHash,
             receivedAt = now,
         )
@@ -213,7 +222,6 @@ internal class PublicClientService(
                 rejectedTool(chat.id, threadId, toolCallId, "message_rejected", "Tool call is no longer pending.", now)
             }
         }
-        val outcome = ClientToolOutcome(completed.status.value, frame.result, frame.error)
         return HandledClientFrame(
             response = acceptedTool(chat.id, threadId, toolCallId, duplicate = false, now),
             afterSend = { registry.finishTool(threadId, toolCallId, outcome) },

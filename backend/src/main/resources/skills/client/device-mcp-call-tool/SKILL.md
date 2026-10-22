@@ -29,14 +29,12 @@ the emulator applies its own internal budget for this call.
 The result preserves MCP's own two-level error model exactly:
 
 - **The tool ran but the operation itself failed** (e.g. requested volume out of range, file not
-  found) → `RunSkillCommand` succeeds and returns the raw MCP `CallToolResult`, with `isError: true`:
+  found) → `RunSkillCommand` succeeds and returns the MCP `CallToolResult`, with `isError: true`:
   ```json
   {"content":[{"type":"text","text":"level must be between 0 and 10"}],"isError":true}
   ```
-  Treat this exactly like a normal tool response: read `content[]` (each item's `type` is `text`,
-  `image`, or `resource`; `image` items carry `data`/`mimeType` directly, `resource` items carry a
-  nested `resource` object with `uri` and either `text` or `blob`) and `isError`, and tell the user
-  what actually happened — don't report this as a Skill/tool-call failure.
+  Read `content[]` and `isError`, and tell the user what actually happened — don't report this
+  as a Skill/tool-call failure. Souz omits image blocks from failed MCP results.
 - **The call itself never reached the operation** (target unreachable, tool name doesn't exist,
   arguments don't satisfy `inputSchema`, timeout) → `RunSkillCommand` reports a `ClientError`:
   `device_not_connected`, `device_disconnected`, `device_timeout`, `mcp_target_not_found`,
@@ -45,3 +43,11 @@ The result preserves MCP's own two-level error model exactly:
 
 Only claim the operation succeeded when you see `isError: false` (or absent) in the result — a
 `ClientError` here means the operation's actual outcome is unknown, not that it failed to run.
+
+Successful image `resource_link` URLs and inline MCP `image` blocks are saved as private attachments;
+they require configured attachment storage. Their normalized resource links contain `fileId` and an
+`attachment:<fileId>` URI. Use that `fileId` with `AttachFileToReply` for a file reply, or with
+`SendMessageToChannel.fileIds` to send it to Telegram or another supported channel. Receiving an
+image does not send it automatically. The first image from the latest tool result is also supplied
+to the model. Image validation, download or storage failures report `invalid_tool_image` or
+`tool_image_unavailable`.

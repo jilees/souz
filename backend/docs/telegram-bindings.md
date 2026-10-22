@@ -18,6 +18,7 @@ Tokens, one-time secrets, Telegram identity, and poller ownership are separate s
 
 - Opt-in progress shares the formatted reply path and lease checks; follow the [live delivery lifecycle](execution-openapi-and-events.md).
 - Preserve encrypted token custody, unique token hashes, hashed link secrets, and redacted API DTOs.
+- File delivery failures log the API method, HTTP status, Telegram error code, bounded redacted description, MIME type and byte count. Cross-channel failures log the target chat, delivery ID and accepted file count. Keep bot tokens, request URLs, message content, response bodies and raw exception causes out of these logs.
 - Require the exact private-chat link handshake before activating a binding; never infer ownership from a username or untrusted message field.
 - Renew leases during in-flight work and verify ownership before every externally visible reply or checkpoint side effect.
 - Keep one independent poll loop per enabled binding. Limit update processing, never idle long polls, and recheck lease ownership after waiting for a processing permit.

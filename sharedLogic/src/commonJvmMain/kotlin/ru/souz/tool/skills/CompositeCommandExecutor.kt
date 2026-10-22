@@ -27,6 +27,7 @@ internal suspend fun SkillCommandExecutor.executeComposite(
     tools: Map<String, LLMToolSetup>,
 ): SandboxCommandResult {
     var location = "composite '${arguments.composite}'"
+    val attachments = mutableListOf<String>()
     val files = mutableListOf<ru.souz.llms.FileContent>()
     val replyFiles = mutableListOf<ru.souz.llms.FileContent>()
     val result = try {
@@ -61,6 +62,8 @@ internal suspend fun SkillCommandExecutor.executeComposite(
                         val target = tools.getValue(tool)
                         val call = LLMResponse.FunctionCall(target.fn.name, restJsonMapper.convertValue(resolve(step.arguments)))
                         val message = target.invoke(call, meta)
+                        attachments.clear()
+                        attachments.addAll(message.attachments.orEmpty())
                         files.addAll(message.files)
                         replyFiles.addAll(message.replyFiles)
                         jsonOrText(message.content)
@@ -91,7 +94,8 @@ internal suspend fun SkillCommandExecutor.executeComposite(
     } catch (error: Exception) {
         SandboxCommandResult(1, "", "$location: ${error.message}")
     }
-    return result.copy(files = files.distinctBy { it.file }, replyFiles = replyFiles.distinctBy { it.file })
+    return result.copy(files = files.distinctBy { it.file }, replyFiles = replyFiles.distinctBy { it.file },
+        attachments = attachments.takeIf { result.exitCode == 0 && !result.timedOut }.orEmpty())
 }
 
 private val compositeJsonReader = restJsonMapper.reader()

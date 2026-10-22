@@ -271,7 +271,13 @@ internal class BackendExecutionLlmChatApi(
         }
     }
 
-    private suspend fun prepareAttachments(body: LLMRequest.Chat, modelName: String?): LLMRequest.Chat {
+    private suspend fun prepareAttachments(raw: LLMRequest.Chat, modelName: String?): LLMRequest.Chat {
+        val body = raw.inlineToolImages { reference ->
+            if (reference.startsWith("attachment:")) {
+                requireNotNull(attachmentInput) { "Attachment storage is unavailable." }
+                    .toolImage(userId, reference.removePrefix("attachment:"))
+            } else downloadToolImage(reference)
+        }
         if (body.messages.none { it.files.isNotEmpty() || it.images.isNotEmpty() }) return body
         val input = attachmentInput ?: return body.copy(messages = body.messages.map { item ->
             if (item.files.isEmpty() && item.images.isEmpty()) item else item.copy(

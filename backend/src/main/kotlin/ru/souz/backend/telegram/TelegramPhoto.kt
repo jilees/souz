@@ -10,7 +10,7 @@ import javax.imageio.ImageWriteParam
 import javax.imageio.stream.MemoryCacheImageInputStream
 import javax.imageio.stream.MemoryCacheImageOutputStream
 
-/** A transient Telegram preview; the original attachment in S3 is never rewritten. */
+/** Detect the source format from bytes and make a bounded JPEG preview; preserve the S3 original. */
 internal fun telegramPhoto(bytes: ByteArray): ByteArray = MemoryCacheImageInputStream(bytes.inputStream()).use { input ->
     val decoder = ImageIO.getImageReaders(input).asSequence().firstOrNull()
         ?: error("telegram_photo_unsupported")

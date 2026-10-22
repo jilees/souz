@@ -8,9 +8,68 @@ import java.util.concurrent.LinkedBlockingQueue
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.AppenderBase
+import org.slf4j.LoggerFactory
 
 class HttpTelegramBotApiTest {
+    @Test
+    fun `file delivery failures log safe API diagnostics without response bodies or exception causes`() = runBlocking {
+        val token = "123456:private-bot-token"
+        val responses = LinkedBlockingQueue<Pair<Int, String>>()
+        val logs = LinkedBlockingQueue<ILoggingEvent>()
+        val logger = LoggerFactory.getLogger(HttpTelegramBotApi::class.java) as Logger
+        val appender = object : AppenderBase<ILoggingEvent>() {
+            override fun append(event: ILoggingEvent) { logs.add(event) }
+        }.apply { context = logger.loggerContext; start() }
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { call ->
+            call.requestBody.use { it.readBytes() }
+            val (status, body) = responses.remove()
+            val bytes = body.toByteArray()
+            call.sendResponseHeaders(status, bytes.size.toLong())
+            call.responseBody.use { it.write(bytes) }
+        }
+        logger.addAppender(appender)
+        server.start()
+        try {
+            val api = HttpTelegramBotApi("http://127.0.0.1:${server.address.port}")
+            val description = "Bad Request: $token https://example.com/private?signature=hidden\n" + "x".repeat(600)
+            val rejected = jacksonObjectMapper().writeValueAsString(mapOf(
+                "ok" to false, "error_code" to 400, "description" to description,
+            ))
+            val file = ru.souz.llms.FileContent(ru.souz.llms.FileReference("saved"), "screen.webp", "image/webp", 7)
+            for ((status, body) in listOf(400 to rejected, 502 to "private-response-body", 200 to "{\"ok\":true,\"result\":{}}")) {
+                responses.add(status to body)
+                val error = assertFailsWith<Exception> { api.sendFile(token, 42, file, "payload".toByteArray(), "private-caption") }
+                val event = logs.remove()
+                val message = event.formattedMessage
+                assertTrue(message.contains("method=sendRichMessage httpStatus=$status"))
+                assertTrue(message.contains("mimeType=image/webp sizeBytes=7"))
+                assertTrue(message.contains("errorType=${error.javaClass.simpleName}"))
+                assertTrue(listOf(token, "signature=hidden", "private-caption", "private-response-body", "payload").none(message::contains))
+                assertTrue('\n' !in message && message.length < 1_000)
+                assertNull(event.throwableProxy)
+                if (status == 400) {
+                    assertTrue(error is TelegramBotApiHttpException)
+                    assertEquals(400, error.statusCode)
+                    assertEquals(400, error.telegramErrorCode)
+                    assertEquals(512, error.description?.length)
+                    assertTrue(message.contains("description=Bad Request: [REDACTED] [URL]"))
+                }
+            }
+            assertTrue(logs.isEmpty())
+        } finally {
+            server.stop(0)
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+    }
+
     @Test
     fun `files use bounded downloads and native multipart methods`() = runBlocking {
         val uploads = LinkedBlockingQueue<Triple<String, String, String>>()

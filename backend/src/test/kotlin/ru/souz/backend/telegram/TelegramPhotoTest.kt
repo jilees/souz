@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpServer
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
+import java.util.Base64
 import java.util.concurrent.LinkedBlockingQueue
 import javax.imageio.ImageIO
 import javax.imageio.stream.MemoryCacheImageOutputStream
@@ -19,11 +20,12 @@ import kotlin.test.assertTrue
 
 class TelegramPhotoTest {
     @Test
-    fun `photo is JPEG preview while explicit document retains original PNG`() = runBlocking {
+    fun `PNG and WebP photos become bounded JPEG previews while documents retain original bytes`() = runBlocking {
         val image = BufferedImage(2560, 1280, BufferedImage.TYPE_INT_ARGB)
         val buffer = ByteArrayOutputStream()
         MemoryCacheImageOutputStream(buffer).use { ImageIO.write(image, "png", it) }
-        val original = buffer.toByteArray()
+        val originals = listOf("png" to buffer.toByteArray(), "webp" to
+            Base64.getDecoder().decode("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA"))
         val requests = LinkedBlockingQueue<Pair<String, ByteArray>>()
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/") { call ->
@@ -35,24 +37,26 @@ class TelegramPhotoTest {
         server.start()
         try {
             val api = HttpTelegramBotApi("http://127.0.0.1:${server.address.port}")
-            val file = FileContent(FileReference("original"), "cat.png", "image/png", original.size.toLong(), FilePresentation.image)
-            api.sendFile("test", 42, file, original)
-            val (path, payload) = requests.remove()
-            assertEquals("/bottest/sendPhoto", path)
-            val body = payload.toString(Charsets.ISO_8859_1)
-            assertTrue(body.contains("filename=\"cat.jpg\"\r\nContent-Type: image/jpeg"))
-            val jpeg = body.substringAfter("Content-Type: image/jpeg\r\n\r\n").substringBeforeLast("\r\n--").toByteArray(Charsets.ISO_8859_1)
-            val preview = ImageIO.read(jpeg.inputStream())
-            assertEquals(1280, preview.width)
-            assertEquals(640, preview.height)
-            assertEquals(0xffffff, preview.getRGB(0, 0) and 0xffffff)
-            api.sendFile("test", 42, file.copy(presentation = FilePresentation.document), original)
-            val (documentPath, documentPayload) = requests.remove()
-            assertEquals("/bottest/sendDocument", documentPath)
-            val document = documentPayload.toString(Charsets.ISO_8859_1)
-            assertContentEquals(original, document.substringAfter("Content-Type: image/png\r\n\r\n")
-                .substringBeforeLast("\r\n--").toByteArray(Charsets.ISO_8859_1))
-            assertEquals("image/png", file.mimeType)
+            for ((format, original) in originals) {
+                val file = FileContent(FileReference("original"), "cat.$format", "image/$format", original.size.toLong(), FilePresentation.image)
+                api.sendFile("test", 42, file, original)
+                val (path, payload) = requests.remove()
+                assertEquals("/bottest/sendPhoto", path)
+                val body = payload.toString(Charsets.ISO_8859_1)
+                assertTrue(body.contains("filename=\"cat.jpg\"\r\nContent-Type: image/jpeg"))
+                val jpeg = body.substringAfter("Content-Type: image/jpeg\r\n\r\n").substringBeforeLast("\r\n--").toByteArray(Charsets.ISO_8859_1)
+                val preview = ImageIO.read(jpeg.inputStream())
+                assertEquals(if (format == "png") 1280 else 1, preview.width)
+                assertEquals(if (format == "png") 640 else 1, preview.height)
+                if (format == "png") assertEquals(0xffffff, preview.getRGB(0, 0) and 0xffffff)
+                api.sendFile("test", 42, file.copy(presentation = FilePresentation.document), original)
+                val (documentPath, documentPayload) = requests.remove()
+                assertEquals("/bottest/sendDocument", documentPath)
+                val document = documentPayload.toString(Charsets.ISO_8859_1)
+                assertContentEquals(original, document.substringAfter("Content-Type: image/$format\r\n\r\n")
+                    .substringBeforeLast("\r\n--").toByteArray(Charsets.ISO_8859_1))
+                assertEquals("image/$format", file.mimeType)
+            }
         } finally { server.stop(0) }
     }
 

@@ -48,6 +48,7 @@ dependencies {
     implementation(libs.aws.s3)
     implementation(libs.aws.urlConnectionClient)
     implementation(libs.tika.core)
+    runtimeOnly(libs.imageio.webp)
     implementation("org.kodein.di:kodein-di:${libs.versions.kodeinDi.get()}")
     implementation("io.ktor:ktor-server-content-negotiation:${libs.versions.ktor.get()}")
     implementation("io.ktor:ktor-server-core:${libs.versions.ktor.get()}")

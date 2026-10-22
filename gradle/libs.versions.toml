@@ -29,6 +29,7 @@ markdown = "0.27.0"
 mockk = "1.13.11"
 slfj = "2.0.18"
 tika = "3.2.3"
+twelveMonkeys = "3.15.3"
 poi = "5.2.5"
 tdlight-java = "3.4.4+td.1.8.52"
 tdlight-natives = "4.0.558"
@@ -93,6 +94,7 @@ slfj = { module = "org.slf4j:jul-to-slf4j", version.ref = "slfj" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slfj" }
 slf4j-jcl = { module = "org.slf4j:jcl-over-slf4j", version.ref = "slfj" }
 tika-core = { module = "org.apache.tika:tika-core", version.ref = "tika" }
+imageio-webp = { module = "com.twelvemonkeys.imageio:imageio-webp", version.ref = "twelveMonkeys" }
 tika-parsersStandardPackage = { module = "org.apache.tika:tika-parsers-standard-package", version.ref = "tika" }
 compose-ui-tooling-preview-desktop = { module = "org.jetbrains.compose.ui:ui-tooling-preview-desktop", version.ref = "composeMultiplatform" }
 poi = { module = "org.apache.poi:poi", version.ref = "poi" }

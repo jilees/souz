@@ -16,6 +16,7 @@ import java.time.Duration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
+import org.slf4j.LoggerFactory
 
 interface TelegramBotApi {
     suspend fun downloadFile(token: String, fileId: String, maxBytes: Int): ByteArray =
@@ -106,15 +107,28 @@ internal class HttpTelegramBotApi(
         ) else file
         val multipart = ru.souz.backend.attachments.AttachmentMultipart(part, uploadFile, uploadBytes, fields)
         return runInterruptible(Dispatchers.IO) {
-            val response = client.send(HttpRequest.newBuilder(URI("$apiBaseUrl/bot$token/$method"))
-                .timeout(Duration.ofSeconds(120)).header("Content-Type", multipart.contentType)
-                .POST(HttpRequest.BodyPublishers.ofByteArray(multipart.body)).build(), HttpResponse.BodyHandlers.ofString())
-            val node = mapper.readTree(response.body())
-            if (response.statusCode() != 200 || node["ok"]?.asBoolean() != true) {
-                throw TelegramBotApiTransportException("Telegram file delivery failed.")
+            var httpStatus: Int? = null
+            try {
+                val response = client.send(HttpRequest.newBuilder(URI("$apiBaseUrl/bot$token/$method"))
+                    .timeout(Duration.ofSeconds(120)).header("Content-Type", multipart.contentType)
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(multipart.body)).build(), HttpResponse.BodyHandlers.ofString())
+                httpStatus = response.statusCode()
+                val node = mapper.readTree(response.body())
+                if (httpStatus != 200 || node?.get("ok")?.asBoolean() != true) {
+                    throw TelegramBotApiHttpException(method, httpStatus, node?.get("error_code")?.intValue(),
+                        node?.get("description")?.asText()?.safeDeliveryDescription(token), null)
+                }
+                node["result"]?.get("message_id")?.longValue()
+                    ?: throw TelegramBotApiTransportException("Telegram delivery receipt is missing.")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val rejection = error as? TelegramBotApiHttpException
+                logger.warn("Telegram file delivery failed method={} httpStatus={} telegramErrorCode={} description={} mimeType={} sizeBytes={} errorType={}",
+                    method, httpStatus, rejection?.telegramErrorCode, rejection?.description,
+                    uploadFile.mimeType, uploadBytes.size, error.javaClass.simpleName)
+                throw error
             }
-            node["result"]?.get("message_id")?.longValue()
-                ?: throw TelegramBotApiTransportException("Telegram delivery receipt is missing.")
         }
     }
 
@@ -271,10 +285,17 @@ internal class HttpTelegramBotApi(
         }
 
     private companion object {
+        val logger = LoggerFactory.getLogger(HttpTelegramBotApi::class.java)
         const val CONNECT_TIMEOUT_SECONDS: Long = 10L
         const val REQUEST_TIMEOUT_SECONDS: Long = 35L
     }
 }
+
+private fun String.safeDeliveryDescription(token: String): String =
+    replace(token, "[REDACTED]")
+        .replace(Regex("https?://\\S+", RegexOption.IGNORE_CASE), "[URL]")
+        .replace(Regex("[\\p{Cntrl}\\p{Cf}]"), " ")
+        .take(512)
 
 internal open class TelegramBotApiException(
     message: String,

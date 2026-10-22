@@ -584,6 +584,7 @@ fun backendDiModule(
     }
     bindSingleton {
         PublicClientService(
+            attachmentStorage = instanceOrNull(),
             namedModelNames = instance<NamedLlmConfig>().models.keys,
             chatRepository = instance(),
             executionRepository = instance(),

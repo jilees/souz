@@ -10,7 +10,7 @@ Validate every output before sending the first text part. A remote send and a Po
 
 Telegram may combine a document with text in one remote message. Hash and acknowledge both together; do not mark the text accepted before the upload succeeds. Preserve the separate-part layout on retries of deliveries started before combined sending was enabled.
 
-Telegram photo conversion belongs at the upload boundary and uses memory-backed ImageIO streams. Preserve original S3 metadata and bytes, and do not convert explicitly selected documents. Cross-channel PNG/JPEG forwarding must select image presentation rather than relying on the document default of `toContent`. Verify with `TelegramPhotoTest` and `HttpTelegramBotApiTest` without a database.
+Telegram photo conversion belongs at the upload boundary and uses memory-backed ImageIO streams to detect source bytes, resize to at most 1280 pixels and encode JPEG. The ImageIO WebP plugin is a backend runtime dependency. Preserve original S3 metadata and bytes, and do not convert explicitly selected documents. Cross-channel PNG/JPEG/WebP forwarding selects image presentation rather than the document default of `toContent`. Verify with `TelegramPhotoTest` and `HttpTelegramBotApiTest` without a database.
 
 Removing or recreating a local user row does not delete files or reset retention. Keep storage tombstones until cleanup can remove expired objects. Expiry is checked before S3 access and before cache restoration; PrepareAttachment must not return an existing cache path without rechecking the file ID. Ordinary copies created by the user or a Skill remain workspace files and have the workspace retention policy. Failed cleanup attempts must not starve other expired objects.
 

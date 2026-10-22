@@ -4,6 +4,7 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import org.slf4j.LoggerFactory
 import ru.souz.backend.attachments.toContent
 import ru.souz.backend.crypto.sha256Hex
 import ru.souz.backend.chat.model.Chat
@@ -25,6 +26,8 @@ class ChannelDeliveryService(
     private val messageRepository: MessageRepository,
     private val eventService: AgentEventService,
 ) {
+    private val logger = LoggerFactory.getLogger(ChannelDeliveryService::class.java)
+
     /** An owned, unarchived chat — the only kind of target a message can be forwarded into. */
     suspend fun resolveTarget(userId: String, chatId: UUID): Chat? =
         chatRepository.get(userId, chatId)?.takeUnless { it.archived }
@@ -86,7 +89,7 @@ class ChannelDeliveryService(
             require(fileIds.size <= 10)
             val files = fileIds.distinct().map {
                 val saved = storage.get(userId, ru.souz.backend.attachments.attachmentId(it))
-                val presentation = if (channel == "Telegram" && saved.mimeType in setOf("image/png", "image/jpeg")) {
+                val presentation = if (channel == "Telegram" && saved.mimeType in setOf("image/png", "image/jpeg", "image/webp")) {
                     ru.souz.llms.FilePresentation.image
                 } else ru.souz.llms.FilePresentation.document
                 saved.toContent(presentation)
@@ -99,7 +102,11 @@ class ChannelDeliveryService(
             complete = true
             ChannelSendResult.Delivered("Sent via $channel.")
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { ChannelSendResult.Failed("$channel delivery failed; ${sentFiles.size} file(s) were accepted. Do not automatically resend an uncertain part.") }
+        catch (error: Exception) {
+            logger.warn("Channel attachment delivery failed channel={} chatId={} deliveryId={} acceptedFiles={} errorType={}",
+                channel, chatId, historyId, sentFiles.size, error.javaClass.simpleName)
+            ChannelSendResult.Failed("$channel delivery failed; ${sentFiles.size} file(s) were accepted. Do not automatically resend an uncertain part.")
+        }
         finally {
             if (sentText.isNotEmpty() || sentFiles.isNotEmpty()) withContext(NonCancellable) {
                 if (messageRepository.getById(userId, chatId, historyId) == null) {

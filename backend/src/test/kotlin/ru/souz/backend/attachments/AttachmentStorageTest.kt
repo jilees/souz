@@ -45,6 +45,20 @@ import ru.souz.backend.storage.postgres.write
 
 class AttachmentStorageTest {
     @Test
+    fun `stored tool images enforce ownership and expiry on every model input`() = attachmentTest {
+        val png = java.io.ByteArrayOutputStream().use { output ->
+            javax.imageio.ImageIO.write(java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", output)
+            output.toByteArray()
+        }
+        val file = storage.save("alice", "tool-image", "screen.png", png.inputStream())
+        val input = BackendAttachmentInput(storage, config)
+        assertEquals("data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(png), input.toolImage("alice", file.id.toString()))
+        assertEquals("attachment_not_found", assertFailsWith<AttachmentException> { input.toolImage("bob", file.id.toString()) }.code)
+        clock.now = requireNotNull(file.expiresAt)
+        assertEquals("attachment_expired", assertFailsWith<AttachmentException> { input.toolImage("alice", file.id.toString()) }.code)
+    }
+
+    @Test
     fun `named vision routes isolate models with the same upstream ID without changing durable references`() = attachmentTest {
         val png = java.io.ByteArrayOutputStream().use { output ->
             javax.imageio.ImageIO.write(java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", output)

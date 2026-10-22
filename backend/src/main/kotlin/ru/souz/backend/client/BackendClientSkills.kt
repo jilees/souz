@@ -67,6 +67,11 @@ internal class BackendClientSkills(
 
 private data class ClientSkillGuidance(val description: String, val category: ToolCategory, val timeout: Duration)
 
+internal fun clientImageAttachments(outcome: ClientToolOutcome): List<String> {
+    if (outcome.status != "succeeded" || outcome.result?.get("isError")?.asBoolean() == true) return emptyList()
+    return outcome.result?.get("content")?.takeIf { it.isArray }?.mapNotNull { it.imageResourceUri() }?.take(1).orEmpty()
+}
+
 private fun loadBundledClientSkillGuidance(): Map<String, ClientSkillGuidance> {
     val classLoader = BackendClientSkills::class.java.classLoader
     fun readResource(path: String): ByteArray = requireNotNull(classLoader.getResourceAsStream(path)) {
@@ -141,7 +146,9 @@ private class ClientWebSocketSkill(
                 "cancelled" -> "cancelled"
                 else -> "error"
             }
-            return outcomeMessage(functionCall.name, result)
+            return outcomeMessage(functionCall.name, result).copy(
+                attachments = clientImageAttachments(result).takeIf { it.isNotEmpty() },
+            )
         } catch (failure: Throwable) {
             outcome = failure.metricOutcome()
             throw failure

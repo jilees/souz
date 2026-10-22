@@ -82,6 +82,24 @@ class CompositeCommandExecutorTest {
     }
 
     @Test
+    fun `composite forwards its last tool image and drops it after a later failure or imageless result`() = runTest {
+        val screen = tool("screen") { _, _ -> "frame" }
+        coEvery { screen.invoke(any(), meta) } returns LLMRequest.Message(
+            LLMMessageRole.function, "frame", name = "screen", attachments = listOf("https://screen.test/fresh.webp"),
+        )
+        val plain = tool("plain") { _, _ -> "capture unavailable" }
+        val fail = tool("fail") { _, _ -> error("offline") }
+        for ((last, expected) in listOf("screen" to listOf("https://screen.test/fresh.webp"), "plain" to null, "fail" to null)) {
+            val command = bundle("steps: [{id: first, tool: screen}, {id: last, tool: $last}]\nreturns: '\${last}'")
+            val result = runner(command, listOf(screen, plain, fail)).invoke(LLMResponse.FunctionCall(ToolInvokeSkill.NAME, mapOf(
+                "skillId" to "skill", "arguments" to mapOf("composite" to "run"),
+            )), meta)
+            assertEquals(expected, result.attachments)
+            assertTrue(!result.content.contains("attachments"))
+        }
+    }
+
+    @Test
     fun `invocations use current filtered tools and reject unavailable steps before effects`() = runTest {
         val first = tool("first") { _, _ -> "done" }
         val last = tool("last") { _, _ -> "done" }

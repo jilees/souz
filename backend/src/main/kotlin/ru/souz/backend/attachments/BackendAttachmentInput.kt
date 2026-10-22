@@ -13,6 +13,9 @@ class BackendAttachmentInput(
     private val config: AttachmentStorageConfig,
     private val media: AttachmentMedia? = null,
 ) {
+    internal suspend fun toolImage(userId: String, fileId: String): String =
+        toolImageDataUrl(storage.read(userId, attachmentId(fileId)))
+
     suspend fun prepare(
         userId: String, request: LLMRequest.Chat, modelName: String? = null,
         vision: suspend (model: String, prompt: String, image: String) -> String,

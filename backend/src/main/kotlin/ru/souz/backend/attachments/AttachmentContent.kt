@@ -1,10 +1,21 @@
 package ru.souz.backend.attachments
 
 import java.io.InputStream
+import java.util.Base64
 import ru.souz.backend.crypto.sha256Hex
 import org.apache.tika.Tika
 
 private val tika = Tika()
+
+internal const val MAX_TOOL_IMAGE_BYTES = 5_000_000
+internal val toolImageMimeTypes = setOf("image/png", "image/jpeg", "image/webp", "image/gif")
+
+internal fun toolImageDataUrl(bytes: ByteArray): String {
+    require(bytes.size <= MAX_TOOL_IMAGE_BYTES) { "Tool image is too large." }
+    val mime = attachmentMime(bytes, "tool-image")
+    require(mime in toolImageMimeTypes) { "Tool image is not a supported image." }
+    return "data:$mime;base64," + Base64.getEncoder().encodeToString(bytes)
+}
 
 internal fun InputStream.readAttachmentBytes(limit: Int): ByteArray {
     val bytes = readNBytes(limit + 1)
