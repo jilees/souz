@@ -8,6 +8,14 @@ Backend client Skills are bundled under `backend/src/main/resources/skills/clien
 - Keep runtime documentation and `docs/public-souz-contract/` concise and current-state only. Do not write change-history phrases such as “now we do”.
 - Keep pre-implementation client agreements under `docs/proposals/`, explicitly marked as proposed and not implemented; exclude them from the implemented public API schemas.
 
+## VPS access
+
+- For VPS work, use direct SSH to `root@212.19.134.54` with the local key `~/.ssh/vps-private-key-2026`. This connection is not listed in `~/.ssh/config`; an unavailable VPS connector does not mean SSH is unavailable.
+- Use `ssh -i ~/.ssh/vps-private-key-2026 -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 root@212.19.134.54`. Reuse one task-specific multiplexed connection (`ControlMaster`/`ControlPersist`/`ControlPath`) for subsequent commands and close it when finished. Do not attempt password authentication; the server runs fail2ban.
+- Before asking the user for access details, check these instructions and the project memory at `~/.claude/projects/-Users-jiles-Projects-souz/memory/reference_vps_access.md`. Read only relevant entries and redact secrets from any output.
+- Souz runs as `souz-backend.service`, Orion as `orion-emulator.service`, and Hindsight in the `hindsight` Docker container. Their configuration files are `/opt/souz-backend/config/backend.env`, `/opt/souz-backend/config/llm.json`, `/opt/orion-emulator/config/orion.env`, and `/opt/hindsight/hindsight.env`.
+- Inspect model IDs, endpoint URLs and credential presence without printing private keys, API keys, passwords or full service environment files. An audit does not require restarting services or changing configuration.
+
 ## UI architecture principles
 
 - UI layers (Screens and Composables) should not do neither business logic, nor IO operations.
