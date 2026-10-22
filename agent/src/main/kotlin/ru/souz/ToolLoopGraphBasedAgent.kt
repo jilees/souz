@@ -71,6 +71,8 @@ class ToolLoopGraphBasedAgent(
                         "Model request failed (${response.status}): ${response.message}",
                     )
                 }
+            }.also {
+                NodesPlain.emitToolResponseProgress(it)
             }
         }
         val toolUse = NodesPlain.toolUse(toolExecutor)

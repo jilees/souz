@@ -1,8 +1,11 @@
 package ru.souz.agent.nodes
 
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import org.slf4j.LoggerFactory
 import ru.souz.agent.graph.Node
 import ru.souz.agent.runtime.AgentToolExecutor
+import ru.souz.agent.runtime.AgentRuntimeEvent
 import ru.souz.agent.state.AgentContext
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.LLMRequest
@@ -10,6 +13,17 @@ import ru.souz.llms.LLMResponse
 import ru.souz.llms.toSystemPromptMessage
 
 internal object NodesPlain {
+    suspend fun emitToolResponseProgress(ctx: AgentContext<out LLMResponse.Chat>) {
+        val response = ctx.input as? LLMResponse.Chat.Ok ?: return
+        if (response.choices.none { it.message.functionCall != null }) return
+        response.choices.forEach { (message) ->
+            if (message.role == LLMMessageRole.assistant && message.content.isNotBlank()) {
+                currentCoroutineContext().ensureActive()
+                ctx.runtimeEventSink.emit(AgentRuntimeEvent.AssistantMessage(message.content))
+            }
+        }
+    }
+
     fun inputToHistory(name: String = "Input->History"): Node<String, String> = Node(name) { ctx ->
         val history = ArrayList(ctx.history).apply {
             if (isEmpty()) add(ctx.systemPrompt.toSystemPromptMessage())

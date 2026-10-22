@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import java.util.UUID
 import kotlin.math.max
+import ru.souz.agent.SubagentTool
 import ru.souz.agent.state.AgentSettings
 import ru.souz.agent.spi.AgentTelemetry
 import ru.souz.agent.spi.AgentToolExecutionEvent
@@ -43,7 +44,9 @@ class AgentToolExecutor(
                 AgentRuntimeEvent.ToolCallStarted(runtimeToolCallId, functionCall.name, functionCall.arguments)
             )
             val tool = settings.tools.byName[functionCall.name] ?: throw UnknownTool()
-            return tool.invoke(functionCall, meta).also {
+            val result = if (tool is SubagentTool) tool.invoke(functionCall, meta, eventSink)
+                else tool.invoke(functionCall, meta)
+            return result.also {
                 eventSink.emit(
                     AgentRuntimeEvent.ToolCallFinished(runtimeToolCallId, functionCall.name, it.content, durationMsSince(startedAtNanos))
                 )

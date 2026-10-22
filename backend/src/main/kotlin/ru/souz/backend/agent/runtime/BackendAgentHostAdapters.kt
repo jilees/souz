@@ -64,17 +64,7 @@ class BackendConversationSettingsProvider(
             ru.souz.backend.client.CLIENT_TOOL_ROUTING_INSTRUCTIONS,
             SPEAKER_CONTEXT_INSTRUCTION,
             UNSUPPORTED_MEMORY_MUTATION_NOTICE.takeIf { request.clientToolsEnabled },
-            when {
-                !request.narrateSteps -> null
-                regionProfile == SettingsProviderImpl.REGION_EN ->
-                    "Before every tool call, write ONE short first-person sentence (max ~120 characters, " +
-                        "plain text, no Markdown): what you just learned and what you are about to do. " +
-                        "This is a status line, not the final answer."
-                else ->
-                    "Перед каждым вызовом инструментов напиши ОДНУ короткую фразу от первого лица " +
-                        "(до ~120 символов, обычным текстом, без Markdown): что ты только что узнал и что " +
-                        "собираешься сделать дальше. Это не финальный ответ, а статус."
-            },
+            narrationInstructions(request.narrateSteps, request.locale),
         ).joinToString("\n\n")
         this.useStreaming = request.streamingMessages == true
         this.useFewShotExamples = request.useFewShotExamples ?: this.useFewShotExamples
@@ -90,6 +80,18 @@ class BackendConversationSettingsProvider(
             SettingsProviderImpl.REGION_RU
         }
     }
+}
+
+internal fun narrationInstructions(enabled: Boolean, locale: String): String? = when {
+    !enabled -> null
+    Locale.forLanguageTag(locale).language.equals("en", ignoreCase = true) ->
+        "Before every tool call, write ONE short first-person sentence (max ~120 characters, " +
+            "plain text, no Markdown): what you just learned and what you are about to do. " +
+            "This is a status line, not the final answer."
+    else ->
+        "Перед каждым вызовом инструментов напиши ОДНУ короткую фразу от первого лица " +
+            "(до ~120 символов, обычным текстом, без Markdown): что ты только что узнал и что " +
+            "собираешься сделать дальше. Это не финальный ответ, а статус."
 }
 
 /** Backend runtime environment derived from one validated execution request. */

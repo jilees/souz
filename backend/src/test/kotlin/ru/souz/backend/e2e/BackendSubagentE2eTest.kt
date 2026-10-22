@@ -20,6 +20,8 @@ import kotlin.test.assertTrue
 import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.config.BackendConfigSource
 import ru.souz.backend.http.BackendHttpRoutes
+import ru.souz.backend.toolcall.model.ToolCallStatus
+import ru.souz.backend.toolcall.repository.ToolCallContext
 import ru.souz.backend.llm.withNamedLlmConfig
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.restJsonMapper
@@ -95,7 +97,7 @@ class BackendSubagentE2eTest {
     }
 
     @Test
-    fun `both sockets deliver parent progress before child tools without replay or child text`() {
+    fun `both sockets deliver parent and child progress before tools without replay`() {
         val releaseChild = CompletableDeferred<Unit>()
         val blocks = listOf("Let me check.", "Another detail.", "Let me check.")
         val task = "Ask the user for a genre and report it."
@@ -109,7 +111,7 @@ class BackendSubagentE2eTest {
                         releaseChild.await()
                         if (result != null) reply(request, "private child answer: Horror")
                         else toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "user.ask", "arguments" to mapOf("question" to "Which genre?"))).let { response ->
-                            response.copy(choices = response.choices.map { it.copy(message = it.message.copy(content = "private child progress")) })
+                            response.copy(choices = response.choices.map { it.copy(message = it.message.copy(content = "child progress")) })
                         }
                     }
                     result?.name == "SpawnSubagent" -> reply(request, "parent final answer")
@@ -142,6 +144,12 @@ class BackendSubagentE2eTest {
                         assertEquals(json.createObjectNode().put("content", content), event["payload"])
                     }
                     releaseChild.complete(Unit)
+                    val childProgress = readJson(session)
+                    assertEquals(childProgress, readJson(observer))
+                    assertEquals("assistant.message", childProgress["type"].asText())
+                    assertEquals(threadId, childProgress["threadId"].asText())
+                    assertEquals("child progress", childProgress["payload"]["content"].asText())
+                    assertTrue(childProgress["seq"].isNull)
                     val started = readJson(session)
                     assertEquals(started, readJson(observer))
                     val payload = started["payload"]
@@ -177,11 +185,12 @@ class BackendSubagentE2eTest {
             val childRequests = llm.requests.filter { it.functions.map { tool -> tool.name } == listOf("RunSkillCommand") }
             assertEquals(2, childRequests.size)
             assertTrue("# Ask the user" in childRequests.first().messages.first().content)
+            assertTrue("Перед каждым вызовом инструментов" in childRequests.first().messages.first().content)
             assertEquals(2, childRequests.first().messages.size)
             assertFalse(childRequests.first().messages.any { "delegate the question" in it.content || "<skill_inventory>" in it.content })
             val parentResult = llm.requests.last().messages.single { it.name == "SpawnSubagent" }
             assertEquals("private child answer: Horror", json.readTree(parentResult.content)["result"].asText())
-            assertTrue("private child progress" in llm.streamedChunks)
+            assertTrue("child progress" in llm.streamedChunks)
             assertTrue("private child answer: Horror" in llm.streamedChunks)
             val messages = client.get(BackendHttpRoutes.chatMessages(chatId)) { trusted(userId) }.jsonBody()["items"]
             assertEquals(listOf("delegate the question", "parent final answer", "passive context"), messages.map { it["content"].asText() })
@@ -192,15 +201,20 @@ class BackendSubagentE2eTest {
     }
 
     @Test
-    fun `HTTP execution accounts for child usage and stores only the parent response`() =
+    fun `HTTP execution audits child tools with events disabled and stores only the parent response`() =
         backendE2eTest(
             schemaPrefix = "e2e_subagent_usage",
             featureFlags = BackendFeatureFlags(wsEvents = true, streamingMessages = true, toolEvents = true),
             llm = E2eLlmApi { request ->
                 when {
-                    request.functions.isEmpty() -> reply(request, "private child text")
+                    request.functions.map { it.name } == listOf("Calculator") -> {
+                        assertFalse("Before every tool call" in request.messages.first().content)
+                        assertFalse("Перед каждым вызовом инструментов" in request.messages.first().content)
+                        if (request.messages.last().role == LLMMessageRole.function) reply(request, "private child text")
+                        else toolCallReply(request, "Calculator", mapOf("expression" to "6 * 7"))
+                    }
                     request.messages.any { it.name == "SpawnSubagent" } -> reply(request, "parent synthesized answer")
-                    else -> toolCallReply(request, "SpawnSubagent", mapOf("task" to "Produce a private child answer."))
+                    else -> toolCallReply(request, "SpawnSubagent", mapOf("task" to "Calculate privately.", "skillIds" to listOf("Calculator")))
                 }
             },
         ) {
@@ -208,24 +222,33 @@ class BackendSubagentE2eTest {
             val chatId = createPublicChat(userId)
             client.patch(BackendHttpRoutes.SETTINGS) {
                 trusted(userId)
-                jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}","streamingMessages":true}""")
+                jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}","streamingMessages":true,"showToolEvents":false,"enabledTools":["Calculator"]}""")
             }
             val sent = client.post(BackendHttpRoutes.chatMessages(chatId)) {
                 trusted(userId)
                 jsonBody("""{"content":"Delegate and synthesize"}""")
             }
             assertEquals(HttpStatusCode.OK, sent.status)
+            val executionId = sent.jsonBody()["execution"]["id"].asText()
             val events = eventually("parent completion with child usage") {
                 client.get(BackendHttpRoutes.chatEvents(chatId)) { trusted(userId) }.jsonBody()["items"].takeIf { items ->
                     items.any { it["type"].asText() == "execution.finished" }
                 }
             }
-            assertEquals(3, llm.requests.size)
+            assertEquals(4, llm.requests.size)
+            val childCall = backend.toolCallRepository.listByExecution(
+                ToolCallContext(userId, chatId, executionId, ""),
+            ).single { it.name == "Calculator" }
+            assertEquals(ToolCallStatus.SUCCEEDED, childCall.status)
+            assertEquals("6 * 7", json.readTree(childCall.argumentsJson)["expression"].asText())
+            assertTrue(childCall.resultJson.orEmpty().contains("42"))
+            assertTrue(childCall.durationMs != null)
+            assertTrue(events.none { it["type"].asText().startsWith("tool.call.") })
             assertTrue("private child text" in llm.streamedChunks)
             val finished = events.single { it["type"].asText() == "execution.finished" }["payload"]
-            assertEquals(21, finished["promptTokens"].asInt())
-            assertEquals(9, finished["completionTokens"].asInt())
-            assertEquals(30, finished["totalTokens"].asInt())
+            assertEquals(28, finished["promptTokens"].asInt())
+            assertEquals(12, finished["completionTokens"].asInt())
+            assertEquals(40, finished["totalTokens"].asInt())
             val messages = client.get(BackendHttpRoutes.chatMessages(chatId)) { trusted(userId) }.jsonBody()["items"]
             assertEquals(listOf("user", "assistant"), messages.map { it["role"].asText() })
             assertEquals("parent synthesized answer", messages.last()["content"].asText())

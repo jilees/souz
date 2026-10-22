@@ -60,7 +60,14 @@ class SubagentTool(
     override suspend fun invoke(functionCall: LLMResponse.FunctionCall): LLMRequest.Message =
         invoke(functionCall, ToolInvocationMeta.localDefault())
 
-    override suspend fun invoke(functionCall: LLMResponse.FunctionCall, meta: ToolInvocationMeta): LLMRequest.Message {
+    override suspend fun invoke(functionCall: LLMResponse.FunctionCall, meta: ToolInvocationMeta): LLMRequest.Message =
+        invoke(functionCall, meta, AgentRuntimeEventSink.NONE)
+
+    internal suspend fun invoke(
+        functionCall: LLMResponse.FunctionCall,
+        meta: ToolInvocationMeta,
+        eventSink: AgentRuntimeEventSink,
+    ): LLMRequest.Message {
         // Return failures as tool results so parent graph retries cannot replay child side effects.
         var files: List<MessageAttachment> = emptyList()
         val result = try {
@@ -83,7 +90,7 @@ class SubagentTool(
                 activeTools = setup.settings.tools.byName.values.map { it.fn },
                 systemPrompt = setup.systemPrompt,
                 toolInvocationMeta = meta,
-                runtimeEventSink = AgentRuntimeEventSink.NONE,
+                runtimeEventSink = eventSink,
             )
             val result = createAgent(input.maxTurns).execute(childContext)
             currentCoroutineContext().ensureActive()

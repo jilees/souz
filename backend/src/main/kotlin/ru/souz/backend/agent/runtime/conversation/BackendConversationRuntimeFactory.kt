@@ -23,6 +23,7 @@ import ru.souz.backend.agent.model.chatId
 import ru.souz.backend.agent.runtime.BackendAgentErrorMessages
 import ru.souz.backend.agent.runtime.BackendConversationSettingsProvider
 import ru.souz.backend.agent.runtime.BackendNoopAgentDesktopInfoRepository
+import ru.souz.backend.agent.runtime.narrationInstructions
 import ru.souz.backend.agent.runtime.BackendRequestRuntimeEnvironment
 import ru.souz.backend.agent.session.AgentStateRepository
 import ru.souz.backend.agent.session.toConversationSession
@@ -230,6 +231,7 @@ internal class BackendConversationRuntimeFactory(
             configuredModels = settingsProvider.subagentModels,
             commandToolNames = clientToolCatalog.toolsByCategory.values.flatMap { it.keys }.toSet(),
             commandInstructions = CLIENT_TOOL_ROUTING_INSTRUCTIONS,
+            additionalInstructions = narrationInstructions(request.narrateSteps, request.locale).orEmpty(),
         )
         val kernel = AgentExecutionKernelFactory(
             logObjectMapper = logObjectMapper,

@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
 import ru.souz.ToolLoopGraphBasedAgent
 import ru.souz.agent.runtime.AgentToolExecutor
+import ru.souz.agent.runtime.AgentRuntimeEvent
+import ru.souz.agent.runtime.AgentRuntimeEventSink
 import ru.souz.agent.spi.AgentSettingsProvider
 import ru.souz.agent.spi.AgentTelemetry
 import ru.souz.agent.state.AgentContext
@@ -38,6 +40,34 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class SubagentToolTest {
+    @Test
+    fun `child tool audit and progress use the invoking sink with or without streaming`() = runTest {
+        for (streaming in listOf(false, true)) {
+            val events = mutableListOf<AgentRuntimeEvent>()
+            val selected = tool("Selected") {
+                assertEquals("I will inspect the screen.", events.filterIsInstance<AgentRuntimeEvent.AssistantMessage>().single().content)
+                "screen contents"
+            }
+            var requests = 0
+            val subagent = subagent(streaming = streaming, tools = listOf(selected)) {
+                if (++requests == 1) response("I will inspect the screen.", "Selected") else response("child answer")
+            }
+            val result = AgentToolExecutor().execute(
+                settings(subagent), LLMResponse.FunctionCall(SubagentTool.NAME, mapOf("task" to "Inspect")),
+                toolCallId = "spawn-call", eventSink = collectingSink(events),
+            )
+            assertEquals("child answer", restJsonMapper.readTree(result.content)["result"].asText())
+            assertEquals(listOf("SpawnSubagent", "Selected"), events.filterIsInstance<AgentRuntimeEvent.ToolCallStarted>().map { it.name })
+            assertEquals(listOf("Selected", "SpawnSubagent"), events.filterIsInstance<AgentRuntimeEvent.ToolCallFinished>().map { it.name })
+            assertEquals("screen contents", events.filterIsInstance<AgentRuntimeEvent.ToolCallFinished>().first().result)
+            assertEquals(listOf("I will inspect the screen."), events.filterIsInstance<AgentRuntimeEvent.AssistantMessage>().map { it.content })
+            assertEquals(
+                if (streaming) listOf("I will inspect the screen.", "child answer") else emptyList(),
+                events.filterIsInstance<AgentRuntimeEvent.LlmMessageDelta>().map { it.text },
+            )
+        }
+    }
+
     @Test
     fun `reasoning effort reaches streaming and ordinary child requests`() = runTest {
         for (streaming in listOf(false, true)) {
@@ -268,10 +298,16 @@ class SubagentToolTest {
 
     @Test
     fun `failed child tool returns a failure without graph retries`() = runTest {
+        val events = mutableListOf<AgentRuntimeEvent>()
         var toolCalls = 0
         val selected = tool("Selected") { toolCalls += 1; throw LLMException(LLMResponse.Chat.Error(500, "failed tool")) }
         val subagent = subagent(tools = listOf(selected)) { response(toolName = "Selected") }
-        assertEquals("subagent_failed", subagent.call()["error"]["code"].asText())
+        val result = AgentToolExecutor().execute(
+            settings(subagent), LLMResponse.FunctionCall(SubagentTool.NAME, mapOf("task" to "Inspect")),
+            eventSink = collectingSink(events),
+        )
+        assertEquals("subagent_failed", restJsonMapper.readTree(result.content)["error"]["code"].asText())
+        assertEquals("Selected", events.filterIsInstance<AgentRuntimeEvent.ToolCallFailed>().single().name)
         assertEquals(1, toolCalls)
     }
 
@@ -336,25 +372,35 @@ class SubagentToolTest {
 
     @Test
     fun `parent tool executor awaits result and overlapping invocations have separate graph state`() = runTest {
+        val firstEvents = mutableListOf<AgentRuntimeEvent>()
+        val secondEvents = mutableListOf<AgentRuntimeEvent>()
         val firstStarted = CompletableDeferred<Unit>()
         val releaseFirst = CompletableDeferred<Unit>()
-        val subagent = subagent { request ->
+        val subagent = subagent(streaming = true) { request ->
             val task = request.messages.last().content
             if (task == "first") { firstStarted.complete(Unit); releaseFirst.await() }
             response(task)
         }
         val first = async {
             AgentToolExecutor().execute(settings(subagent), LLMResponse.FunctionCall(subagent.fn.name,
-                mapOf("task" to "first", "maxTurns" to 1)))
+                mapOf("task" to "first", "maxTurns" to 1)), eventSink = collectingSink(firstEvents))
         }
         firstStarted.await()
-        assertEquals("second", subagent.call("second", maxTurns = 1)["result"].asText())
+        val second = AgentToolExecutor().execute(settings(subagent), LLMResponse.FunctionCall(subagent.fn.name,
+            mapOf("task" to "second", "maxTurns" to 1)), eventSink = collectingSink(secondEvents))
+        assertEquals("second", restJsonMapper.readTree(second.content)["result"].asText())
         assertFalse(first.isCompleted)
         releaseFirst.complete(Unit)
         val result = first.await()
         assertEquals(LLMMessageRole.function, result.role)
         assertEquals(SubagentTool.NAME, result.name)
         assertEquals("first", restJsonMapper.readTree(result.content)["result"].asText())
+        assertEquals(listOf("first"), firstEvents.filterIsInstance<AgentRuntimeEvent.LlmMessageDelta>().map { it.text })
+        assertEquals(listOf("second"), secondEvents.filterIsInstance<AgentRuntimeEvent.LlmMessageDelta>().map { it.text })
+    }
+
+    private fun collectingSink(events: MutableList<AgentRuntimeEvent>) = object : AgentRuntimeEventSink {
+        override suspend fun emit(event: AgentRuntimeEvent) { events += event }
     }
 
     private fun subagent(

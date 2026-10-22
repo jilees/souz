@@ -2,8 +2,6 @@ package ru.souz.agent.nodes
 
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.supervisorScope
 import ru.souz.agent.ActiveRunInput
@@ -12,7 +10,6 @@ import ru.souz.agent.graph.Node
 import ru.souz.agent.graph.buildGraph
 import ru.souz.agent.runtime.ActiveRunInputController
 import ru.souz.agent.runtime.ActiveRunInputController.NextLlmStep
-import ru.souz.agent.runtime.AgentRuntimeEvent
 import ru.souz.agent.state.AgentContext
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.LLMRequest
@@ -58,12 +55,7 @@ internal class SteerableChatNode(
             }
 
             // Publish only accepted, assembled tool responses, outside provider retries.
-            toolResponse?.choices?.forEach { (message) ->
-                if (message.role == LLMMessageRole.assistant && message.content.isNotBlank()) {
-                    currentCoroutineContext().ensureActive()
-                    responseContext.runtimeEventSink.emit(AgentRuntimeEvent.AssistantMessage(message.content))
-                }
-            }
+            NodesPlain.emitToolResponseProgress(responseContext)
             return responseContext
         }
     }

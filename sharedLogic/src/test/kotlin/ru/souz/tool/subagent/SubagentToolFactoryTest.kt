@@ -42,6 +42,16 @@ import kotlin.test.assertTrue
 
 class SubagentToolFactoryTest {
     @Test
+    fun `host instructions reach children with and without selected capabilities`() = runTest {
+        val fixture = Fixture(listOf(namedTool("selected")))
+        for (skills in listOf(emptyList(), listOf("selected"))) {
+            fixture.factory(additionalInstructions = "Report a short status before each tool call.")
+                .create(fixture.parent).call(mapOf("task" to "Inspect", "skillIds" to skills))
+            assertContains(fixture.context.systemPrompt, "Report a short status before each tool call.")
+        }
+    }
+
+    @Test
     fun `empty selection binds parent settings and returns a tool result`() = runTest {
         val fixture = Fixture(listOf(namedTool("unselected")))
         val parent = fixture.parent.copy(temperature = 0.27f, contextSize = 42_000)
@@ -334,6 +344,7 @@ class SubagentToolFactoryTest {
             configuredModels: Map<String, LlmProvider> = emptyMap(),
             commandToolNames: Set<String> = emptySet(),
             commandInstructions: String = "",
+            additionalInstructions: String = "",
         ) = SubagentToolFactory(
             { _ -> mockk<Agent> {
                 coEvery { execute(any(), any(), any()) } answers {
@@ -341,7 +352,7 @@ class SubagentToolFactoryTest {
                     AgentExecutionResult("child answer", context)
                 }
             } },
-            catalog, filter, bundles, commands, approvalGate, configuredModels, commandToolNames, commandInstructions,
+            catalog, filter, bundles, commands, approvalGate, configuredModels, commandToolNames, commandInstructions, additionalInstructions,
         )
     }
 }

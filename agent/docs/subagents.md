@@ -4,11 +4,11 @@
 
 The parent receives `SubagentTool` as an ordinary `LLMToolSetup` and awaits each `SpawnSubagent` invocation in its current coroutine. The tool constructs one isolated child context and creates a fresh `Agent` through a host-supplied factory. The default `ToolLoopGraphBasedAgent` is a reusable model/tool loop with ordinary agent lifecycle and streaming. Explicitly selected tools replace both advertised schemas and executable lookup. Host-selected command-only tools share the restricted `RunSkillCommand` path with bundles; their full discovery details and host routing instructions are included in the child prompt. Children have no spawn capability or parent turn-setup nodes. Parent cancellation propagates through the child; queued parent input follows the completed tool result.
 
-The host supplies the same LLM API and complete invocation metadata. The tool leaves child `sideEffects` uncollected and sets `AgentRuntimeEventSink.NONE`; required interactions emitted by host tools retain their existing owners. The parent records the enclosing spawn tool call and its result.
+The host supplies the same LLM API and complete invocation metadata. `AgentToolExecutor` passes the invoking runtime event sink to `SubagentTool`, which supplies it to the child context. Direct invocation without an executor defaults to `AgentRuntimeEventSink.NONE`. Child tool calls, assembled tool-response progress, and streaming deltas use the parent sink and its host settings. Child `sideEffects` remain uncollected. The parent records the enclosing spawn tool call and its result and owns final conversation output.
 
 ## Why this is fragile
 
-Reusing a parent agent cancels its active job. Reusing its LLM nodes or tool executor leaks child output through observable flows even when the child's event sink is empty. Altering backend invocation identifiers breaks client tools. Graph retries around a child could replay completed side effects.
+Reusing a parent agent cancels its active job. Sharing its LLM nodes or tool executor also shares observable flows; only the runtime event sink is inherited. Altering backend invocation identifiers breaks client tools. Graph retries around a child could replay completed side effects.
 
 ## Safe changes
 
@@ -23,6 +23,6 @@ Reusing a parent agent cancels its active job. Reusing its LLM nodes or tool exe
 
 ## Verification
 
-Run `./gradlew :agent:test :sharedLogic:jvmTest :backend:test :desktopApp:test`. Cover waiting/resumption, queued input, cancellation, exact tool lookup, bundle restrictions, model selection, turn limits, stream isolation, backend client identity, and usage accounting.
+Run `./gradlew :agent:test :sharedLogic:jvmTest :backend:test :desktopApp:test`. Cover waiting/resumption, queued input, cancellation, exact tool lookup, bundle restrictions, model selection, turn limits, event-sink inheritance and coroutine isolation, backend client identity, and usage accounting.
 
 See [usage and Skill instructions](../../docs/subagents.md).

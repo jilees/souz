@@ -56,7 +56,7 @@ the failure or complete the calculation using an available tool.
 
 Pass every needed detail in `task`: children do not inherit the parent's conversation, memory, or environment enrichment. Include all required tools and file-backed Skills explicitly; a Skill's instructions do not grant additional capabilities.
 
-The existing tool activity indicates delegation. Child intermediate text and graph events do not become parent chat output. Tools retain the host's normal permission and client-interaction behavior. Backend recovery and durable child execution records are outside this execution model.
+The child inherits the invoking execution's runtime event sink. Its tool calls use the same audit storage and event-display policy, and intermediate assistant messages and streaming deltas follow the host's narration and streaming settings. The child's final answer remains the spawn result; only the parent persists the final conversation response. Children keep separate histories and side-effect flows. Tools retain the host's normal permission and client-interaction behavior. Backend recovery and separate durable child executions are outside this execution model.
 
 ## Desktop manual test
 

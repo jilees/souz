@@ -37,6 +37,7 @@ class SubagentToolFactory(
     private val configuredModels: Map<String, LlmProvider> = emptyMap(),
     private val commandToolNames: Set<String> = emptySet(),
     private val commandInstructions: String = "",
+    private val additionalInstructions: String = "",
 ) {
     fun create(parentSettings: AgentSettings): LLMToolSetup {
         val models = configuredModels + (parentSettings.model to parentSettings.provider)
@@ -115,6 +116,7 @@ class SubagentToolFactory(
     private fun systemPrompt(bundles: Collection<SkillBundle>, commandTools: List<LLMToolSetup>): String = buildString {
         append("Complete the delegated task using only the supplied context and selected tools. ")
         append("Return a final answer to the parent agent. You cannot delegate to another agent.")
+        if (additionalInstructions.isNotBlank()) append("\n\n").append(additionalInstructions)
         if (commandTools.isNotEmpty()) {
             append("\nSelected tool-backed Skills follow. Use RunSkillCommand with their exact skillId and arguments matching inputSchema.\n")
             append(commandInstructions)
