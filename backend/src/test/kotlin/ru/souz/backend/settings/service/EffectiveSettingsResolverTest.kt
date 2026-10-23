@@ -72,6 +72,8 @@ class EffectiveSettingsResolverTest {
                 null, selected = AnthropicHaiku45.alias, saved = AnthropicHaiku45.alias, listings = 1,
                 keys = setOf(ANTHROPIC, QWEN), serverDefault = AnthropicHaiku45, newUser = true,
             ),
+            Case(null, selected = LLMModel.CodexGpt6Luna.alias, listings = 0, codex = true, serverDefault = LLMModel.CodexGpt6Luna),
+            Case(null, selected = AnthropicHaiku45.alias, listings = 1, keys = setOf(ANTHROPIC, QWEN), serverDefault = AnthropicHaiku45),
         )
         assertEquals(cases, cases.map { resolve(it) })
         assertFailsWith<BackendV1Exception> {
