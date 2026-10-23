@@ -18,6 +18,9 @@ interface AgentRuntimeEventSink {
 }
 
 sealed interface AgentRuntimeEvent {
+    /** Initial turn only, before memory and model work. Unknown forecasts are not fast. */
+    data class TurnClassified(val expectedFast: Boolean) : AgentRuntimeEvent
+
     data class MemoryPromptAugmented(
         val addedBlock: String,
         val facts: List<ru.souz.memory.MemoryPromptFact> = emptyList(),

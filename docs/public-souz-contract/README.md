@@ -101,7 +101,9 @@ Durable replay preserves the event's original device values, including omission 
 
 ## Intermediate assistant messages
 
-Progress is opt-in through the trusted settings API: `PATCH /v1/me/settings` with `{"narrateSteps":true}`. Settings responses expose the effective value, defaulting to `false`. The preference controls the additive RU/EN prompt instruction and live WebSocket, Telegram, and VK delivery independently of `streamingMessages` and `showToolEvents`. Each execution snapshots it, including option continuations; settings changes affect subsequent executions.
+Initial waiting also uses `assistant.message`, independently of `narrateSteps`. After initial classification, before memory and model work, Souz sends one randomly chosen phrase: `Минуту...`, `Одну минуту...`, `Секунду...`, `Одну секунду...`, `Секундочку...`, `Один момент...`, or `Сейчас вернусь...`. Only a simple request without memory skips waiting; unavailable or failed classification sends it. It has the same live-only envelope and no additional kind or payload fields. Waiting is not added to model history or the transcript. Tool loops, duplicate submissions and active-thread inputs do not repeat the initial notification.
+
+Ordinary LLM progress is opt-in through the trusted settings API: `PATCH /v1/me/settings` with `{"narrateSteps":true}`. Settings responses expose the effective value, defaulting to `false`. The preference controls the additive RU/EN prompt instruction and live WebSocket, Telegram, and VK delivery independently of `streamingMessages` and `showToolEvents`. Each execution snapshots it, including option continuations; settings changes affect subsequent executions.
 
 Delegated subagents use the same progress preference and publish intermediate assistant messages under the parent's `threadId`. Their final answers return to the parent; only the parent produces the terminal thread response.
 
@@ -109,7 +111,7 @@ Delegated subagents use the same progress preference and publish intermediate as
 
 The envelope has `kind:"event"`, `type:"assistant.message"`, `seq:null`, `chatId`, the active `threadId`, and `createdAt`. On the submitting connection, the originating client request's ACK precedes its assistant events. These events are informational: send neither an ACK nor `tool.result`. Tool execution does not wait for receipt or speech synthesis. Continue waiting for `thread.completed`, `thread.failed`, or `thread.cancelled`; the final answer is only in `thread.completed.payload.response`.
 
-Progress is live-only and best-effort. Current subscribers may receive it; disconnects, bounded-queue overflow, or durable catch-up overtaking queued progress can discard it. Souz never stores or replays these events, and does not add separate chat transcript rows. Intermediate text remains in the agent's existing conversation history. `seq:null` does not advance `afterSeq` and cannot be deduplicated by `(chatId, seq)`; do not collapse separate blocks with identical content.
+Progress is live-only and best-effort. Current subscribers may receive it; disconnects, bounded-queue overflow, or durable catch-up overtaking queued progress can discard it. Souz never stores or replays these events, and does not add separate chat transcript rows. Ordinary LLM intermediate text remains in the agent's existing conversation history; the fixed waiting phrase does not. `seq:null` does not advance `afterSeq` and cannot be deduplicated by `(chatId, seq)`; do not collapse separate blocks with identical content.
 
 ## Subscriptions and reconnect
 

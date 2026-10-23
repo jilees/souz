@@ -71,7 +71,7 @@ class BackendHistoryMemoryE2eTest {
                             socket.send(Frame.Text(messageFrame(chat, owner, "search", text = question)))
                             assertEquals("accepted", readJson(socket)["status"].asText())
                             assertEquals("thread.status", readJson(socket)["type"].asText())
-                            assertEquals("thread.completed", readJson(socket)["type"].asText())
+                            assertEquals("thread.completed", readAfterInitialWait(socket)["type"].asText())
                         }
                     } else {
                         val submitted = client.post(BackendHttpRoutes.chatMessages(chat)) {
@@ -108,7 +108,7 @@ class BackendHistoryMemoryE2eTest {
             val started = withPublicSocket(chat) { socket ->
                 socket.send(Frame.Text(initial))
                 repeat(2) { readJson(socket) }
-                readJson(socket)
+                readAfterInitialWait(socket)
             }
             withPublicSocket(chat) { socket ->
                 readJson(socket) // Replayed tool call.
@@ -120,7 +120,7 @@ class BackendHistoryMemoryE2eTest {
                     """{"kind":"tool.result","chatId":"$chat","threadId":${started["threadId"]},"toolCallId":${started["payload"]["toolCallId"]},"status":"succeeded","result":{"documents":[{"text":"Unselected options: Paris by plane or Kazan by train"}]}}"""
                 ))
                 readJson(socket)
-                assertEquals("thread.completed", readJson(socket)["type"].asText())
+                assertEquals("thread.completed", readAfterInitialWait(socket)["type"].asText())
             }
             assertTrue(llm.requests.last().messages.any {
                 it.role == LLMMessageRole.function && it.content.contains("Unselected options")
@@ -186,7 +186,7 @@ class BackendHistoryMemoryE2eTest {
                         socket.send(Frame.Text(messageFrame(chat, owner, "turn-$zone", timeZone = zone)))
                         assertEquals("accepted", readJson(socket)["status"].asText())
                         assertEquals("thread.status", readJson(socket)["type"].asText())
-                        assertEquals("thread.completed", readJson(socket)["type"].asText())
+                        assertEquals("thread.completed", readAfterInitialWait(socket)["type"].asText())
                         val turn = eventually("completed-turn timestamp") { hindsight.items.getOrNull(before) }
                         assertEquals(clock.instant().atZone(ZoneId.of(zone)).toOffsetDateTime(),
                             OffsetDateTime.parse(turn.item["timestamp"].asText()))

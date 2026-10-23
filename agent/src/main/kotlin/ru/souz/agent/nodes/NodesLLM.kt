@@ -22,6 +22,7 @@ import ru.souz.agent.spi.AgentSettingsProvider
 import ru.souz.agent.spi.ModelRouting
 import ru.souz.agent.spi.RoutedModel
 import ru.souz.agent.spi.TaskComplexityClassifier
+import ru.souz.agent.spi.TurnClassifier
 import ru.souz.llms.LLMChatAPI
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.LLMRequest
@@ -40,11 +41,38 @@ internal class NodesLLM(
     private val complexityClassifier: TaskComplexityClassifier? = null,
     /** Rebinds a routed turn's tools to the chosen model: a `SpawnSubagent` child defaults to its parent's model. */
     private val routedTools: ((AgentSettings) -> List<LLMToolSetup>)? = null,
+    private val turnClassifier: TurnClassifier? = null,
 ) {
     private val l = LoggerFactory.getLogger(NodesLLM::class.java)
 
     private val mutableSideEffects = MutableSharedFlow<AgentStreamChunk>(extraBufferCapacity = 16)
     val sideEffects: Flow<AgentStreamChunk> = mutableSideEffects
+
+    /** Choose the turn's model and recall policy without starting a conversational provider request. */
+    fun classifyTurn(): Node<String, String> = Node("Turn classification") { ctx ->
+        val classifier = turnClassifier ?: return@Node ctx
+        val started = TimeSource.Monotonic.markNow()
+        val decision = try {
+            classifier.classify(ctx.classificationRequest())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            l.warn("Turn classification failed category={}", error.javaClass.simpleName)
+            val fallback = ctx.settings.routing?.complex?.let { ctx.on(ctx.settings.routedTo(it)) }
+                ?: ctx.copy(settings = ctx.settings.copy(routing = null))
+            l.info("Turn classification forecast=unknown memory=recall model={} durationMs={}",
+                fallback.settings.model, started.elapsedNow().inWholeMilliseconds)
+            return@Node fallback.copy(turnClassification = null, useRecentDialogue = false)
+        }
+        val routing = ctx.settings.routing
+        val selected = routing?.let { if (decision.complex) it.complex else it.simple }
+        val routed = selected?.let { ctx.on(ctx.settings.routedTo(it)) } ?: ctx
+        l.info("Turn classification forecast={} complexity={} memory={} model={} durationMs={}",
+            if (decision.expectedFast) "fast" else "slow", if (decision.complex) "complex" else "simple",
+            if (decision.recallMemory) "recall" else "skip", routed.settings.model, started.elapsedNow().inWholeMilliseconds)
+        routed.copy(turnClassification = decision,
+            useRecentDialogue = if (selected != null) !decision.complex else ctx.useRecentDialogue)
+    }
 
     /**
      * Calls LLM's API with the current [AgentContext.history].

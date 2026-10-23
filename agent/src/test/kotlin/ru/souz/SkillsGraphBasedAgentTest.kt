@@ -1,6 +1,7 @@
 package ru.souz
 
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.emptyFlow
@@ -13,6 +14,8 @@ import ru.souz.agent.nodes.NodesErrorHandling
 import ru.souz.agent.nodes.NodesLLM
 import ru.souz.agent.nodes.NodesMemory
 import ru.souz.agent.nodes.NodesToolUseWithKnowledge
+import ru.souz.agent.runtime.AgentRuntimeEvent
+import ru.souz.agent.runtime.AgentRuntimeEventSink
 import ru.souz.agent.runtime.AgentToolExecutor
 import ru.souz.agent.skills.registry.SkillRegistryRepository
 import ru.souz.agent.spi.AgentToolCatalog
@@ -20,6 +23,7 @@ import ru.souz.agent.spi.AgentToolsFilter
 import ru.souz.agent.state.AgentContext
 import ru.souz.agent.state.AgentSettings
 import ru.souz.agent.state.AgentTools
+import ru.souz.llms.LLMChatAPI
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.LLMRequest
 import ru.souz.llms.LlmProvider
@@ -44,6 +48,8 @@ class SkillsGraphBasedAgentTest {
         var chatCount = 0
 
         every { nodesLLM.sideEffects } returns emptyFlow()
+        every { nodesLLM.classifyTurn() } returns passthrough("Turn classification", executed)
+        every { nodesMemory.recall(name = "Memory context only") } returns Node("Memory context only") { it }
         every { nodesMemory.recall() } returns coreToolsPassthrough(
             name = "Memory recall",
             executed = executed,
@@ -73,11 +79,13 @@ class SkillsGraphBasedAgentTest {
             nodesMemory,
             agentToolExecutor,
         )
-        val result = skillsAgent.execute(baseContext())
+        val result = skillsAgent.execute(baseContext().copy(runtimeEventSink = forecastRecorder(executed)))
 
         assertEquals("final", result.output)
         assertEquals(
             listOf(
+                "Turn classification",
+                "Forecast: false",
                 "Memory recall",
                 "appendActualInformation",
                 "LLM",
@@ -103,6 +111,11 @@ class SkillsGraphBasedAgentTest {
         val executed = mutableListOf<String>()
 
         every { nodesLLM.sideEffects } returns emptyFlow()
+        every { nodesLLM.classifyTurn() } returns Node("Turn classification") {
+            executed += "Turn classification"
+            it.copy(turnClassification = ru.souz.agent.spi.TurnClassification(false, false))
+        }
+        every { nodesMemory.recall(name = "Memory context only") } returns passthrough("Memory context only", executed)
         every { nodesMemory.recall() } returns passthrough("Memory recall", executed)
         every { nodesCommon.nodeAppendAdditionalData() } returns passthrough("appendActualInformation", executed)
         every { nodesLLM.chat("LLM request", any()) } returns Node("LLM request") { ctx ->
@@ -117,12 +130,14 @@ class SkillsGraphBasedAgentTest {
             nodesCommon,
             nodesErrorHandling,
             nodesMemory,
-        ).execute(baseContext())
+        ).execute(baseContext().copy(runtimeEventSink = forecastRecorder(executed)))
 
         assertEquals("friendly error", result.output)
         assertEquals(
             listOf(
-                "Memory recall",
+                "Turn classification",
+                "Forecast: true",
+                "Memory context only",
                 "appendActualInformation",
                 "LLM",
                 "Chat.Error",
@@ -131,12 +146,64 @@ class SkillsGraphBasedAgentTest {
         )
     }
 
+    @Test
+    fun `only the routed simple branch skips Skill inventory and host context with no advertised or executable tools`() = runTest {
+        for (route in listOf("simple", "complex", "failure", "explicit")) for (recall in listOf(false, true)) {
+            val executed = mutableListOf<String>()
+            val requests = mutableListOf<LLMRequest.Chat>()
+            val api = mockk<LLMChatAPI> {
+                coEvery { message(capture(requests)) } returns finalResponse()
+            }
+            val nodesLLM = NodesLLM(api, mockk { every { useStreaming } returns false },
+                routedTools = { testCoreTools().skillsTools(it) },
+                turnClassifier = {
+                    if (route == "failure") error("classifier unavailable")
+                    ru.souz.agent.spi.TurnClassification(route == "complex", recall)
+                })
+            val memory = mockk<NodesMemory>()
+            every { memory.recall() } returns passthrough("Memory recall", executed)
+            every { memory.recall(name = "Memory context only") } returns passthrough("Memory context only", executed)
+            every { memory.finalizeTurn() } returns Node("Memory-aware finalization") { it.map { "done" } }
+            val common = mockk<NodesCommon>()
+            every { common.nodeAppendAdditionalData() } returns passthrough("Host context", executed)
+            val errors = mockk<NodesErrorHandling>()
+            every { errors.chatErrorToFinish() } returns errorNode(executed)
+            val registry = emptySkillRegistry()
+            val original = baseContext().copy(
+                history = listOf(LLMRequest.Message(LLMMessageRole.system, "stale <skill_inventory>secret</skill_inventory>")),
+                settings = baseContext().settings.copy(routing = if (route == "explicit") null else
+                    ru.souz.agent.spi.ModelRouting(
+                        ru.souz.agent.spi.RoutedModel("simple", LlmProvider.OPENAI),
+                        ru.souz.agent.spi.RoutedModel("complex", LlmProvider.OPENAI))),
+            )
+            val result = agent(nodesLLM, common, errors, memory, registry = registry).execute(original)
+            assertEquals(listOf(if (route == "explicit") "test" else if (route == "simple") "simple" else "complex"), requests.map { it.model })
+            val simple = route == "simple"
+            assertEquals(!simple, requests.single().functions.isNotEmpty())
+            assertEquals(!simple, result.context.settings.tools.byName.isNotEmpty())
+            assertEquals(!simple, result.context.activeTools.isNotEmpty())
+            assertEquals(if (simple) emptyList() else listOf("Host context"), executed.filter { it == "Host context" })
+            assertEquals(listOf(if (route == "failure" || recall) "Memory recall" else "Memory context only"),
+                executed.filter { it.startsWith("Memory") })
+            assertEquals(if (simple) PROVIDED_SYSTEM_PROMPT else result.context.history.first().content,
+                requests.single().messages.first().content)
+            coVerify(exactly = if (simple) 0 else 1) { registry.listSkillInventoryIds(any()) }
+        }
+    }
+
+    private fun forecastRecorder(executed: MutableList<String>) = object : AgentRuntimeEventSink {
+        override suspend fun emit(event: AgentRuntimeEvent) {
+            if (event is AgentRuntimeEvent.TurnClassified) executed += "Forecast: ${event.expectedFast}"
+        }
+    }
+
     private fun agent(
         nodesLLM: NodesLLM,
         nodesCommon: NodesCommon,
         nodesErrorHandling: NodesErrorHandling,
         nodesMemory: NodesMemory,
         agentToolExecutor: AgentToolExecutor = AgentToolExecutor(),
+        registry: SkillRegistryRepository = emptySkillRegistry(),
     ) = SkillsGraphBasedAgent(
         logObjectMapper = restJsonMapper,
         nodesLLM = nodesLLM,
@@ -146,7 +213,7 @@ class SkillsGraphBasedAgentTest {
         nodesSkillInventory = NodesSkillInventory(
             toolCatalog = testCatalog(),
             toolsFilter = passThroughToolsFilter(),
-            skillBundleProvider = emptySkillRegistry(),
+            skillBundleProvider = registry,
         ),
         nodesToolUseWithKnowledge = NodesToolUseWithKnowledge(
             agentToolExecutor = agentToolExecutor,

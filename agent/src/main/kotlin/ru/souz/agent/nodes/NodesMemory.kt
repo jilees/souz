@@ -97,6 +97,7 @@ internal class NodesMemory(
                 MemoryRetrievalRequest(
                     context = ctx.toolInvocationMeta.toMemoryContext(),
                     query = ctx.input,
+                    recallFacts = ctx.turnClassification?.recallMemory != false,
                 )
             )
         } catch (error: CancellationException) {

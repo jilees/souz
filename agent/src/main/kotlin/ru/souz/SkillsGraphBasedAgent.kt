@@ -26,12 +26,15 @@ import ru.souz.agent.nodes.SKILL_INVENTORY_NODE_NAME
 import ru.souz.agent.nodes.SteerableChatNode
 import ru.souz.agent.nodes.NodesPlain
 import ru.souz.agent.runtime.ActiveRunInputController
+import ru.souz.agent.runtime.AgentRuntimeEvent
 import ru.souz.agent.runtime.GraphExecutionDelegate
 import ru.souz.agent.state.AgentContext
+import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.LLMResponse
+import ru.souz.llms.toSystemPromptMessage
 
 /**
- * Agent graph whose model always sees only the core skill-discovery, Knowledge, and execution tools.
+ * Routed simple replies have no tools; other turns use core Skill discovery and execution tools.
  * Other capabilities are discovered and invoked through skills rather than injected directly.
  */
 class SkillsGraphBasedAgent internal constructor(
@@ -54,12 +57,26 @@ class SkillsGraphBasedAgent internal constructor(
 
     private fun graph(controller: ActiveRunInputController): Graph<String, String> = buildGraph(name = "Skills Agent") {
         val inputToHistory = NodesPlain.inputToHistory()
+        val turnClassification = nodesLLM.classifyTurn()
+        val initialResponse = Node<String, String>("Initial response") { ctx ->
+            ctx.runtimeEventSink.emit(AgentRuntimeEvent.TurnClassified(ctx.turnClassification?.expectedFast == true))
+            ctx
+        }
         val memoryRecall = nodesMemory.recall()
+        val memoryContextOnly = nodesMemory.recall(name = "Memory context only")
         val skillInventory = nodesSkillInventory.node(
             skillTools = emptyList(),
             name = SKILL_INVENTORY_NODE_NAME,
             classifySkills = true,
         )
+        val toolFreeReply = Node<String, String>("Tool-free reply") { ctx ->
+            // A previous turn may have left its Skill inventory in the effective system message.
+            val replaced = if (ctx.history.firstOrNull()?.role == LLMMessageRole.system) 1 else 0
+            ctx.withOnlyTools(emptyList()).map(
+                history = listOf(ctx.systemPrompt.toSystemPromptMessage()) + ctx.history.drop(replaced),
+                activeExchangeStartIndex = ctx.activeExchangeStartIndex + 1 - replaced,
+            )
+        }
         val contextEnrich = nodesCommon.nodeAppendAdditionalData()
         val chat = SteerableChatNode(nodesLLM, controller, nodesMemory)
         val chatOk: Node<LLMResponse.Chat, LLMResponse.Chat.Ok> = Node("Chat.Ok") { ctx ->
@@ -72,8 +89,14 @@ class SkillsGraphBasedAgent internal constructor(
         val chatErrorToFinish = nodesErrorHandling.chatErrorToFinish()
 
         nodeInput.edgeTo(inputToHistory)
-        inputToHistory.edgeTo(memoryRecall)
-        memoryRecall.edgeTo(skillInventory)
+        inputToHistory.edgeTo(turnClassification)
+        turnClassification.edgeTo(initialResponse)
+        initialResponse.edgeTo { ctx ->
+            if (ctx.turnClassification?.recallMemory == false) memoryContextOnly else memoryRecall
+        }
+        memoryRecall.edgeTo { ctx -> if (ctx.useRecentDialogue) toolFreeReply else skillInventory }
+        memoryContextOnly.edgeTo { ctx -> if (ctx.useRecentDialogue) toolFreeReply else skillInventory }
+        toolFreeReply.edgeTo(chat)
         skillInventory.edgeTo(contextEnrich)
         contextEnrich.edgeTo(chat)
         chat.edgeTo { ctx ->

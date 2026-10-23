@@ -153,6 +153,7 @@ internal fun backendE2eTest(
     skillOAuth: Boolean = false,
     attachments: ru.souz.backend.attachments.AttachmentStorageConfig? = null,
     complexityClassifier: TaskComplexityClassifier? = null,
+    turnClassifier: ru.souz.agent.spi.TurnClassifier? = null,
     block: suspend BackendE2eScope.() -> Unit,
 ) = testApplication {
     val backend = BackendE2eBackend(
@@ -175,6 +176,7 @@ internal fun backendE2eTest(
         sandboxFactory = sandboxFactory,
         attachments = attachments,
         complexityClassifier = complexityClassifier,
+        turnClassifier = turnClassifier,
     )
     application {
         backendApplication(backend.dependencies)
@@ -227,6 +229,12 @@ internal class BackendE2eScope(
                 ))))
             } else if (frame.path("toolCallId").asText() !in personalityCalls) return frame
         }
+    }
+
+    // Memory workflows may receive initial waiting even with ordinary narration disabled.
+    suspend fun readAfterInitialWait(session: DefaultClientWebSocketSession): JsonNode {
+        val frame = readJson(session)
+        return if (frame.path("type").asText() == "assistant.message") readJson(session) else frame
     }
 
     suspend fun <T> withPublicSocket(chatId: String, block: suspend (DefaultClientWebSocketSession) -> T): T =
@@ -364,6 +372,7 @@ internal class BackendE2eBackend(
     private val sandboxFactory: ((SettingsProvider) -> RuntimeSandboxFactory)? = null,
     attachments: ru.souz.backend.attachments.AttachmentStorageConfig? = null,
     private val complexityClassifier: TaskComplexityClassifier? = null,
+    private val turnClassifier: ru.souz.agent.spi.TurnClassifier? = null,
 ) : AutoCloseable {
     private val appConfig: BackendAppConfig = postgresAppConfig(
         schema = schema,
@@ -418,8 +427,20 @@ internal class BackendE2eBackend(
         if (turnRunnerOverride != null) {
             bindSingleton<BackendConversationTurnRunner>(overrides = true) { turnRunnerOverride }
         }
-        if (complexityClassifier != null) {
-            bindSingleton<TaskComplexityClassifier>(overrides = true) { complexityClassifier }
+        // Unrelated workflows use a deterministic self-contained turn. Memory tests keep real
+        // Jev over their fake HTTP boundary; forecast tests supply the classifier explicitly.
+        if (turnClassifier != null || (hindsightUrl == null && complexityClassifier == null)) {
+            bindSingleton<ru.souz.agent.spi.TurnClassifier>(overrides = true) {
+                turnClassifier ?: ru.souz.agent.spi.TurnClassifier {
+                    ru.souz.agent.spi.TurnClassification(complex = false, recallMemory = false)
+                }
+            }
+        } else if (complexityClassifier != null) {
+            bindSingleton<ru.souz.agent.spi.TurnClassifier>(overrides = true) {
+                ru.souz.agent.spi.TurnClassifier { request ->
+                    ru.souz.agent.spi.TurnClassification(complexityClassifier.isComplex(request), recallMemory = true)
+                }
+            }
         }
     }
 

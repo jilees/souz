@@ -18,7 +18,7 @@ import ru.souz.agent.skills.registry.SkillBundleProvider
 import ru.souz.agent.skills.SkillClassifier
 import ru.souz.agent.spi.AgentTelemetry
 import ru.souz.agent.spi.AgentToolCatalog
-import ru.souz.agent.spi.TaskComplexityClassifier
+import ru.souz.agent.spi.TurnClassifier
 import ru.souz.backend.agent.model.AgentConversationKey
 import ru.souz.backend.agent.model.BackendConversationTurnRequest
 import ru.souz.backend.agent.model.chatId
@@ -102,7 +102,7 @@ internal class BackendConversationRuntimeFactory(
     private val skillBundleProvider: SkillBundleProvider,
     private val skillClassifier: SkillClassifier,
     private val fallbackSkillClassifier: SkillClassifier? = null,
-    private val complexityClassifier: TaskComplexityClassifier? = null,
+    private val turnClassifier: TurnClassifier? = null,
     private val commandExecutor: SkillCommandExecutor,
     private val filesToolUtil: FilesToolUtil,
     private val webResearchClient: WebResearchClient,
@@ -117,6 +117,7 @@ internal class BackendConversationRuntimeFactory(
     private val executionQuotas: ExecutionQuotaManager,
     private val metrics: BackendMetrics? = null,
     private val namedModels: Map<String, NamedLlmModel> = emptyMap(),
+    private val builtinReasoningEfforts: Map<String, String> = emptyMap(),
     private val testLlmApiFactory: (suspend (SettingsProvider) -> LLMChatAPI)? = null,
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
     private val codexEndpoints: CodexEndpoints = CodexEndpoints(),
@@ -156,6 +157,7 @@ internal class BackendConversationRuntimeFactory(
             ?.let { HookLlmBudget(it, hookStore, executionQuotas) }
         val executionApi = BackendExecutionLlmChatApi(
             namedModels = namedModels,
+            builtinReasoningEfforts = builtinReasoningEfforts,
             userId = key.userId,
             settingsProvider = settingsProvider,
             credentialResolver = credentialResolver,
@@ -313,7 +315,7 @@ internal class BackendConversationRuntimeFactory(
             },
             skillClassifier = skillClassifier,
             fallbackSkillClassifier = fallbackSkillClassifier,
-            complexityClassifier = complexityClassifier,
+            turnClassifier = turnClassifier,
             memoryRuntime = memoryRuntime,
             automaticMemoryRecall = automaticMemoryRecall,
             captureScope = agentBackgroundScope + backendLogContext(

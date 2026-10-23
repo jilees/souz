@@ -14,7 +14,7 @@ The measurement reference is [PR #852](https://github.com/D00mch/souz/pull/852).
 The classic `GraphBasedAgent` can select multiple tool categories with Jev independently of its conversational
 model. The skills graph, including backend conversations, selects relevant file-backed Skill descriptions with Jev and execution-LLM fallback; it does not classify tool categories. Inventory keeps every exact ID and adds only selected descriptions as bounded, escaped metadata. Full instructions and supporting files load on demand with approval where enabled.
 
-`JevClassifier` sends the conversation as plain text built by `jevState`: the new user message first, then earlier
+For category and Skill selection, `JevClassifier` sends plain text built by `jevState`: the new user message first, then earlier
 non-empty user and assistant messages newest first, each cut to its first 300 characters. Every category and Skill gets one
 yes/no question naming it with its description; the shared `true` and `false` sides say that a step of the request
 must need it and that a mentioned topic alone does not count. Categories use the classic graph's history window,
@@ -64,8 +64,8 @@ suspend fun needsCalendar(jev: JevClient, message: String): Double {
 ```
 
 `JevClient.choose(state, instructions, options)` asks one choice question and returns every option's probability.
-`JevClassifier.isComplex` asks it over the last two earlier messages whether a turn needs a light or a strong model
-and routes to the complex model when "complex" scores at least 0.5; when Jev fails, the turn keeps its own model
+`JevClassifier.isComplex` and early turn classification put the last two earlier nonempty dialogue messages in chronological order first (300 characters each), followed by the entire current message in a separate block. They ask whether the current turn needs a light or a strong model
+and admits the simple model only when "simple" scores at least 0.9 for a self-contained answer without tools or external data. Previous dialogue is used only when the current request refers to, clarifies, confirms or continues it; unrelated history is ignored. Attachments require the complex model. When early Jev classification fails, pending routing selects the complex model; explicit model selections are preserved
 without asking FRIDA. Optional `criteria` describe a question's `true` and `false` sides. Callers can pass
 credentials and a model to `JevClient(http, token, model)`. The client validates probabilities
 but leaves selection policy to callers and never closes the supplied transport.

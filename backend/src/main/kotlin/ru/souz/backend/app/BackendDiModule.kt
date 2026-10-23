@@ -62,7 +62,7 @@ import ru.souz.backend.client.repository.ClientRequestRepository
 import ru.souz.backend.config.NamedLlmConfig
 import ru.souz.backend.config.SystemBackendConfigSource
 import ru.souz.backend.config.loadNamedModels
-import ru.souz.agent.spi.TaskComplexityClassifier
+import ru.souz.agent.spi.TurnClassifier
 import ru.souz.llms.runtime.JevClassifier
 import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.options.repository.OptionRepository
@@ -341,7 +341,6 @@ fun backendDiModule(
                 clock = instance(),
                 retainAsync = appConfig.hindsightRetainAsync,
                 captureRepository = instance(),
-                recallClassifier = ru.souz.backend.memory.hindsight.MemoryRecallClassifier { instance() },
             )
         } else {
             NoopConversationMemoryRuntime
@@ -354,17 +353,17 @@ fun backendDiModule(
                 ru.souz.backend.memory.hindsight.VoiceMemoryRouting { instance<ru.souz.jev.JevClient>() })
         }
     }
-    bindSingleton<TaskComplexityClassifier> { JevClassifier(instance()) }
+    bindSingleton<TurnClassifier> { TurnClassifier { request -> JevClassifier(instance()).classify(request) } }
     bindSingleton {
         BackendConversationRuntimeFactory(
             userSettingsRepository = instance(),
             personalitySync = instance(),
             namedModels = instance<NamedLlmConfig>().models,
+            builtinReasoningEfforts = instance<NamedLlmConfig>().builtinReasoningEfforts,
             attachmentInput = instanceOrNull(),
             skillClassifier = instance(),
             fallbackSkillClassifier = instanceOrNull<SkillClassifier>(tag = FRIDA_FALLBACK_TAG),
-            // Routing needs Jev: a configured routing block without JEV_TOKEN fails at startup.
-            complexityClassifier = instance<NamedLlmConfig>().routing?.let { instance<TaskComplexityClassifier>() },
+            turnClassifier = instance(),
             baseSettingsProvider = instance(),
             credentialResolver = instance(),
             effectiveSettingsResolver = instance(),

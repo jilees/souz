@@ -2,6 +2,7 @@ package ru.souz.agent.state
 
 import ru.souz.agent.runtime.AgentRuntimeEventSink
 import ru.souz.agent.spi.ModelRouting
+import ru.souz.agent.spi.TurnClassification
 import ru.souz.llms.DEFAULT_MAX_TOKENS
 import ru.souz.llms.LLMRequest
 import ru.souz.llms.LLMToolSetup
@@ -23,6 +24,8 @@ data class AgentContext<I>(
     val activeExchangeStartIndex: Int = 0,
     /** The selected simple route uses a request-only window over completed dialogue. */
     val useRecentDialogue: Boolean = false,
+    /** Request-local early decisions; never persisted as conversation history or sent to a provider. */
+    val turnClassification: TurnClassification? = null,
 ) {
     init {
         require(activeExchangeStartIndex in 0..history.size) { "Active exchange boundary must be within history." }
@@ -44,6 +47,7 @@ data class AgentContext<I>(
         systemPrompt: String = this.systemPrompt,
         activeExchangeStartIndex: Int = this.activeExchangeStartIndex,
         useRecentDialogue: Boolean = this.useRecentDialogue,
+        turnClassification: TurnClassification? = this.turnClassification,
         transform: (I) -> O = { it as O },
     ): AgentContext<O> = AgentContext(
         input = transform(input),
@@ -57,6 +61,7 @@ data class AgentContext<I>(
         replyAttachments = replyAttachments,
         activeExchangeStartIndex = activeExchangeStartIndex,
         useRecentDialogue = useRecentDialogue,
+        turnClassification = turnClassification,
     )
 }
 

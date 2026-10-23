@@ -22,6 +22,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class JevClassifierTest {
     private val request = LLMRequest.Chat(
@@ -36,6 +37,9 @@ class JevClassifierTest {
             LLMRequest.Message(LLMMessageRole.user, "Check my calendar and email the agenda"),
         ),
     )
+    private val turnState = "Previous discussion (use only if relevant):\nuser: Summarize them\nassistant: " +
+        (" You have two meetings. " + "x".repeat(400)).take(300).trim() +
+        "\n\nCurrent user message to classify:\nCheck my calendar and email the agenda"
     private val categories = mapOf(
         ToolCategory.CALENDAR to "Read and edit calendar events",
         ToolCategory.MAIL to "Read and send email",
@@ -136,11 +140,11 @@ class JevClassifierTest {
     }
 
     @Test
-    fun `complexity is one choice over the last two messages`() = runTest {
+    fun `simple route requires ninety percent confidence over the last two messages`() = runTest {
         var complex = 0.0
         val engine = MockEngine { httpRequest ->
             val payload = restJsonMapper.readTree(httpRequest.body.toByteArray())
-            assertEquals(jevState(request.messages, historyLimit = 2), payload["state"].asText())
+            assertEquals(turnState, payload["state"].asText())
             val question = payload["questions"]["choice"]
             assertEquals("choice", question["type"].asText())
             assertEquals(listOf("simple", "complex"), question["criteria"].fieldNames().asSequence().toList())
@@ -148,7 +152,70 @@ class JevClassifierTest {
         }
         HttpClient(engine) { providerHttpClientDefaults() }.use { http ->
             val classifier = JevClassifier(JevClient(http, "test-token"))
-            assertEquals(listOf(false, true, true), listOf(0.49, 0.5, 0.9).map { complex = it; classifier.isComplex(request) })
+            assertEquals(listOf(false, false, true, true), listOf(0.0, 0.1, 0.11, 0.9).map { complex = it; classifier.isComplex(request) })
+        }
+    }
+
+    @Test
+    fun `early complexity and memory decisions share one request and independent thresholds`() = runTest {
+        var complex = 0.1
+        var skip = 0.9
+        var malformedMemory = false
+        val engine = MockEngine { httpRequest ->
+            val payload = restJsonMapper.readTree(httpRequest.body.toByteArray())
+            assertEquals(turnState, payload["state"].asText())
+            assertEquals(setOf("complexity", "memory"), payload["questions"].fieldNames().asSequence().toSet())
+            assertTrue(payload["questions"].all { it["type"].asText() == "choice" })
+            respond("""{"answers":{
+              "complexity":{"type":"choice","probabilities":{"simple":${1-complex},"complex":$complex}},
+              "memory":${if (malformedMemory) "{}" else """{"type":"choice","probabilities":{"skip":$skip,"recall":${1-skip}}}"""}
+            }}""")
+        }
+        HttpClient(engine) { providerHttpClientDefaults() }.use { http ->
+            val classifier = JevClassifier(JevClient(http, "test-token"))
+            for ((complexity, memorySkip) in listOf(0.1 to 0.8, 0.11 to 0.9, 0.0 to 0.79, 0.9 to 0.1)) {
+                complex = complexity; skip = memorySkip
+                val result = classifier.classify(request)
+                assertEquals(complex > 0.1, result.complex)
+                assertEquals(skip < 0.8, result.recallMemory)
+                assertEquals(complex <= 0.1 && skip >= 0.8, result.expectedFast)
+            }
+            malformedMemory = true
+            assertFailsWith<IllegalStateException> { classifier.classify(request) }
+            assertEquals(5, engine.requestHistory.size)
+        }
+    }
+
+    @Test
+    fun `routing preserves the entire current message when there is no preceding dialogue`() = runTest {
+        val current = "Translate the supplied text: " + "a".repeat(1000)
+        HttpClient(MockEngine { httpRequest ->
+            val payload = restJsonMapper.readTree(httpRequest.body.toByteArray())
+            assertEquals(current, payload["state"].asText())
+            respond("""{"answers":{"choice":{"type":"choice","probabilities":{"simple":1.0,"complex":0.0}}}}""")
+        }) { providerHttpClientDefaults() }.use { http ->
+            assertEquals(false, JevClassifier(JevClient(http, "test-token")).isComplex(request.copy(messages = listOf(
+                request.messages.first(), LLMRequest.Message(LLMMessageRole.user, current),
+            ))))
+        }
+    }
+
+    @Test
+    fun `attachments always require the strong model even with a confidently simple text decision`() = runTest {
+        HttpClient(MockEngine { respond("""{"answers":{
+          "choice":{"type":"choice","probabilities":{"simple":1.0,"complex":0.0}},
+          "complexity":{"type":"choice","probabilities":{"simple":1.0,"complex":0.0}},
+          "memory":{"type":"choice","probabilities":{"skip":1.0,"recall":0.0}}
+        }}""") }) { providerHttpClientDefaults() }.use { http ->
+            val classifier = JevClassifier(JevClient(http, "test-token"))
+            val file = ru.souz.llms.FileContent(ru.souz.llms.FileReference("owned"), "report.txt", "text/plain", 4)
+            val withFile = request.copy(messages = listOf(LLMRequest.Message(LLMMessageRole.user, "Привет", files = listOf(file))))
+            val withImage = request.copy(messages = listOf(LLMRequest.Message(LLMMessageRole.user, "Что тут?",
+                images = listOf(ru.souz.llms.ImageContent(ru.souz.llms.FileReference("image"))))))
+            for (attached in listOf(withFile, withImage)) {
+                assertTrue(classifier.isComplex(attached))
+                assertTrue(classifier.classify(attached).complex)
+            }
         }
     }
 

@@ -31,6 +31,7 @@ import ru.souz.agent.state.AgentContext
 import ru.souz.agent.spi.ModelRouting
 import ru.souz.agent.spi.RoutedModel
 import ru.souz.agent.spi.TaskComplexityClassifier
+import ru.souz.agent.spi.TurnClassification
 import ru.souz.agent.state.AgentSettings
 import ru.souz.testTool
 import ru.souz.llms.LLMChatAPI
@@ -41,6 +42,54 @@ import ru.souz.llms.LlmProvider
 import ru.souz.llms.LLMResponse
 
 class NodesLLMTest {
+    @Test
+    fun `early classification selects a model before any generation and preserves explicit overrides`() = runTest {
+        for (complex in listOf(false, true)) for (recall in listOf(false, true)) {
+            val calls = mutableListOf<LLMRequest.Chat>()
+            val api = mockk<LLMChatAPI> { coEvery { message(capture(calls)) } returns block(0, "answer") }
+            val nodes = NodesLLM(api, mockk { every { useStreaming } returns false },
+                complexityClassifier = { error("must not classify twice") },
+                routedTools = { listOf(testTool(it.model)) },
+                turnClassifier = { TurnClassification(complex, recall) })
+            val original = context(listOf(SYSTEM) + exchange("old request") + activeTurn(), activeExchangeStartIndex = 3)
+            for (routing in listOf(ROUTING, null)) {
+                calls.clear()
+                val classified = nodes.classifyTurn().execute(original.copy(settings = original.settings.copy(routing = routing)), runtime())
+                assertTrue(calls.isEmpty())
+                val chosen = if (routing == null) "test-model" else if (complex) "complex" else "simple"
+                assertEquals(chosen, classified.settings.model)
+                assertEquals(null, classified.settings.routing)
+                assertEquals(TurnClassification(complex, recall), classified.turnClassification)
+                assertEquals(original.history, classified.history)
+                assertEquals(routing != null && !complex, classified.useRecentDialogue)
+                val answered = nodes.chat().execute(classified.map { "continue" }, runtime())
+                assertEquals(listOf(chosen), calls.map { it.model })
+                assertEquals(classified.turnClassification, answered.turnClassification)
+            }
+        }
+    }
+
+    @Test
+    fun `early classification failure chooses the strong route and preserves explicit overrides while cancellation propagates`() = runTest {
+        val api = mockk<LLMChatAPI>()
+        val ctx = context(activeTurn()).let { it.copy(settings = it.settings.copy(routing = ROUTING)) }
+        for (routing in listOf(ROUTING, null)) {
+            val original = ctx.copy(settings = ctx.settings.copy(routing = routing))
+            val failed = NodesLLM(api, mockk(), turnClassifier = { error("Jev unavailable") })
+                .classifyTurn().execute(original, runtime())
+            assertEquals(if (routing == null) "test-model" else "complex", failed.settings.model)
+            assertEquals(null, failed.settings.routing)
+            assertEquals(null, failed.turnClassification)
+            assertEquals(false, failed.useRecentDialogue)
+            assertEquals(ctx.history, failed.history)
+        }
+        assertFailsWith<CancellationException> {
+            NodesLLM(api, mockk(), turnClassifier = { throw CancellationException("cancelled") })
+                .classifyTurn().execute(ctx, runtime())
+        }
+        coVerify { api wasNot Called }
+    }
+
     @Test
     fun `compaction preserves file references and speaker metadata without persisting rendered labels`() = runTest {
         val file = ru.souz.llms.FileContent(ru.souz.llms.FileReference("owned-file"), "report.txt", "text/plain", 4)

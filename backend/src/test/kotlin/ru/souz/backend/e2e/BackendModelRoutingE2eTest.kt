@@ -29,6 +29,7 @@ class BackendModelRoutingE2eTest {
         val http = HttpClient(MockEngine { request ->
             val body = restJsonMapper.readTree(request.body.toByteArray())
             val model = body["model"].asText()
+            assertEquals(if (model == "lite-model") "disabled" else null, body.path("thinking").path("type").textValue())
             val last = body["messages"].last()["content"].asText()
             if (last == "Fail over" && model == "strong-model") return@MockEngine respond("overloaded", HttpStatusCode.ServiceUnavailable)
             if (last == "child task") children += model
@@ -78,7 +79,8 @@ class BackendModelRoutingE2eTest {
             assertEquals("default-model answer" to "default-chat", turn("Explicit", ""","options":{"model":"default-chat"}"""))
             client.patch(BackendHttpRoutes.SETTINGS) { trusted(userId); jsonBody("""{"defaultModel":"route-strong"}""") }
             assertEquals("strong-model answer" to "route-strong", turn("Chosen"))
-            assertEquals(4, classified.get())
+            // Explicit models still need the independent recall decision and early forecast.
+            assertEquals(6, classified.get())
         }
     }
 
@@ -87,7 +89,7 @@ class BackendModelRoutingE2eTest {
           "openaiConnections": {"router": {"baseUrl":"https://router.test/v1", "apiKeyEnv":"ROUTER_KEY"}},
           "models": {
             "default-chat": {"connection":"router", "modelId":"default-model"},
-            "route-lite": {"connection":"router", "modelId":"lite-model"},
+            "route-lite": {"connection":"router", "modelId":"lite-model", "parameters":{"thinking":{"type":"disabled"}}},
             "route-strong": {"connection":"router", "modelId":"strong-model"}
           },
           "routing": {"simple": {"model":"route-lite"}, "complex": {"model":"route-strong"}}

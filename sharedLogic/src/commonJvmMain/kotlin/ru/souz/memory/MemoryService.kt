@@ -256,6 +256,7 @@ class MemoryService(
         request: MemoryRetrievalRequest,
         overrideScopes: List<MemoryScope>? = null,
     ): MemoryRetrievalResult {
+        if (!request.recallFacts) return MemoryRetrievalResult(renderedPromptBlock = null)
         val selection = selectMemoryFacts(
             context = request.context,
             semanticQuery = request.query,

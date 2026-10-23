@@ -43,11 +43,15 @@ class BackendVoiceMemoryE2eTest {
             remote.recalled[owner] = "A household fact"
             submitVoice(chat, owner, voice, "recall", "What is my name?")
             assertEquals(2, remote.recalls.size)
+            assertEquals(listOf("classification", "recall", "recall"), remote.order)
+            remote.order.clear()
             assertTrue(llm.requests.last().messages.any { "A personal fact" in it.content })
 
             remote.skipRecall = 0.95
             submitVoice(chat, owner, voice, "skip", "Ты тут?\n\n(Голосовой канал: отвечай кратко.)")
             assertEquals(2, remote.recalls.size)
+            assertEquals(listOf("classification"), remote.order)
+            remote.order.clear()
             assertFalse(llm.requests.last().messages.any { "A personal fact" in it.content || "A household fact" in it.content })
             assertTrue(llm.requests.last().messages.any { "Current speaker voice ID: $voice" in it.content })
             assertTrue(llm.requests.last().messages.any { it.content.startsWith("[souz_speaker id=\"$voice\"]") })
@@ -58,6 +62,7 @@ class BackendVoiceMemoryE2eTest {
             assertTrue(llm.requests.last().messages.any { "A personal fact" in it.content })
             awaitVoiceQueue(chat)
             assertEquals(3, remote.recallClassifications.size)
+            assertTrue(remote.recallClassifications.all { it["questions"].size() == 2 })
         }
     }
 
@@ -236,6 +241,7 @@ class BackendVoiceMemoryE2eTest {
                     socket.send(Frame.Text(voiceFrame(chat, owner, voice, "input-$index", "My name is Bob $index")))
                     assertEquals("accepted", readJson(socket)["status"].asText())
                     assertEquals("thread.status", readJson(socket)["type"].asText())
+                    if (index == 0) assertEquals("assistant.message", readJson(socket)["type"].asText())
                     if (index < started.size) withTimeout(5_000) { started[index].await() }
                 }
                 assertEquals("thread.completed", readJson(socket)["type"].asText())
@@ -299,7 +305,7 @@ private suspend fun BackendE2eScope.submitVoice(chat: String, owner: String, voi
         while (ack.path("kind").asText() != "ack" || ack.path("requestId").asText() != request) ack = readJson(socket)
         assertEquals("accepted", ack["status"].asText())
         assertEquals("thread.status", readJson(socket)["type"].asText())
-        assertEquals("thread.completed", readJson(socket)["type"].asText())
+        assertEquals("thread.completed", readAfterInitialWait(socket)["type"].asText())
     }
 }
 
@@ -326,6 +332,7 @@ private class VoiceMemoryRemote {
     val classifications = CopyOnWriteArrayList<JsonNode>()
     val recallClassifications = CopyOnWriteArrayList<JsonNode>()
     val recalls = CopyOnWriteArrayList<String>()
+    val order = CopyOnWriteArrayList<String>()
     val recalled = java.util.concurrent.ConcurrentHashMap<String, String>()
     var personal = true
     var household = false
@@ -340,12 +347,14 @@ private class VoiceMemoryRemote {
             val path = request.url.encodedPath.decodeURLPart()
             var status = HttpStatusCode.OK
             val body = when {
-                request.url.host == "api.typesafe.ai" && payload["questions"].has("choice") -> {
+                request.url.host == "api.typesafe.ai" && payload["questions"].has("memory") -> {
                     recallClassifications.add(payload)
+                    order += "classification"
                     if (failRecallClassification) { status = HttpStatusCode.ServiceUnavailable; "{}" }
-                    else restJsonMapper.writeValueAsString(mapOf("answers" to mapOf("choice" to mapOf(
-                        "type" to "choice", "probabilities" to mapOf("skip" to skipRecall, "recall" to 1-skipRecall),
-                    ))))
+                    else restJsonMapper.writeValueAsString(mapOf("answers" to mapOf(
+                        "memory" to mapOf("type" to "choice", "probabilities" to mapOf("skip" to skipRecall, "recall" to 1-skipRecall)),
+                        "complexity" to mapOf("type" to "choice", "probabilities" to mapOf("simple" to 0.9, "complex" to 0.1)),
+                    )))
                 }
                 request.url.host == "api.typesafe.ai" -> {
                     classifications.add(payload)
@@ -357,6 +366,7 @@ private class VoiceMemoryRemote {
                 }
                 path.endsWith("/recall") -> {
                     recalls += path
+                    order += "recall"
                     restJsonMapper.writeValueAsString(mapOf("results" to listOfNotNull(
                         recalled[path.substringAfter("/banks/").substringBefore('/')]?.let { mapOf("id" to "fact", "text" to it) },
                     )))

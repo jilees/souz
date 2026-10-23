@@ -60,14 +60,23 @@ class JevClient(
         state: JsonNode,
         instructions: String,
         options: Map<String, String>,
-    ): Map<String, Double> {
-        val answer = request(state, mapOf(CHOICE_QUESTION to JevQuestion(instructions, "choice", options)))
-            .path(CHOICE_QUESTION)
-        val probabilities = answer.path("probabilities")
-        check(answer.path("type").asText() == "choice" && options.keys.all { probabilities.path(it).isProbability() }) {
-            "Jev response contains a missing or invalid choice answer"
+    ): Map<String, Double> = choose(state, mapOf(CHOICE_QUESTION to JevChoiceQuestion(instructions, options)))
+        .getValue(CHOICE_QUESTION)
+
+    /** Independent choice questions share one HTTP request and the same untrusted state. */
+    suspend fun choose(state: JsonNode, questions: Map<String, JevChoiceQuestion>): Map<String, Map<String, Double>> {
+        if (questions.isEmpty()) return emptyMap()
+        val answers = request(state, questions.mapValues { (_, question) ->
+            JevQuestion(question.instructions, "choice", question.options)
+        })
+        return questions.mapValues { (name, question) ->
+            val answer = answers.path(name)
+            val probabilities = answer.path("probabilities")
+            check(answer.path("type").asText() == "choice" && question.options.keys.all { probabilities.path(it).isProbability() }) {
+                "Jev response contains a missing or invalid choice answer"
+            }
+            question.options.mapValues { (option, _) -> probabilities.path(option).asDouble() }
         }
-        return options.mapValues { (option, _) -> probabilities.path(option).asDouble() }
     }
 
     private suspend fun request(state: JsonNode, questions: Map<String, JevQuestion>): JsonNode {
@@ -114,6 +123,8 @@ class JevClient(
         return result.path("answers")
     }
 }
+
+data class JevChoiceQuestion(val instructions: String, val options: Map<String, String>)
 
 private fun JsonNode.isProbability(): Boolean = isNumber && asDouble() in 0.0..1.0
 
