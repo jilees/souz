@@ -16,7 +16,6 @@ import ru.souz.agent.nodes.NodesMCP
 import ru.souz.agent.nodes.NodesMemory
 import ru.souz.agent.nodes.NodesSkillInventory
 import ru.souz.agent.nodes.NodesToolUseWithKnowledge
-import ru.souz.agent.nodes.NodesSummarization
 import ru.souz.agent.runtime.AgentToolExecutor
 import ru.souz.agent.skills.registry.SkillRegistryRepository
 import ru.souz.agent.skills.SkillClassifier
@@ -35,6 +34,7 @@ fun agentDiModule(
     apiClassifierTag: Any? = null,
     localClassifierTag: Any? = null,
     graphSessionRepositoryTag: Any? = null,
+    fallbackClassifierTag: Any? = null,
 ): DI.Module = DI.Module("agent") {
     bindSingleton {
         graphSessionRepositoryTag
@@ -69,13 +69,13 @@ fun agentDiModule(
             skillBundleProvider = instance<SkillRegistryRepository>(),
             llmApi = instance(),
             skillClassifier = instanceOrNull<SkillClassifier>(),
+            fallbackSkillClassifier = fallbackClassifierTag?.let { instanceOrNull<SkillClassifier>(tag = it) },
         )
     }
     bindSingleton { NodesMemory(instance(), instance()) }
     bindSingleton { NodesLLM(instance(), instance()) }
     bindSingleton { NodesMCP(instance()) }
     bindSingleton { JsonUtils(restJsonMapper) }
-    bindSingleton { NodesSummarization(instance(), instance()) }
     bindSingleton {
         NodesClassification(
             logObjectMapper = instance<ObjectMapper>(tag = logObjectMapperTag),
@@ -83,6 +83,7 @@ fun agentDiModule(
             localClassifier = instance<UserMessageClassifier>(tag = localClassifierTag),
             toolCatalog = instance(),
             toolsFilter = instance(),
+            fallbackClassifier = fallbackClassifierTag?.let { instanceOrNull<UserMessageClassifier>(tag = it) },
         )
     }
     bindSingleton {
@@ -103,7 +104,6 @@ fun agentDiModule(
             nodesCommon = instance(),
             nodesClassify = instance(),
             nodesErrorHandling = instance(),
-            nodesSummarization = instance(),
             nodesMCP = instance(),
             nodesSkillInventory = instance(),
             nodesToolUseWithKnowledge = instance(),
@@ -117,7 +117,6 @@ fun agentDiModule(
             nodesLLM = instance(),
             nodesCommon = instance(),
             nodesErrorHandling = instance(),
-            nodesSummarization = instance(),
             nodesMemory = instance(),
             nodesSkillInventory = instance(),
             nodesToolUseWithKnowledge = instance(),

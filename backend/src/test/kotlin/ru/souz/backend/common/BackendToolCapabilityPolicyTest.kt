@@ -11,7 +11,7 @@ import ru.souz.tool.web.ToolWebImageSearch
 
 class BackendToolCapabilityPolicyTest {
     @Test
-    fun `advertised names exclude unsafe tools and match default execution selection`() {
+    fun `advertised names exclude unsafe tools and include execution-bound tools`() {
         val names = BackendToolCapabilityPolicy.advertisedToolNames(processCatalog())
 
         assertFalse(ToolCategory.WEB_SEARCH in BackendToolCapabilityPolicy.safeCategories)
@@ -19,7 +19,6 @@ class BackendToolCapabilityPolicyTest {
             setOf("ReadFile", "ControlBrowser", "ListActiveChannels", "SendMessageToChannel", "ViewImage", "GenerateImage", PersonalityTool.NAME),
             names,
         )
-        assertEquals(names, executionToolNames(enabledToolNames = null))
     }
 
     @Test
@@ -53,7 +52,7 @@ class BackendToolCapabilityPolicyTest {
                 ToolCategory.CONFIG to listOf(PersonalityTool.NAME, "UnsafeLocalSettings"),
             ),
             enabledToolNames = enabledToolNames,
-        ).toolNames()
+        ).toolsByCategory.values.flatMap { it.keys }.toSet()
 
     private fun processCatalog(): AgentToolCatalog = TestToolCatalog(
         ToolCategory.FILES to listOf("ReadFile"),
@@ -62,6 +61,4 @@ class BackendToolCapabilityPolicyTest {
         ToolCategory.BROWSER to listOf("ControlBrowser"),
     )
 
-    private fun AgentToolCatalog.toolNames(): Set<String> =
-        toolsByCategory.values.flatMapTo(linkedSetOf()) { tools -> tools.keys }
 }

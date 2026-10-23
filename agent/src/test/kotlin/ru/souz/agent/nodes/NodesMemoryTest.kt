@@ -2,9 +2,6 @@
 
 package ru.souz.agent.nodes
 
-import io.mockk.coEvery
-import io.mockk.every
-import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -18,17 +15,12 @@ import org.kodein.di.direct
 import org.kodein.di.instance
 import ru.souz.agent.agentDiModule
 import ru.souz.agent.graph.GraphRuntime
-import ru.souz.agent.graph.Node
 import ru.souz.agent.graph.RetryPolicy
-import ru.souz.agent.graph.buildGraph
 import ru.souz.agent.runtime.AgentRuntimeEvent
 import ru.souz.agent.runtime.AgentRuntimeEventSink
-import ru.souz.agent.spi.AgentSettingsProvider
 import ru.souz.agent.state.AgentContext
 import ru.souz.agent.state.AgentSettings
 import ru.souz.llms.LLMMessageRole
-import ru.souz.llms.LLMChatAPI
-import ru.souz.llms.LLMException
 import ru.souz.llms.LLMRequest
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.LLMResponse
@@ -48,14 +40,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
-import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class NodesMemoryTest {
     @Test
-    fun `agent module wires memory runtime into recall with scoped metadata`() = runTest {
+    fun `agent module recalls scoped memory and emits its augmentation event`() = runTest {
         val memoryRuntime = RecordingMemoryRuntime(
-            retrievalResult = memoryResult("Relevant memory:\n- User prefers Kotlin"),
+            retrievalResult = memoryResult("Relevant memory:\n- User prefers Kotlin",
+                facts = listOf(MemoryPromptFact("fact-1", "user", 0.9f))),
         )
         val di = DI {
             bindSingleton<ConversationMemoryRuntime> { memoryRuntime }
@@ -63,6 +55,7 @@ class NodesMemoryTest {
             import(agentDiModule())
         }
         val nodesMemory: NodesMemory = di.direct.instance()
+        val events = mutableListOf<AgentRuntimeEvent>()
         val context = stringContext(
             input = "hello",
             meta = ToolInvocationMeta(
@@ -71,7 +64,9 @@ class NodesMemoryTest {
                 requestId = "request-1",
                 attributes = mapOf("voiceEmbeddingId" to "voice-1"),
             ),
-        )
+        ).copy(runtimeEventSink = object : AgentRuntimeEventSink {
+            override suspend fun emit(event: AgentRuntimeEvent) { events += event }
+        })
 
         val result = nodesMemory.recall().execute(context, graphRuntime())
 
@@ -85,6 +80,9 @@ class NodesMemoryTest {
         assertEquals(result.history.lastIndex - 1, result.history.indexOf(memory))
         assertEquals("souz_injected_memory", memory.name)
         assertTrue(memory.content.contains("User prefers Kotlin"))
+        val event = events.filterIsInstance<AgentRuntimeEvent.MemoryPromptAugmented>().single()
+        assertEquals("Relevant memory:\n- User prefers Kotlin", event.addedBlock)
+        assertEquals("fact-1", event.facts.single().factId)
     }
 
     @Test
@@ -103,14 +101,15 @@ class NodesMemoryTest {
                 ordinaryContext,
                 userAuthoredMemoryTags,
             ),
+            activeExchangeStartIndex = 3,
         )
         val firstTurn = nodesMemory.recall().execute(firstTurnContext, graphRuntime())
         memoryRuntime.retrievalResult = memoryResult("Relevant memory:\n- Fresh recall")
         val nextUserMessage = LLMRequest.Message(LLMMessageRole.user, "next question")
-        val nextTurnContext = stringContext("next question").copy(
-            history = firstTurn.history +
-                LLMRequest.Message(LLMMessageRole.assistant, "first answer") +
-                nextUserMessage,
+        val nextTurnContext = NodesPlain.inputToHistory().execute(
+            firstTurn.copy(input = nextUserMessage.content,
+                history = firstTurn.history + LLMRequest.Message(LLMMessageRole.assistant, "first answer")),
+            graphRuntime(),
         )
 
         val result = nodesMemory.recall().execute(nextTurnContext, graphRuntime())
@@ -124,6 +123,7 @@ class NodesMemoryTest {
             .single()
         assertTrue(injectedMemory.value.content.contains("Fresh recall"))
         assertEquals(result.history.lastIndex - 1, injectedMemory.index)
+        assertEquals(injectedMemory.index, result.activeExchangeStartIndex)
         assertEquals(nextUserMessage, result.history.last())
     }
 
@@ -131,7 +131,7 @@ class NodesMemoryTest {
     fun `disabled empty or failed recall removes stale memory and preserves client history`() = runTest {
         val clientMemory = LLMRequest.Message(LLMMessageRole.function, "Client recalled fact", name = "RunSkillCommand")
         val history = listOf("system".toSystemPromptMessage(), clientMemory, LLMRequest.Message(LLMMessageRole.user, "hello"))
-        val context = stringContext("hello").copy(history = listOf(memoryMessage("stale")) + history)
+        val context = stringContext("hello").copy(history = listOf(memoryMessage("stale")) + history, activeExchangeStartIndex = 3)
         listOf(
             false to RecordingMemoryRuntime(retrievalResult = memoryResult("Unwanted recall")),
             true to RecordingMemoryRuntime(),
@@ -142,31 +142,8 @@ class NodesMemoryTest {
 
             assertEquals(automaticRecall, memoryRuntime.retrievalRequest != null)
             assertEquals(history, result.history)
+            assertEquals(2, result.activeExchangeStartIndex)
         }
-    }
-
-    @Test
-    fun `recall emits augmentation event`() = runTest {
-        val memoryRuntime = RecordingMemoryRuntime(
-            retrievalResult = memoryResult(
-                block = "Relevant memory:\n- A fact",
-                facts = listOf(MemoryPromptFact("fact-1", "user", 0.9f)),
-            )
-        )
-        val events = mutableListOf<AgentRuntimeEvent>()
-        val context = stringContext("hello").copy(
-            runtimeEventSink = object : AgentRuntimeEventSink {
-                override suspend fun emit(event: AgentRuntimeEvent) {
-                    events += event
-                }
-            },
-        )
-
-        NodesMemory(memoryRuntime, backgroundScope).recall().execute(context, graphRuntime())
-
-        val event = events.filterIsInstance<AgentRuntimeEvent.MemoryPromptAugmented>().single()
-        assertEquals("Relevant memory:\n- A fact", event.addedBlock)
-        assertEquals("fact-1", event.facts.single().factId)
     }
 
     @Test
@@ -197,7 +174,7 @@ class NodesMemoryTest {
     }
 
     @Test
-    fun `finalization captures scoped turn after summary without blocking on capture`() = runTest {
+    fun `finalization captures scoped turn without blocking on capture`() = runTest {
         val captureGate = CompletableDeferred<Unit>()
         val memoryRuntime = RecordingMemoryRuntime(captureGate = captureGate)
         val nodesMemory = NodesMemory(memoryRuntime, backgroundScope)
@@ -211,19 +188,12 @@ class NodesMemoryTest {
                 "assistantMessageId" to "assistant-message-1",
             ),
         )
-        var summaryCompleted = false
-        val summary = summaryNode { ctx ->
-            summaryCompleted = true
-            ctx.map { "assistant response" }
-        }
-
         val result = withTimeout(1_000) {
-            nodesMemory.finalizeTurn(summary).execute(
+            nodesMemory.finalizeTurn().execute(
                 completedContext(userMessage = "hello", output = "assistant response", meta = meta),
                 graphRuntime(),
             )
         }
-        assertTrue(summaryCompleted)
         runCurrent()
         val captured = withTimeout(1_000) { memoryRuntime.captureStarted.await() }
 
@@ -244,79 +214,7 @@ class NodesMemoryTest {
     }
 
     @Test
-    fun `summary receives speaker labels and preserves speaker mode for following unknown inputs`() = runTest {
-        val api = mockk<LLMChatAPI> {
-            coEvery { message(any()) } answers {
-                val request = firstArg<LLMRequest.Chat>()
-                assertTrue(request.messages.any { it.content == "[souz_speaker id=\"voice-a\"]\nCall me Alice" })
-                assertTrue(request.messages.last().content.contains("сохраняй точный id"))
-                okResponse("voice-a: Alice")
-            }
-        }
-        val settings = mockk<AgentSettingsProvider> { every { summarizationContextSize } returns 1 }
-        val graph = buildGraph<LLMResponse.Chat.Ok, String> {
-            nodeInput.edgeTo(NodesSummarization(api, settings).summarize()).edgeTo(nodeFinish)
-        }
-        val context = completedContext("Call me Alice", "Okay")
-        val result = graph.start(context.copy(history = context.history.map {
-            if (it.role == LLMMessageRole.user) it.copy(name = "souz_speaker_voice-a") else it
-        }))
-        assertTrue(result.history.hasSpeakerContext())
-        assertEquals("souz_speaker_unknown", speakerMessageName(emptyMap(), result.history))
-    }
-
-    @Test
-    fun `summarization retries stay inside finalization and capture only after success`() = runTest {
-        for (succeeds in listOf(false, true)) {
-            var attempts = 0
-            val memoryRuntime = RecordingMemoryRuntime()
-            val api = mockk<LLMChatAPI> {
-                coEvery { message(any()) } answers {
-                    if (++attempts == 2 && succeeds) okResponse("summary")
-                    else LLMResponse.Chat.Error(503, "Provider failure")
-                }
-            }
-            val settings = mockk<AgentSettingsProvider> { every { summarizationContextSize } returns 1 }
-            val summary = NodesSummarization(api, settings).summarize()
-            val graph = buildGraph<LLMResponse.Chat.Ok, String> {
-                nodeInput.edgeTo(NodesMemory(memoryRuntime, backgroundScope).finalizeTurn(summary)).edgeTo(nodeFinish)
-            }
-
-            if (succeeds) {
-                assertEquals("answer", graph.start(completedContext("hello", "answer")).input)
-            } else {
-                assertFailsWith<LLMException> { graph.start(completedContext("hello", "answer")) }
-            }
-            runCurrent()
-            assertEquals(2, attempts)
-            assertEquals(if (succeeds) 1 else 0, memoryRuntime.capturedTurns.size)
-        }
-    }
-
-    @Test
-    fun `finalization executes summarization with the active graph runtime`() = runTest {
-        val nodesMemory = NodesMemory(NoopConversationMemoryRuntime, backgroundScope)
-        val runtime = graphRuntime()
-        var receivedRuntime: GraphRuntime? = null
-        val summary = object : Node<LLMResponse.Chat.Ok, String> {
-            override val name: String = "Summary"
-
-            override suspend fun execute(
-                ctx: AgentContext<LLMResponse.Chat.Ok>,
-                runtime: GraphRuntime,
-            ): AgentContext<String> {
-                receivedRuntime = runtime
-                return ctx.map { "answer" }
-            }
-        }
-
-        nodesMemory.finalizeTurn(summary).execute(completedContext("hello", "answer"), runtime)
-
-        assertSame(runtime, receivedRuntime)
-    }
-
-    @Test
-    fun `capture derives current-turn evidence before history compaction`() = runTest {
+    fun `capture derives evidence from the completed exchange`() = runTest {
         val memoryRuntime = RecordingMemoryRuntime()
         val nodesMemory = NodesMemory(memoryRuntime, backgroundScope)
         val finalOutput = "final answer"
@@ -341,14 +239,7 @@ class NodesMemoryTest {
             beforeFinal = listOf(toolCall, repeatedFinalText, toolOutput),
             response = finalResponse,
         )
-        val compactedSummary = LLMRequest.Message(LLMMessageRole.assistant, "Compacted working summary")
-        val summary = summaryNode { ctx ->
-            ctx.map(history = listOf("system".toSystemPromptMessage(), compactedSummary, ctx.history.last())) {
-                finalOutput
-            }
-        }
-
-        nodesMemory.finalizeTurn(summary).execute(context, graphRuntime())
+        nodesMemory.finalizeTurn().execute(context, graphRuntime())
         runCurrent()
         val evidence = withTimeout(1_000) { memoryRuntime.captureStarted.await() }.evidence
 
@@ -360,7 +251,6 @@ class NodesMemoryTest {
         assertEquals("ToolTelegramReadInbox", evidence[1].sourceName)
         assertTrue(evidence[1].text.contains("PR 564"))
         assertFalse(evidence.any { it.text == "old answer" })
-        assertFalse(evidence.any { it.text == "Compacted working summary" })
         assertFalse(evidence.any { it.text == "tool invocation" })
     }
 
@@ -382,7 +272,7 @@ class NodesMemoryTest {
         val context = completedContext("collect evidence", "done", beforeFinal = messages)
 
         NodesMemory(memoryRuntime, backgroundScope)
-            .finalizeTurn(summaryNode())
+            .finalizeTurn()
             .execute(context, graphRuntime())
         runCurrent()
         val evidence = withTimeout(1_000) { memoryRuntime.captureStarted.await() }.evidence
@@ -397,34 +287,12 @@ class NodesMemoryTest {
     }
 
     @Test
-    fun `failed or cancelled summarization does not schedule capture`() = runTest {
-        val failedRuntime = RecordingMemoryRuntime()
-        val cancelledRuntime = RecordingMemoryRuntime()
-        val context = completedContext("hello", "answer")
-
-        assertFailsWith<IllegalStateException> {
-            NodesMemory(failedRuntime, backgroundScope)
-                .finalizeTurn(summaryNode { error("summary failed") })
-                .execute(context, graphRuntime())
-        }
-        assertFailsWith<CancellationException> {
-            NodesMemory(cancelledRuntime, backgroundScope)
-                .finalizeTurn(summaryNode { throw CancellationException("cancelled") })
-                .execute(context, graphRuntime())
-        }
-        runCurrent()
-
-        assertTrue(failedRuntime.capturedTurns.isEmpty())
-        assertTrue(cancelledRuntime.capturedTurns.isEmpty())
-    }
-
-    @Test
     fun `capture failure is isolated and noop runtime does not dispatch`() = runTest {
         val failingRuntime = RecordingMemoryRuntime(captureFailure = IllegalStateException("capture failed"))
         val context = completedContext("hello", "answer")
 
         val result = NodesMemory(failingRuntime, backgroundScope)
-            .finalizeTurn(summaryNode())
+            .finalizeTurn()
             .execute(context, graphRuntime())
         runCurrent()
 
@@ -434,7 +302,7 @@ class NodesMemoryTest {
         val noopResult = NodesMemory(
             memoryRuntime = NoopConversationMemoryRuntime,
             captureScope = CoroutineScope(ThrowingDispatcher()),
-        ).finalizeTurn(summaryNode()).execute(context, graphRuntime())
+        ).finalizeTurn().execute(context, graphRuntime())
         assertEquals("answer", noopResult.input)
     }
 
@@ -451,6 +319,7 @@ class NodesMemoryTest {
         activeTools = emptyList(),
         systemPrompt = "system",
         toolInvocationMeta = meta,
+        activeExchangeStartIndex = 1,
     )
 
     private fun completedContext(
@@ -471,12 +340,6 @@ class NodesMemoryTest {
         systemPrompt = "system",
         toolInvocationMeta = meta,
     )
-
-    private fun summaryNode(
-        block: (AgentContext<LLMResponse.Chat.Ok>) -> AgentContext<String> = { ctx ->
-            ctx.map { ctx.input.choices.single().message.content }
-        },
-    ): Node<LLMResponse.Chat.Ok, String> = Node("Summary", op = block)
 
     private fun okResponse(content: String): LLMResponse.Chat.Ok = LLMResponse.Chat.Ok(
         choices = listOf(

@@ -4,9 +4,7 @@ import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.http.HttpStatusCode
-import io.ktor.websocket.Frame
 import io.ktor.websocket.close
-import io.ktor.websocket.readText
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals

@@ -5,6 +5,7 @@ import org.kodein.di.direct
 import org.kodein.di.instance
 import org.kodein.di.instanceOrNull
 import kotlinx.coroutines.runBlocking
+import ru.souz.backend.attachments.AttachmentCleanupWorker
 import ru.souz.backend.http.BackendHttpDependencies
 import ru.souz.backend.telegram.TelegramBotPollingService
 import ru.souz.backend.vk.VkBotPollingService
@@ -12,7 +13,6 @@ import ru.souz.backend.client.ClientThreadRecoveryService
 import ru.souz.backend.memory.hindsight.HistoryMemoryWorker
 import ru.souz.backend.scheduler.ScheduledTaskRunner
 import ru.souz.jobs.impl.PostgresJobService
-import ru.souz.backend.attachments.AttachmentCleanupWorker
 
 /** Process-wide backend runtime container with shared services and LLM resources. */
 class BackendRuntime private constructor(

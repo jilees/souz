@@ -6,6 +6,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
+import kotlin.time.Duration.Companion.milliseconds
 
 class AttachmentCleanupWorker(private val storage: AttachmentStorage) {
     fun start(scope: CoroutineScope) = scope.launch {
@@ -14,10 +15,12 @@ class AttachmentCleanupWorker(private val storage: AttachmentStorage) {
                 storage.cleanup()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                LoggerFactory.getLogger(AttachmentCleanupWorker::class.java).warn("Attachment cleanup iteration failed")
+            } catch (error: Exception) {
+                LoggerFactory.getLogger(AttachmentCleanupWorker::class.java).warn(
+                    "Attachment cleanup iteration failed: exceptionClass={}", error.javaClass.name,
+                )
             }
-            delay(60_000)
+            delay(60_000.milliseconds)
         }
     }
 }

@@ -1,5 +1,6 @@
 package ru.souz.backend.e2e
 
+import ru.souz.agent.spi.TaskComplexityClassifier
 import ru.souz.agent.skills.SkillClassifier
 
 import ru.souz.backend.execution.service.AgentExecutionLauncher
@@ -151,6 +152,7 @@ internal fun backendE2eTest(
     sandboxFactory: ((SettingsProvider) -> RuntimeSandboxFactory)? = null,
     skillOAuth: Boolean = false,
     attachments: ru.souz.backend.attachments.AttachmentStorageConfig? = null,
+    complexityClassifier: TaskComplexityClassifier? = null,
     block: suspend BackendE2eScope.() -> Unit,
 ) = testApplication {
     val backend = BackendE2eBackend(
@@ -172,6 +174,7 @@ internal fun backendE2eTest(
         llmLimits = llmLimits,
         sandboxFactory = sandboxFactory,
         attachments = attachments,
+        complexityClassifier = complexityClassifier,
     )
     application {
         backendApplication(backend.dependencies)
@@ -204,24 +207,25 @@ internal class BackendE2eScope(
     suspend fun readRawJson(session: DefaultClientWebSocketSession): JsonNode =
         json.readTree((session.incoming.receive() as Frame.Text).readText())
 
+    fun toolResultFrame(frame: JsonNode, status: String, result: Map<String, Any>): String =
+        json.writeValueAsString(mapOf(
+            "kind" to "tool.result", "chatId" to frame["chatId"].asText(), "threadId" to frame["threadId"].asText(),
+            "toolCallId" to frame["payload"]["toolCallId"].asText(), "status" to status,
+            (if (status == "succeeded") "result" else "error") to result,
+        ))
+
     private val personalityCalls = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
-    /** Unrelated workflows emulate the Orion settings handler; personality tests use readRawJson. */
+    // Emulate Orion's settings handler in unrelated workflows. Protocol tests read raw frames.
     suspend fun readJson(session: DefaultClientWebSocketSession): JsonNode {
         while (true) {
             val frame = readRawJson(session)
-            if (frame.path("payload").path("name").asText() == "prompt.personality.set") {
-                val id = frame["payload"]["toolCallId"].asText()
-                personalityCalls.add(id)
-                session.send(Frame.Text(json.writeValueAsString(mapOf(
-                    "kind" to "tool.result", "chatId" to frame["chatId"].asText(),
-                    "threadId" to frame["threadId"].asText(), "toolCallId" to id,
-                    "status" to "succeeded", "result" to mapOf("outcome" to "applied",
-                        "revision" to frame["payload"]["arguments"]["revision"].longValue()),
+            if (frame.path("payload").path("name").asText() == ru.souz.backend.personality.PERSONALITY_SYNC_COMMAND) {
+                personalityCalls.add(frame["payload"]["toolCallId"].asText())
+                session.send(Frame.Text(toolResultFrame(frame, "succeeded", mapOf(
+                    "outcome" to "applied", "revision" to frame["payload"]["arguments"]["revision"].longValue(),
                 ))))
-            } else if (!personalityCalls.contains(frame.path("toolCallId").asText())) {
-                return frame
-            }
+            } else if (frame.path("toolCallId").asText() !in personalityCalls) return frame
         }
     }
 
@@ -359,6 +363,7 @@ internal class BackendE2eBackend(
     private val llmLimits: BackendLlmLimits = BackendLlmLimits(),
     private val sandboxFactory: ((SettingsProvider) -> RuntimeSandboxFactory)? = null,
     attachments: ru.souz.backend.attachments.AttachmentStorageConfig? = null,
+    private val complexityClassifier: TaskComplexityClassifier? = null,
 ) : AutoCloseable {
     private val appConfig: BackendAppConfig = postgresAppConfig(
         schema = schema,
@@ -412,6 +417,9 @@ internal class BackendE2eBackend(
         }
         if (turnRunnerOverride != null) {
             bindSingleton<BackendConversationTurnRunner>(overrides = true) { turnRunnerOverride }
+        }
+        if (complexityClassifier != null) {
+            bindSingleton<TaskComplexityClassifier>(overrides = true) { complexityClassifier }
         }
     }
 

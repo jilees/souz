@@ -17,25 +17,18 @@ internal fun toolImageDataUrl(bytes: ByteArray): String {
     return "data:$mime;base64," + Base64.getEncoder().encodeToString(bytes)
 }
 
-internal fun InputStream.readAttachmentBytes(limit: Int): ByteArray {
-    val bytes = readNBytes(limit + 1)
-    if (bytes.size > limit) throw AttachmentException("attachment_too_large")
-    return bytes
+internal fun InputStream.readAttachmentBytes(limit: Int): ByteArray = readNBytes(limit + 1).also {
+    if (it.size > limit) throw AttachmentException("attachment_too_large")
 }
 
 internal fun attachmentName(raw: String): String = raw.substringAfterLast('/').substringAfterLast('\\')
     .filterNot { it.isISOControl() }.trim().take(180).dropLastWhile { it.isHighSurrogate() }
-    .takeUnless { it.isBlank() || it in setOf(".", "..") }
-    ?: "attachment"
+    .takeUnless { it.isBlank() || it == "." || it == ".." } ?: "attachment"
 
 internal fun attachmentMime(bytes: ByteArray, name: String): String {
     val detected = tika.detect(bytes)
-    // Filename only refines already-detected text; it cannot turn executable bytes into a document.
-    return when {
-        detected == "text/plain" && name.endsWith(".md", ignoreCase = true) -> "text/markdown"
-        detected == "application/ogg" && bytes.take(256).toByteArray().toString(Charsets.ISO_8859_1).contains("OpusHead") -> "audio/ogg"
-        else -> detected
-    }
+    // A filename may refine text, but cannot disguise binary content as a document.
+    return if (detected == "text/plain" && name.endsWith(".md", ignoreCase = true)) "text/markdown" else if (detected == "application/ogg" && bytes.take(256).toByteArray().toString(Charsets.ISO_8859_1).contains("OpusHead")) "audio/ogg" else detected
 }
 
 internal fun ByteArray.attachmentChecksum(): String = sha256Hex()

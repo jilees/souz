@@ -73,7 +73,7 @@ class BackendExecutionToolCatalogTest {
                     includeFewShotExamples = false,
                     metrics = metrics,
                 )
-                val helper = ToolInvokeSkill(catalog, RuntimePassThroughToolsFilter, { _, _ -> null }, mockk())
+                val helper = ToolInvokeSkill({ catalog }, RuntimePassThroughToolsFilter, { _, _ -> null }, mockk())
                 val executor = AgentToolExecutor(metrics.toolTelemetry(toolNames(catalog)))
                 val settings = AgentSettings("test", LlmProvider.OPENAI, 0f, catalog.toolsByCategory)
                 for ((index, delegated) in listOf(true, false).withIndex()) {
@@ -159,6 +159,7 @@ class BackendExecutionToolCatalogTest {
                 ToolCategory.FILES to listOf("ReadFile"),
                 ToolCategory.WEB_SEARCH to listOf("WebPageText", ToolWebImageSearch.NAME, "FutureWebTool"),
                 ToolCategory.BROWSER to listOf("ControlBrowser"),
+                ToolCategory.CONFIG to listOf("UnsafeConfig"),
             ),
             executionLlmToolCatalog = TestToolCatalog(
                 ToolCategory.WEB_SEARCH to listOf("InternetSearch", "InternetResearch"),

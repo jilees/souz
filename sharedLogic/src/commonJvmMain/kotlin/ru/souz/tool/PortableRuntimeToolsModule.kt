@@ -32,7 +32,6 @@ import ru.souz.tool.files.ToolListFiles
 import ru.souz.tool.files.ToolModifyFile
 import ru.souz.tool.files.ToolMoveFile
 import ru.souz.tool.files.ToolNewFile
-import ru.souz.tool.files.ToolReadFile
 import ru.souz.tool.math.ToolCalculator
 import ru.souz.tool.knowledge.KnowledgeRetriever
 import ru.souz.tool.knowledge.ToolGetKnowledge
@@ -64,7 +63,6 @@ fun portableRuntimeToolsDiModule(
     bindSingleton { FilesToolUtil(instance<ToolInvocationRuntimeSandboxResolver>()) }
 
     bindSingleton { ToolListFiles(instance()) }
-    bindSingleton { ToolReadFile(instance()) }
     bindSingleton { ToolFindInFiles(instance()) }
     bindSingleton { ToolNewFile(instance()) }
     bindSingleton { ToolDeleteFile(instance(), instanceOrNull<ToolPermissionBroker>()) }
@@ -95,7 +93,6 @@ fun DI.Builder.bindPortableRuntimeToolsFactory(
         val gateway = if (includeSkillOAuthTools) instanceOrNull<SkillOAuthGateway>() else null
         PortableRuntimeToolsFactory(
             toolListFiles = instance(),
-            toolReadFile = instance(),
             toolFindInFiles = instance(),
             toolNewFile = instance(),
             toolDeleteFile = instance(),
@@ -157,7 +154,7 @@ fun portableSkillToolsDiModule(): DI.Module = DI.Module("portableSkillTools") {
                     telemetry = instanceOrNull<AgentTelemetry>() ?: AgentTelemetry.NONE,
                 )
             },
-            toolCatalog = instance(),
+            catalogProvider = { instance() },
             toolsFilter = instance(),
             skillBundleProvider = instance<SkillRegistryRepository>(),
             commandExecutor = instance(),
@@ -167,7 +164,7 @@ fun portableSkillToolsDiModule(): DI.Module = DI.Module("portableSkillTools") {
     }
     bindSingleton {
         ToolGetSkillByName(
-            toolCatalog = instance(),
+            catalogProvider = { instance() },
             toolsFilter = instance(),
             skillBundleProvider = instance<SkillRegistryRepository>(),
             approvalGate = instanceOrNull<SkillApprovalGate>(),
@@ -175,7 +172,7 @@ fun portableSkillToolsDiModule(): DI.Module = DI.Module("portableSkillTools") {
     }
     bindSingleton {
         ToolGetSkillsNamesByCategory(
-            toolCatalog = instance(),
+            catalogProvider = { instance() },
             toolsFilter = instance(),
         )
     }
@@ -187,7 +184,7 @@ fun portableSkillToolsDiModule(): DI.Module = DI.Module("portableSkillTools") {
     }
     bindSingleton {
         ToolInvokeSkill(
-            toolCatalog = instance(),
+            catalogProvider = { instance() },
             toolsFilter = instance(),
             loadBundle = instance<SkillRegistryRepository>()::loadSkillBundle,
             commandExecutor = instance(),
@@ -224,7 +221,6 @@ object RuntimePassThroughToolsFilter : AgentToolsFilter {
 
 class PortableRuntimeToolsFactory(
     private val toolListFiles: ToolListFiles,
-    private val toolReadFile: ToolReadFile,
     private val toolFindInFiles: ToolFindInFiles,
     private val toolNewFile: ToolNewFile,
     private val toolDeleteFile: ToolDeleteFile,
@@ -241,7 +237,6 @@ class PortableRuntimeToolsFactory(
         mapOf(
             ToolCategory.FILES to listOf(
                 toolListFiles.toGiga(),
-                toolReadFile.toGiga(),
                 toolFindInFiles.toGiga(),
                 toolNewFile.toGiga(),
                 toolDeleteFile.toGiga(),

@@ -54,7 +54,7 @@ object BackendToolCapabilityPolicy {
         )
     }
 
-    /** The hostable view of a compiled catalog: safe categories only. */
+    /** The hostable view of a compiled catalog: safe categories and the named personality tool. */
     private fun hostableTools(catalog: AgentToolCatalog, allow: (String) -> Boolean = { true }): AgentToolCatalog =
         catalog.filter { category, tool ->
             allow(tool.fn.name) && (category in safeCategories ||

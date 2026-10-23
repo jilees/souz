@@ -20,9 +20,9 @@ import org.kodein.di.DI
 import org.kodein.di.bindSingleton
 import org.kodein.di.instance
 import org.kodein.di.instanceOrNull
+import ru.souz.backend.client.LiveClientToolDispatcher
 import ru.souz.backend.metrics.BackendMetrics
 import ru.souz.agent.knowledge.ConversationKnowledgeStore
-import ru.souz.backend.client.LiveClientToolDispatcher
 import ru.souz.backend.personality.PersonalitySync
 import ru.souz.backend.hooks.HookDefinitions
 import ru.souz.backend.hooks.HookService
@@ -62,6 +62,8 @@ import ru.souz.backend.client.repository.ClientRequestRepository
 import ru.souz.backend.config.NamedLlmConfig
 import ru.souz.backend.config.SystemBackendConfigSource
 import ru.souz.backend.config.loadNamedModels
+import ru.souz.agent.spi.TaskComplexityClassifier
+import ru.souz.llms.runtime.JevClassifier
 import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.options.repository.OptionRepository
 import ru.souz.backend.options.service.OptionService
@@ -113,6 +115,8 @@ import ru.souz.llms.local.LocalProviderAvailability
 import ru.souz.llms.giga.toGiga
 import ru.souz.memory.ConversationMemoryRuntime
 import ru.souz.memory.NoopConversationMemoryRuntime
+import ru.souz.agent.skills.SkillClassifier
+import ru.souz.runtime.di.FRIDA_FALLBACK_TAG
 import ru.souz.runtime.di.runtimeCoreDiModule
 import ru.souz.runtime.di.runtimeLocalLlmDiModule
 import ru.souz.runtime.di.runtimeProviderHttpDiModule
@@ -319,11 +323,11 @@ fun backendDiModule(
     }
     bindSingleton {
         BackendClientSkills(
+            liveTools = instance(),
             registry = instance(),
             toolCallRepository = instance(),
             eventService = instance(),
             channelDeliveryService = instance(),
-            dispatcher = instance(),
             metrics = instance(),
         )
     }
@@ -349,13 +353,20 @@ fun backendDiModule(
                 ru.souz.backend.memory.hindsight.VoiceMemoryRouting { instance<ru.souz.jev.JevClient>() })
         }
     }
+    bindSingleton<TaskComplexityClassifier> { JevClassifier(instance()) }
     bindSingleton {
         BackendConversationRuntimeFactory(
+            userSettingsRepository = instance(),
+            personalitySync = instance(),
             namedModels = instance<NamedLlmConfig>().models,
             attachmentInput = instanceOrNull(),
             skillClassifier = instance(),
+            fallbackSkillClassifier = instanceOrNull<SkillClassifier>(tag = FRIDA_FALLBACK_TAG),
+            // Routing needs Jev: a configured routing block without JEV_TOKEN fails at startup.
+            complexityClassifier = instance<NamedLlmConfig>().routing?.let { instance<TaskComplexityClassifier>() },
             baseSettingsProvider = instance(),
             credentialResolver = instance(),
+            effectiveSettingsResolver = instance(),
             retryPolicy = appConfig.providerRetryPolicy,
             providerHttpClients = instance(),
             localChatApi = instance<LocalChatAPI>(),
@@ -383,14 +394,13 @@ fun backendDiModule(
             hookStore = instance(),
             executionQuotas = instance(),
             metrics = instance(),
-            userSettingsRepository = instance(),
-            personalitySync = instance(),
         )
     }
     bindSingleton {
         AgentExecutionRequestFactory(
             effectiveSettingsResolver = instance(),
             clientThreadRegistry = instance(),
+            modelRouting = instance<NamedLlmConfig>().routing,
         )
     }
     bindSingleton<BackendConversationTurnRunner> {
@@ -619,6 +629,7 @@ fun backendDiModule(
         val settingsResolver = instance<EffectiveSettingsResolver>()
         val userRepository = instance<UserRepository>()
         BackendHttpDependencies(
+            personalitySync = instance(),
             bootstrapService = instance(),
             metrics = instance(),
             skillOAuthGatewayImpl = if (skillOAuthConfig != null) instance() else null,
@@ -631,7 +642,6 @@ fun backendDiModule(
             optionService = instance(),
             eventService = instance(),
             publicClientService = instance(),
-            personalitySync = instance(),
             hookService = instance(),
             telegramBotBindingService = if (featureFlags.telegramBot) instance() else null,
             vkBotBindingService = if (featureFlags.vkBot) instance() else null,

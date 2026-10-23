@@ -2,7 +2,11 @@
 
 Souz is a Kotlin Multiplatform AI assistant with desktop and backend hosts over shared agent and runtime modules.
 
-Backend client Skills are bundled under `backend/src/main/resources/skills/client/` and provide defaults for chats without tool declarations; nonempty declarations define that chat's tools and input schemas.
+Backend client Skills are bundled under `backend/src/main/resources/skills/client/`. Orion command tools come from chat declarations or discovery. Chat declarations override matching defaults; discovered Orion tools override both and remain bound to their supplying channel until refreshed in that conversation.
+
+Backend uses one startup-validated `CONTEXT_SIZE` (minimum 24,000 tokens) for all models, including summaries. Compaction and input validation share an 80% limit independent of output limits; context size is not a user or execution setting.
+
+Backend [personality settings](backend/docs/personality-settings.md) are separate from system prompts and synchronize revisioned snapshots to Orion.
 
 - Read and maintain this file before changing the repository. Before editing a module, read its linked `AGENTS.md`, any applicable nested instructions, and relevant topics linked in its `Pain points` section.
 - Keep runtime documentation and `docs/public-souz-contract/` concise and current-state only. Do not write change-history phrases such as “now we do”.
@@ -72,7 +76,7 @@ Only these direct production project dependencies are allowed. Standard test-sou
 - [Channel attachments](docs/channel-attachments.md) use owner-scoped private S3 storage and explicit file selection for Telegram/VK replies.
 - The Docker runtime provides a per-user browser and explicit Skill environment forwarding; see [the runtime guide](docs/backend-docker-sandbox-rollout.md).
 - [Scheduled tasks](backend/docs/scheduled-tasks.md) use the backend's PostgreSQL-backed JobService.
-- [User personality](docs/personality-settings.md) is independent of the system prompt and synchronizes to Orion.
+- [User personality](backend/docs/personality-settings.md) is independent of the system prompt and synchronizes to Orion.
 
 ## Verification
 
@@ -88,4 +92,4 @@ Only these direct production project dependencies are allowed. Standard test-sou
 
 ## User file storage
 
-- [User file storage](docs/s3-storage.md) provides one private, operator-provisioned S3 bucket and ownership-scoped file access. Read [storage invariants](docs/pain-points.md) before changing it.
+- [User file storage](backend/docs/s3-storage.md) provides one private, operator-provisioned S3 bucket and ownership-scoped file access. Read [storage invariants](docs/pain-points.md) before changing it.

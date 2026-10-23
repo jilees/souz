@@ -261,7 +261,10 @@ internal class PublicClientConnection(
             start = CoroutineStart.UNDISPATCHED,
         ) {
             try {
-                stream.forwardPublicEvents(replayDone, onDrop = { deps.metrics.dropped(it) }) { event ->
+                stream.forwardPublicEvents(onReplayComplete = {
+                    replayDone.complete(Unit)
+                    launch { deps.personalitySync.connected(chat) }
+                }, onDrop = { deps.metrics.dropped(it) }) { event ->
                     withBackendLogContext(
                         "threadId" to event.executionId, "seq" to event.seq, "type" to event.type.value,
                         "toolCallId" to (event.payload as? PublicToolCallStartedPayload)?.toolCallId,
@@ -286,11 +289,6 @@ internal class PublicClientConnection(
                 withContext(NonCancellable) { stream.close() }
                 socketLogger.info("WebSocket subscription closed")
             }
-        }
-        // The stream is registered before reading settings: concurrent saves cannot fall into a gap.
-        // Run separately so the receive loop can accept tool.result while synchronization awaits it.
-        scope.launch(backendLogContext("socketId" to socketId, "userId" to chat.userId, "chatId" to chat.id)) {
-            deps.personalitySync.connected(chat)
         }
         return replayDone
     }
@@ -345,7 +343,7 @@ internal class PublicClientConnection(
 // Drop accounting is synchronous; cancellation and send failures immediately propagate.
 @Suppress("SuspendFunSwallowedCancellation")
 internal suspend fun AgentEventStream.forwardPublicEvents(
-    replayDone: CompletableDeferred<Unit>,
+    onReplayComplete: () -> Unit = {},
     onDrop: (String) -> Unit = {},
     send: suspend (AgentEventEnvelope) -> Unit,
 ) {
@@ -358,12 +356,9 @@ internal suspend fun AgentEventStream.forwardPublicEvents(
             }
         }
     }
-    try {
-        sendDurableEvents(replay)
-        sendDurableEvents(replayAfter(lastSeq))
-    } finally {
-        replayDone.complete(Unit)
-    }
+    sendDurableEvents(replay)
+    sendDurableEvents(replayAfter(lastSeq))
+    onReplayComplete()
     while (true) {
         val event = receiveLive() ?: break
         try {

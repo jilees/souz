@@ -1,12 +1,12 @@
 package ru.souz.backend.agent.model
 
+import ru.souz.agent.spi.ModelRouting
 
 /** Internal request model for one chat-oriented backend agent turn. */
 internal data class BackendConversationTurnRequest(
     val prompt: String,
     val model: String,
     val reasoningEffort: String? = null,
-    val contextSize: Int,
     val locale: String,
     val timeZone: String,
     val executionId: String? = null,
@@ -22,4 +22,6 @@ internal data class BackendConversationTurnRequest(
     val clientToolsEnabled: Boolean = false,
     val narrateSteps: Boolean = false,
     val attachments: List<ru.souz.llms.FileContent> = emptyList(),
+    /** Set only for a new turn that may be routed by complexity. */
+    val routing: ModelRouting? = null,
 )

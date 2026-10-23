@@ -1,18 +1,17 @@
 package ru.souz.backend.attachments
 
 import java.net.URI
+import java.net.URISyntaxException
 import ru.souz.backend.config.BackendConfigSource
 
-/** Optional backend-owned S3 connection; secrets must never appear in diagnostics. */
 class AttachmentStorageConfig(
     val endpoint: String,
-    val region: String = "us-east-1",
     val bucket: String,
     val accessKey: String,
     val secretKey: String,
-    val maxFileBytes: Int = 20_000_000,
+    val region: String = "us-east-1",
     val pathStyleAccess: Boolean = true,
-    // Shared concurrency limit for saves and reads.
+    val maxFileBytes: Int = 20_000_000,
     val maxConcurrentUploads: Int = 16,
     val imageRoutes: Set<String> = setOf("CODEX::gpt-6.1-sol", "CODEX::gpt-6-sol", "CODEX::gpt-5.6-sol"),
     val visionModel: String? = null,
@@ -33,7 +32,8 @@ class AttachmentStorageConfig(
                 media.rawQuery == null && media.rawFragment == null) { "Invalid attachment media endpoint." }
         }
         require(ttsVoice in setOf("joy", "sber", "afina", "eva")) { "Invalid Orion voice." }
-        val uri = try { URI(endpoint) } catch (_: java.net.URISyntaxException) {
+
+        val uri = try { URI(endpoint) } catch (_: URISyntaxException) {
             throw IllegalArgumentException("Invalid attachment S3 endpoint.")
         }
         require(uri.scheme in setOf("http", "https") && uri.host != null && uri.rawUserInfo == null &&
@@ -47,26 +47,26 @@ class AttachmentStorageConfig(
             "Invalid attachment bucket name."
         }
         require(maxFileBytes in 1..100_000_000) { "Attachment file limit must be between 1 and 100000000 bytes." }
-        require(maxConcurrentUploads in 1..1_000) { "Attachment concurrent upload limit must be between 1 and 1000." }
+        require(maxConcurrentUploads in 1..1_000) { "Attachment transfer concurrency must be between 1 and 1000." }
     }
 
     override fun toString(): String = "AttachmentStorageConfig(configured=true)"
 
     companion object {
         fun load(source: BackendConfigSource): AttachmentStorageConfig? {
-            fun value(suffix: String) = source.value("SOUZ_ATTACHMENTS_$suffix", "souz.attachments.${suffix.lowercase()}")
+            fun value(key: String) = source.value("SOUZ_ATTACHMENTS_$key", "souz.attachments.${key.lowercase()}")
                 ?.trim()?.takeIf(String::isNotEmpty)
-            fun <T : Any> parsed(suffix: String, default: T, error: String, parse: (String) -> T?): T =
-                value(suffix)?.let { requireNotNull(parse(it)) { error } } ?: default
-            val endpoint = value("S3_ENDPOINT") ?: return null
+            fun required(key: String) = requireNotNull(value(key)) { "Attachment $key is required." }
+            fun <T : Any> parsed(key: String, default: T, parse: (String) -> T?): T =
+                value(key)?.let { requireNotNull(parse(it)) { "Invalid attachment $key." } } ?: default
             return AttachmentStorageConfig(
-                endpoint = endpoint,
+                endpoint = value("S3_ENDPOINT") ?: return null,
+                bucket = required("S3_BUCKET"),
+                accessKey = required("S3_ACCESS_KEY"),
+                secretKey = required("S3_SECRET_KEY"),
                 region = value("S3_REGION") ?: "us-east-1",
-                bucket = requireNotNull(value("S3_BUCKET")) { "Attachment S3 bucket is required." },
-                accessKey = requireNotNull(value("S3_ACCESS_KEY")) { "Attachment S3 access key is required." },
-                secretKey = requireNotNull(value("S3_SECRET_KEY")) { "Attachment S3 secret key is required." },
-                maxFileBytes = parsed("MAX_FILE_BYTES", 20_000_000, "Invalid attachment file limit.", String::toIntOrNull),
-                pathStyleAccess = parsed("S3_PATH_STYLE", true, "Invalid attachment S3 path-style flag.", String::toBooleanStrictOrNull),
+                pathStyleAccess = parsed("S3_PATH_STYLE", true, String::toBooleanStrictOrNull),
+                maxFileBytes = parsed("MAX_FILE_BYTES", 20_000_000, String::toIntOrNull),
                 imageRoutes = value("VISION_ROUTES")?.split(',')?.map(String::trim)?.filter(String::isNotEmpty)?.toSet()
                     ?: setOf("CODEX::gpt-6.1-sol", "CODEX::gpt-6-sol", "CODEX::gpt-5.6-sol"),
                 visionModel = value("VISION_MODEL"),
@@ -78,7 +78,7 @@ class AttachmentStorageConfig(
                 imageProvider = value("IMAGE_PROVIDER") ?: "OPENAI",
                 ttsEndpoint = value("TTS_ENDPOINT"),
                 ttsVoice = value("TTS_VOICE") ?: "joy",
-                maxConcurrentUploads = parsed("MAX_CONCURRENT_UPLOADS", 16, "Invalid attachment concurrent upload limit.", String::toIntOrNull),
+                maxConcurrentUploads = parsed("MAX_CONCURRENT_UPLOADS", 16, String::toIntOrNull),
             )
         }
     }

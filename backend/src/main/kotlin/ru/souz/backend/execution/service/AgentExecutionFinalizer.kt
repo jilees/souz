@@ -141,6 +141,7 @@ internal class AgentExecutionFinalizer(
             output = (outcome as? BackendConversationTurnOutcome.Completed)?.output,
             assistantMessageId = eventSink.finalAssistantMessageId,
             attachments = (outcome as? BackendConversationTurnOutcome.Completed)?.attachments.orEmpty(),
+            routedModel = outcome.routedModel,
         ) ?: run {
             val current = currentExecution(execution.id, execution.userId, execution.chatId)
             if (current.cancelRequested || current.status == AgentExecutionStatus.CANCELLING) {

@@ -2,20 +2,17 @@ package ru.souz.backend.attachments
 
 import java.io.InputStream
 import java.time.Clock
-import java.time.Duration
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
+import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.souz.backend.crypto.sha256Hex
 import ru.souz.backend.storage.postgres.PostgresAttachmentRepository
+import software.amazon.awssdk.services.s3.model.S3Exception
 
 class AttachmentStorage(
     private val config: AttachmentStorageConfig,
@@ -23,79 +20,59 @@ class AttachmentStorage(
     private val objects: S3AttachmentObjects,
     private val clock: Clock,
 ) {
-    // Shared cap on active saves/reads, not a heap budget: buffering may copy bytes,
-    // and callers can retain returned read arrays after the permit is released.
-    private val transferSlots = Semaphore(config.maxConcurrentUploads)
+    // Limits active transfers, not total heap: callers can retain returned arrays.
+    private val transfers = Semaphore(config.maxConcurrentUploads)
 
-    suspend fun save(userId: String, sourceKey: String, name: String, input: InputStream): StoredAttachment =
-        transferSlots.withPermit { saveWithinLimit(userId, sourceKey, name, input) }
-
-    private suspend fun saveWithinLimit(userId: String, sourceKey: String, name: String, input: InputStream): StoredAttachment {
+    suspend fun save(userId: String, sourceKey: String, name: String, input: InputStream): StoredAttachment = transfers.withPermit {
         require(userId.isNotBlank() && sourceKey.isNotBlank() && sourceKey.length <= 512)
         val bytes = runInterruptible(Dispatchers.IO) { input.use { it.readAttachmentBytes(config.maxFileBytes) } }
         val safeName = attachmentName(name)
-        val mime = attachmentMime(bytes, safeName)
-        val file = repository.reserve(userId, sourceKey, safeName, mime, bytes.size.toLong(), bytes.sha256Hex(), clock.instant())
-        if (file.state == "ready") return available(file)
-        if (file.state != "pending" || !file.createdAt.plus(Duration.ofHours(24)).isAfter(clock.instant())) {
-            throw AttachmentException("attachment_expired")
-        }
-        currentCoroutineContext().ensureActive()
-        var committed = false
-        try {
-            objects.put(file, bytes)
-            val completed = repository.complete(file, clock.instant())
-            if (completed.state != "ready") {
-                repository.retireLateWrite(file)
-                objects.delete(file)
-                throw AttachmentException("attachment_expired")
-            }
-            return get(userId, completed.id).also { committed = true }
-        } finally {
-            // A cancelled/late writer may finish after cleanup has already left a tombstone.
-            // Keep the late object eligible for another cleanup attempt.
-            if (!committed) withContext(NonCancellable) {
-                try { repository.retireLateWrite(file) }
-                catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { logger.warn("Late attachment write cleanup scheduling failed for file {}", file.id) }
-            }
-        }
+        val file = repository.reserve(userId, sourceKey, safeName, attachmentMime(bytes, safeName),
+            bytes.size.toLong(), bytes.sha256Hex(), clock.instant())
+        if (file.state == "ready") return@withPermit available(file)
+        // Failed/canceled uploads stay pending until their cleanup deadline; PUT is never resumed.
+        objects.put(file, bytes)
+        available(repository.complete(file, clock.instant()))
     }
 
-    suspend fun get(userId: String, id: UUID): StoredAttachment {
-        return available(repository.get(userId, id) ?: throw AttachmentException("attachment_not_found"))
-    }
+    suspend fun get(userId: String, id: UUID): StoredAttachment =
+        available(repository.get(userId, id) ?: throw AttachmentException("attachment_not_found"))
 
-    suspend fun find(userId: String, sourceKey: String): StoredAttachment? {
-        return repository.find(userId, sourceKey)?.let(::available)
-    }
+    suspend fun find(userId: String, sourceKey: String): StoredAttachment? =
+        repository.find(userId, sourceKey)?.let(::available)
 
-    suspend fun read(userId: String, id: UUID): ByteArray = transferSlots.withPermit {
+    suspend fun read(userId: String, id: UUID): ByteArray = transfers.withPermit {
         val file = get(userId, id)
-        val bytes = objects.read(file, config.maxFileBytes)
-        available(file)
-        bytes
+        objects.read(file).also { available(file) }
     }
 
     suspend fun cleanup(): Int {
         var removed = 0
-        for (file in repository.expire(clock.instant())) {
+        var failures = 0
+        // One row per claim, so each lease covers a single S3 deletion. Consecutive failures end the pass early,
+        // so an unavailable S3 costs a few attempts per worker delay instead of one per due row.
+        while (failures < ATTACHMENT_CLEANUP_CONSECUTIVE_FAILURE_LIMIT) {
+            val file = repository.claim(clock.instant()) ?: break
             try {
                 objects.delete(file)
-                repository.deleted(file)
+                repository.remove(file)
                 removed++
+                failures = 0
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                // Never log S3 exception messages: they can carry signed request details.
-                logger.warn("Attachment cleanup failed for file {}", file.id)
+            } catch (error: Exception) {
+                failures++
+                // Never log exception messages, response bodies or signed transport details.
+                val s3 = error as? S3Exception
+                logger.warn("Attachment cleanup failed for file {}: exceptionClass={}, statusCode={}, s3ErrorCode={}",
+                    file.id, error.javaClass.name, s3?.statusCode(), s3?.awsErrorDetails()?.errorCode())
             }
         }
         return removed
     }
 
     private fun available(file: StoredAttachment): StoredAttachment {
-        if (file.state in setOf("deleting", "deleted") || file.expiresAt?.isAfter(clock.instant()) == false) {
+        if (file.state == "deleting" || file.expiresAt?.isAfter(clock.instant()) == false) {
             throw AttachmentException("attachment_expired")
         }
         if (file.state != "ready") throw AttachmentException("attachment_not_ready")
@@ -103,6 +80,6 @@ class AttachmentStorage(
     }
 
     private companion object {
-        val logger = LoggerFactory.getLogger(AttachmentStorage::class.java)
+        val logger: Logger = LoggerFactory.getLogger(AttachmentStorage::class.java)
     }
 }

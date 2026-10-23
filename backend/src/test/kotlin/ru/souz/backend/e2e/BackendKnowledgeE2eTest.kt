@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import ru.souz.backend.config.BackendConfigSource
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.restJsonMapper
 
@@ -26,6 +27,11 @@ class BackendKnowledgeE2eTest {
         var searched = false
         backendE2eTest(
             schemaPrefix = "e2e_knowledge",
+            // Exercise Knowledge retention bounds with a server window large enough for this fixture.
+            settingsSource = object : BackendConfigSource {
+                override fun env(key: String): String? = if (key == "CONTEXT_SIZE") "524288" else null
+                override fun property(key: String): String? = null
+            },
             llm = E2eLlmApi { request ->
                 val result = request.messages.lastOrNull { it.role == LLMMessageRole.function }
                 when {

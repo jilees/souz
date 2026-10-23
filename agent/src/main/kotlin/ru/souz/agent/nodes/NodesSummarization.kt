@@ -2,87 +2,40 @@ package ru.souz.agent.nodes
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.slf4j.LoggerFactory
-import ru.souz.agent.graph.Node
-import ru.souz.agent.graph.buildGraph
-import ru.souz.agent.spi.AgentSettingsProvider
-import ru.souz.agent.state.AgentContext
-import ru.souz.llms.LLMMessageRole
+import ru.souz.llms.LLMChatAPI
 import ru.souz.llms.LLMException
+import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.LLMRequest
 import ru.souz.llms.LLMResponse
-import ru.souz.llms.LLMChatAPI
-import ru.souz.llms.toMessage
-import ru.souz.llms.toSystemPromptMessage
 
-/**
- * Nodes responsible for summarizing conversation history.
- */
-internal class NodesSummarization(
-    private val llmApi: LLMChatAPI,
-    private val settingsProvider: AgentSettingsProvider,
-) {
-    private val l = LoggerFactory.getLogger(NodesSummarization::class.java)
+/** Compacts only the completed prefix, preserving system instructions and the entire active exchange. */
+internal suspend fun LLMChatAPI.compactHistory(
+    request: LLMRequest.Chat,
+    activeExchangeStartIndex: Int,
+): List<LLMRequest.Message> {
+    val previous = request.messages.take(activeExchangeStartIndex)
+    if (previous.none { it.role != LLMMessageRole.system }) return request.messages
 
-    /**
-     * Summarizes the current history when it grows too large.
-     * Updates [AgentContext.history] and [AgentContext.input] based on summarization result.
-     */
-    fun summarize(
-        name: String = "Summarize or return",
-    ): Node<LLMResponse.Chat.Ok, String> = buildGraph(name) {
-        // nodes
-        val summarize: Node<LLMResponse.Chat.Ok, LLMResponse.Chat.Ok> = nodeSummarize()
-        val summaryToHistory: Node<LLMResponse.Chat.Ok, String> = summaryToHistory()
-        val respToString: Node<LLMResponse.Chat.Ok, String> = NodesPlain.responseToString()
-
-        // graph
-        nodeInput.edgeTo { ctx ->
-            val contextWindow = minOf(ctx.settings.contextSize, settingsProvider.summarizationContextSize ?: Int.MAX_VALUE)
-            if (ctx.historyIsTooBig(contextWindow)) summarize else respToString
-        }
-        summarize.edgeTo(summaryToHistory)
-        summaryToHistory.edgeTo(nodeFinish)
-        respToString.edgeTo(nodeFinish)
+    val body = request.copy(
+        messages = renderSpeakerContext(previous) + LLMRequest.Message(LLMMessageRole.user, SUMMARIZATION_PROMPT),
+        functions = emptyList(),
+        maxTokens = SUMMARIZATION_MAX_OUTPUT_TOKENS,
+        isSummarization = true,
+    )
+    // Keep history intact if the complete summary request cannot fit.
+    if (body.exceedsContextBudget(requireNotNull(request.contextSize))) return request.messages
+    val response = withContext(Dispatchers.IO) { message(body) }
+    if (response is LLMResponse.Chat.Error) throw LLMException(response)
+    val choice = (response as LLMResponse.Chat.Ok).choices.lastOrNull { it.message.content.isNotBlank() }
+        ?: throw LLMException(LLMResponse.Chat.Error(-1, "Summarization returned no text."))
+    if (choice.finishReason == LLMResponse.FinishReason.length) {
+        throw LLMException(LLMResponse.Chat.Error(-1, "Summarization reached its output limit."))
     }
-
-    /** Updates [AgentContext.input] based on [AgentContext.history]. */
-    private fun nodeSummarize(name: String = "llmSummarize"): Node<LLMResponse.Chat.Ok, LLMResponse.Chat.Ok> =
-        Node(name, retryable = true) { ctx ->
-            val summaryResponse: LLMResponse.Chat = withContext(Dispatchers.IO) {
-                val conversation = ctx.history + LLMRequest.Message(LLMMessageRole.user, SUMMARIZATION_PROMPT, name = "souz_summarization_request")
-                val request = ctx.toGigaRequest(conversation).copy(functions = emptyList(), isSummarization = true)
-                llmApi.message(request)
-            }
-
-            when (summaryResponse) {
-                is LLMResponse.Chat.Error -> throw LLMException(summaryResponse)
-                is LLMResponse.Chat.Ok -> ctx.map { summaryResponse }
-            }
-        }
-
-    private fun summaryToHistory(name: String = "summary->history"): Node<LLMResponse.Chat.Ok, String> =
-        Node(name) { ctx ->
-            val message = ctx.input.choices.mapNotNull { it.toMessage() }.last()
-            val retainedFiles = ctx.history.flatMap { it.files + it.replyFiles }.distinctBy { it.file }
-            val summary = message.copy(content = "$SUMMARIZATION_PREFIX:\n${message.content}", files = retainedFiles,
-                name = SPEAKER_SUMMARY_NAME.takeIf { ctx.history.hasSpeakerContext() })
-            val response = ctx.history.last()
-            l.info("Summarization\n\n{}", summary.content)
-            ctx.map(history = listOf(ctx.systemPrompt.toSystemPromptMessage(), summary, response)) { response.content }
-        }
-}
-
-private const val HISTORY_SUMMARIZE_THRESHOLD = 0.8
-
-private fun String.estimateTokenCount(): Int = (length + 3) / 4
-
-private fun AgentContext<*>.historyIsTooBig(
-    contextWindow: Int,
-    threshold: Double = HISTORY_SUMMARIZE_THRESHOLD,
-): Boolean {
-    val estimatedTokens = history.sumOf { it.content.estimateTokenCount() }
-    return estimatedTokens >= contextWindow * threshold
+    val summary = choice.message.content
+    val message = LLMRequest.Message(LLMMessageRole.assistant, "$SUMMARIZATION_PREFIX:\n$summary",
+        files = previous.flatMap { it.files + it.replyFiles }.distinctBy { it.file },
+        name = SPEAKER_SUMMARY_NAME.takeIf { previous.hasSpeakerContext() })
+    return previous.filter { it.role == LLMMessageRole.system } + message + request.messages.drop(activeExchangeStartIndex)
 }
 
 private const val SUMMARIZATION_PROMPT = """
@@ -120,7 +73,7 @@ private const val SUMMARIZATION_PROMPT = """
 ВАЖНО:
 - Не используй общие фразы ("мы искали файл"). Пиши конкретику ("мы искали файл 100 ошибок в го в папке /Downloads").
 - Сохраняй все пути к файлам и названия функций точно как в оригинале.
-- Если есть метки souz_speaker, сохраняй точный id рядом с каждым личным фактом и обращением. Не объединяй разных говорящих. Факты без подтверждённого id помечай unknown.
+- Для реплик с [souz_speaker id="..."] сохраняй точный id и относящиеся к нему факты; не смешивай личности говорящих.
 """
 
 private const val SUMMARIZATION_PREFIX = """

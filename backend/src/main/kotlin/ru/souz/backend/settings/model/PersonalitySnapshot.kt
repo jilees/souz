@@ -1,6 +1,5 @@
 package ru.souz.backend.settings.model
 
-/** A user-scoped, durable version; empty state retains its revision. */
 data class PersonalitySnapshot(val prompt: String? = null, val revision: Long = 1) {
     companion object {
         const val MAX_PROMPT_LENGTH = 16_384

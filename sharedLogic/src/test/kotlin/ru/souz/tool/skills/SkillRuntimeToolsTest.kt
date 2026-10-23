@@ -108,7 +108,7 @@ class SkillRuntimeToolsTest {
         val zeta = RecordingTool("zeta")
         val disabled = RecordingTool("disabled")
         val collision = RecordingTool("collision", description = "compiled collision")
-        val catalog = catalog(
+        var catalog = catalog(
             ToolCategory.FILES to listOf(zeta, disabled),
             ToolCategory.WEB_SEARCH to listOf(collision),
         )
@@ -122,7 +122,7 @@ class SkillRuntimeToolsTest {
             }
         }
 
-        val namesTool = getSkillsNamesByCategoryTool(catalog, filter)
+        val namesTool = ToolGetSkillsNamesByCategory({ catalog }, filter)
         val fileSkills = namesTool.call(mapOf("category" to ToolCategory.FILES.name))
         val webSkills = namesTool.call(mapOf("category" to ToolCategory.WEB_SEARCH.name))
         val unknownCategorySkills = namesTool.call(mapOf("category" to "UNKNOWN_CATEGORY"))
@@ -133,6 +133,8 @@ class SkillRuntimeToolsTest {
         assertTrue(fileSkills["error"].isNull)
         assertTrue(webSkills["error"].isNull)
         assertEquals("category_not_found", unknownCategorySkills["error"]["code"].asText())
+        catalog = catalog(ToolCategory.FILES to listOf(RecordingTool("discovered"), disabled))
+        assertEquals(listOf("discovered"), namesTool.call(mapOf("category" to "FILES"))["skillNames"].map { it.asText() })
     }
 
     @Test
@@ -297,7 +299,7 @@ class SkillRuntimeToolsTest {
         val approvedHash = SkillBundleHasher.hash(approved)
         val repository = repository(loaded)
         val compiled = RecordingTool("switch")
-        val catalog = catalog(ToolCategory.FILES to listOf(compiled))
+        var catalog = catalog(ToolCategory.FILES to listOf(compiled))
         var enabled = true
         val filter = TestToolsFilter { if (enabled) it else emptyMap() }
         val approval = mockk<SkillApprovalGate> {
@@ -306,8 +308,8 @@ class SkillRuntimeToolsTest {
         val commands = mockk<SkillCommandExecutor> {
             coEvery { execute(any(), any(), any(), any()) } returns SandboxCommandResult(0, "done", "", false)
         }
-        val discovery = getSkillByNameTool(repository, catalog, filter, approval)
-        val runner = ToolInvokeSkill(catalog, filter, repository::loadSkillBundle, commands, approval)
+        val discovery = ToolGetSkillByName({ catalog }, filter, repository, approval)
+        val runner = ToolInvokeSkill({ catalog }, filter, repository::loadSkillBundle, commands, approval)
         val meta = ToolInvocationMeta(USER_ID, "conversation")
         val lookup = mapOf("skillId" to " switch ")
         val arguments = lookup + ("arguments" to mapOf("script" to "pwd"))
@@ -316,6 +318,13 @@ class SkillRuntimeToolsTest {
         assertEquals("delegated-content", runner.invoke(LLMResponse.FunctionCall(runner.fn.name, arguments), meta).content)
         coVerify(exactly = 0) { repository.loadSkillBundle(any(), any()) }
         coVerify(exactly = 0) { approval.ensureApproved(any()) }
+
+        val replacement = RecordingTool("switch", description = "Discovered instructions.")
+        catalog = catalog(ToolCategory.FILES to listOf(replacement))
+        assertEquals("Discovered instructions.", discovery.call(lookup, meta)["skill"]["description"].asText())
+        runner.invoke(LLMResponse.FunctionCall(runner.fn.name, arguments), meta)
+        assertEquals(mapOf("script" to "pwd"), replacement.lastArguments)
+        assertEquals("switch", runner.delegatedToolName("switch"))
 
         enabled = false
         val detail = discovery.call(lookup, meta)
@@ -391,7 +400,7 @@ class SkillRuntimeToolsTest {
         val fileSkill = bundle("file-skill")
         val repository = repository(fileSkill)
         val runner = ToolInvokeSkill(
-            toolCatalog = catalog(),
+            catalogProvider = { catalog() },
             toolsFilter = TestToolsFilter(),
             loadBundle = repository::loadSkillBundle,
             commandExecutor = commandExecutor,
@@ -593,13 +602,13 @@ class SkillRuntimeToolsTest {
         assertFalse(
             catalog.toolsByCategory.values.any { tools -> tools.keys.any { it in coreToolNames } }
         )
-        val executionSettings = AgentSettings(LLMModel.Pro.alias, LLMModel.Pro.provider, 0.3f, catalog.toolsByCategory, 4096)
+        val executionSettings = AgentSettings(LLMModel.Pro.alias, LLMModel.Pro.provider, 0.3f, catalog.toolsByCategory, 16_000)
         val spawn = direct.instance<AgentCoreTools>().skillsTools(executionSettings).last()
         assertEquals(SubagentTool.NAME, spawn.fn.name)
         assertEquals("delegated result", spawn.call(mapOf("task" to "Isolated task"))["result"].asText())
         coVerify(exactly = 1) {
             llm.message(match {
-                it.model == LLMModel.Pro.alias && it.temperature == 0.3f && it.maxTokens == 4096 &&
+                it.model == LLMModel.Pro.alias && it.temperature == 0.3f && it.maxTokens == 4096 && it.contextSize == 16_000 &&
                     it.functions.isEmpty() && it.messages.last().content == "Isolated task"
             })
         }
@@ -634,7 +643,7 @@ class SkillRuntimeToolsTest {
         filter: AgentToolsFilter = TestToolsFilter(),
         approvalGate: SkillApprovalGate? = null,
     ): ToolGetSkillByName = ToolGetSkillByName(
-        toolCatalog = catalog,
+        catalogProvider = { catalog },
         toolsFilter = filter,
         skillBundleProvider = repository,
         approvalGate = approvalGate,
@@ -644,7 +653,7 @@ class SkillRuntimeToolsTest {
         catalog: AgentToolCatalog = catalog(),
         filter: AgentToolsFilter = TestToolsFilter(),
     ): ToolGetSkillsNamesByCategory = ToolGetSkillsNamesByCategory(
-        toolCatalog = catalog,
+        catalogProvider = { catalog },
         toolsFilter = filter,
     )
 
@@ -663,7 +672,7 @@ class SkillRuntimeToolsTest {
         filter: AgentToolsFilter = TestToolsFilter(),
         approvalGate: SkillApprovalGate? = null,
     ): ToolInvokeSkill = ToolInvokeSkill(
-        toolCatalog = catalog,
+        catalogProvider = { catalog },
         toolsFilter = filter,
         loadBundle = repository::loadSkillBundle,
         commandExecutor = SkillCommandExecutor(mockk(relaxed = true)),

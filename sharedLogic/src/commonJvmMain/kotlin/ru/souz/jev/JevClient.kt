@@ -1,5 +1,6 @@
 package ru.souz.jev
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.databind.JsonNode
 import io.ktor.client.HttpClient
@@ -22,8 +23,9 @@ import ru.souz.llms.restJsonMapper
 import kotlin.time.TimeSource
 
 private const val JEV_TIMEOUT = 2_000L
+private const val CHOICE_QUESTION = "choice"
 
-/** Reusable Noul evaluation; the caller owns the supplied HTTP client. */
+/** Reusable Noul and choice evaluation; the caller owns the supplied HTTP client. */
 class JevClient(
     private val client: HttpClient,
     private val token: String = System.getenv("JEV_TOKEN").orEmpty().trim(),
@@ -36,11 +38,39 @@ class JevClient(
         require(model.isNotBlank()) { "Jev model must not be blank" }
     }
 
+    /** Returns p(yes) by question name; [criteria] may describe a question's `true` and `false` sides. */
     suspend fun evaluate(
         state: JsonNode,
         questions: Map<String, String>,
+        criteria: Map<String, Map<String, String>> = emptyMap(),
     ): Map<String, Double> {
         if (questions.isEmpty()) return emptyMap()
+        val answers = request(state, questions.mapValues { JevQuestion(it.value, criteria = criteria[it.key]) })
+        return questions.mapValues { (name, _) ->
+            val answer = answers.path(name)
+            check(answer.path("type").asText() == "noul" && answer.path("noul").isProbability()) {
+                "Jev response contains a missing or invalid Noul answer"
+            }
+            answer.path("noul").asDouble()
+        }
+    }
+
+    /** Asks one choice question and returns the probability of every option by its key. */
+    suspend fun choose(
+        state: JsonNode,
+        instructions: String,
+        options: Map<String, String>,
+    ): Map<String, Double> {
+        val answer = request(state, mapOf(CHOICE_QUESTION to JevQuestion(instructions, "choice", options)))
+            .path(CHOICE_QUESTION)
+        val probabilities = answer.path("probabilities")
+        check(answer.path("type").asText() == "choice" && options.keys.all { probabilities.path(it).isProbability() }) {
+            "Jev response contains a missing or invalid choice answer"
+        }
+        return options.mapValues { (option, _) -> probabilities.path(option).asDouble() }
+    }
+
+    private suspend fun request(state: JsonNode, questions: Map<String, JevQuestion>): JsonNode {
         require(state.isTextual || state.isObject || state.isArray) { "Jev state must be text, an object, or an array" }
         var status: Int? = null
         var outcome = "cancelled"
@@ -51,7 +81,7 @@ class JevClient(
                 bearerAuth(token)
                 contentType(ContentType.Application.Json)
                 timeout { requestTimeoutMillis = JEV_TIMEOUT }
-                setBody(JevRequest(state, model, questions.mapValues { JevQuestion(it.value) }))
+                setBody(JevRequest(state, model, questions))
             }
             status = response.status.value
             val text = response.bodyAsText()
@@ -81,17 +111,13 @@ class JevClient(
             error("Jev returned invalid JSON")
         }
         check(result != null) { "Jev returned an empty response" }
-        return questions.mapValues { (name, _) ->
-            val answer = result.path("answers").path(name)
-            val probability = answer.path("noul")
-            val value = probability.asDouble()
-            check(answer.path("type").asText() == "noul" && probability.isNumber && value in 0.0..1.0) {
-                "Jev response contains a missing or invalid Noul answer"
-            }
-            value
-        }
+        return result.path("answers")
     }
 }
 
+private fun JsonNode.isProbability(): Boolean = isNumber && asDouble() in 0.0..1.0
+
 private data class JevRequest(val state: JsonNode, val model: String, val questions: Map<String, JevQuestion>)
-private data class JevQuestion(val instructions: String, val type: String = "noul")
+
+@JsonInclude(JsonInclude.Include.NON_NULL)
+private data class JevQuestion(val instructions: String, val type: String = "noul", val criteria: Map<String, String>? = null)

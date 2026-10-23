@@ -14,7 +14,6 @@ import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
 
-/** One process-owned client. No filesystem, presigned URLs, public policies, or user credentials. */
 class S3AttachmentObjects(config: AttachmentStorageConfig) : AutoCloseable {
     private val bucket = config.bucket
     private val client = S3Client.builder()
@@ -29,20 +28,16 @@ class S3AttachmentObjects(config: AttachmentStorageConfig) : AutoCloseable {
         .overrideConfiguration { it.apiCallTimeout(Duration.ofSeconds(120)).apiCallAttemptTimeout(Duration.ofSeconds(120)) }
         .build()
 
-    suspend fun put(file: StoredAttachment, bytes: ByteArray) = runInterruptible(Dispatchers.IO) {
-        client.putObject({ it.bucket(bucket).key(file.objectKey).contentType(file.mimeType)
-            .metadata(mapOf("sha256" to file.sha256)) },
+    suspend fun put(file: StoredAttachment, bytes: ByteArray): Unit = runInterruptible(Dispatchers.IO) {
+        client.putObject({ it.bucket(bucket).key(file.objectKey).contentType(file.mimeType) },
             RequestBody.fromContentProvider({ bytes.inputStream() }, bytes.size.toLong(), file.mimeType))
-        val head = client.headObject { it.bucket(bucket).key(file.objectKey) }
-        check(head.contentLength() == file.sizeBytes && head.metadata()["sha256"] == file.sha256) {
-            "Attachment object verification failed."
-        }
     }
 
-    suspend fun read(file: StoredAttachment, limit: Int): ByteArray = runInterruptible(Dispatchers.IO) {
+    suspend fun read(file: StoredAttachment): ByteArray = runInterruptible(Dispatchers.IO) {
         client.getObject { it.bucket(bucket).key(file.objectKey) }.use { response ->
-            if (response.response().contentLength() > limit) throw AttachmentException("attachment_too_large")
-            response.readAttachmentBytes(limit).also {
+            if (response.response().contentLength() != file.sizeBytes) throw AttachmentException("attachment_corrupt")
+            // Bound the response by stored metadata, independently of today's upload limit.
+            response.readNBytes(Math.toIntExact(file.sizeBytes) + 1).also {
                 if (it.size.toLong() != file.sizeBytes || it.sha256Hex() != file.sha256) {
                     throw AttachmentException("attachment_corrupt")
                 }
@@ -50,9 +45,8 @@ class S3AttachmentObjects(config: AttachmentStorageConfig) : AutoCloseable {
         }
     }
 
-    suspend fun delete(file: StoredAttachment) = runInterruptible(Dispatchers.IO) {
+    suspend fun delete(file: StoredAttachment): Unit = runInterruptible(Dispatchers.IO) {
         client.deleteObject { it.bucket(bucket).key(file.objectKey) }
-        Unit
     }
 
     override fun close() = client.close()

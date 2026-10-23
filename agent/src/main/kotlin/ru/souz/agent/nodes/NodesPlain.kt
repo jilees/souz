@@ -31,7 +31,7 @@ internal object NodesPlain {
                 name = speakerMessageName(ctx.toolInvocationMeta.attributes, ctx.history), files = ctx.inputAttachments,
                 images = ctx.inputAttachments.filter { it.mimeType.startsWith("image/") }.map { ru.souz.llms.ImageContent(it.file) }))
         }
-        ctx.map(history = history) { ctx.input }
+        ctx.map(history = history, activeExchangeStartIndex = history.lastIndex) { ctx.input }
     }
 
     fun responseToString(

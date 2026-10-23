@@ -23,8 +23,8 @@ import ru.souz.llms.LLMToolSetup
 import ru.souz.llms.LlmProvider
 import ru.souz.tool.ToolCategory
 import ru.souz.tool.UserMessageClassifier
-import kotlin.collections.minus
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -65,6 +65,20 @@ class NodesClassificationPromptTest {
         assertEquals(2, calls)
         assertEquals(1, localCalls)
         assertEquals(listOf("Read"), result.activeTools.map { it.name })
+    }
+
+    @Test
+    fun `fallback classifier answers only after two remote failures, before regex`() {
+        var failures = 0
+        val failing = UserMessageClassifier { _, _ -> failures++; error("Provider unavailable") }
+        val files = UserMessageClassifier { _, _ -> UserMessageClassifier.Reply(listOf(ToolCategory.FILES), 50.0) }
+        val browser = UserMessageClassifier { _, _ -> UserMessageClassifier.Reply(listOf(ToolCategory.BROWSER), null) }
+        fun tools(api: UserMessageClassifier, fallback: UserMessageClassifier) = executeClassification("Open the website",
+            emptyList(), localClassifier = files, apiClassifier = api, fallbackClassifier = fallback).activeTools.map { it.name }
+        assertEquals(listOf("Read"), tools(files, browser))
+        assertEquals(listOf("Open"), tools(failing, browser))
+        assertEquals(2, failures)
+        assertEquals(listOf("Read"), tools(failing, failing))
     }
 
     @Test
@@ -114,45 +128,6 @@ class NodesClassificationPromptTest {
     }
 
     @Test
-    fun `buildPrompt lists all categories when nothing is disabled`() {
-        val prompt = buildPromptWith(defaultTools)
-
-        assertTrue(prompt.contains("- FILES:"))
-        assertTrue(prompt.contains("- BROWSER:"))
-    }
-
-    @Test
-    fun `buildPrompt lists channel messaging category when its tools are present`() {
-        val prompt = buildPromptWith(
-            mapOf(ToolCategory.CHANNEL_MESSAGING to mapOf("ListActiveChannels" to dummySetup("ListActiveChannels")))
-        )
-
-        assertTrue(prompt.contains("- CHANNEL_MESSAGING:"))
-    }
-
-    @Test
-    fun `buildPrompt ignores disabled categories`() {
-        val prompt = buildPromptWith(
-            defaultTools - ToolCategory.BROWSER
-        )
-
-        assertTrue(prompt.contains("- FILES:"))
-        assertFalse(prompt.contains("- BROWSER:"))
-        assertFalse(prompt.contains("\nBROWSER: "))
-    }
-
-    @Test
-    fun `buildPrompt skips categories without allowed tools`() {
-        val prompt = buildPromptWith(
-            mapOf(ToolCategory.FILES to defaultTools.getValue(ToolCategory.FILES))
-        )
-
-        assertTrue(prompt.contains("- FILES:"))
-        assertFalse(prompt.contains("- BROWSER:"))
-        assertFalse(prompt.contains("\nBROWSER: "))
-    }
-
-    @Test
     fun `buildPrompt describes current screen requests as desktop plus image workflow`() {
         val prompt = buildPromptWith(
             mapOf(
@@ -166,17 +141,6 @@ class NodesClassificationPromptTest {
         assertTrue(prompt.contains("\"Опиши что видишь на экране?\" -> \"DESKTOP,IMAGE 95\""))
         assertFalse(prompt.contains("IMAGE: что видишь на экране"))
         assertFalse(prompt.contains("IMAGE: сделай скриншот и опиши, что на нем"))
-    }
-
-    @Test
-    fun `applyFilter disables telegram tools when telegram is not connected`() {
-        val toolsWithTelegram = defaultTools + (ToolCategory.TELEGRAM to mapOf("TgRead" to dummySetup("TgRead")))
-        val toolsFactory = AgentToolCatalog(toolsWithTelegram.mapValues { it.value.values })
-        val toolsSettings = mockTelegramFilteredToolsSettings(telegramConnected = false)
-
-        val filtered = toolsSettings.applyFilter(toolsFactory.toolsByCategory)
-
-        assertFalse(filtered.containsKey(ToolCategory.TELEGRAM))
     }
 
     @Test
@@ -202,18 +166,7 @@ class NodesClassificationPromptTest {
 
     @Test
     fun `classifier body keeps focused history for concrete request`() {
-        val localClassifier = CapturingClassifier(
-            UserMessageClassifier.Reply(
-                categories = listOf(ToolCategory.FILES),
-                confidence = 90.0,
-            )
-        )
-        val apiClassifier = CapturingClassifier(
-            UserMessageClassifier.Reply(
-                categories = listOf(ToolCategory.FILES),
-                confidence = 90.0,
-            )
-        )
+        val localClassifier = CapturingClassifier()
 
         executeClassification(
             input = "Fix typos in `/tmp/notes.md` and apply the optional style edits",
@@ -226,31 +179,23 @@ class NodesClassificationPromptTest {
                 LLMRequest.Message(LLMMessageRole.user, "Fix typos in `/tmp/notes.md` and apply the optional style edits"),
             ),
             localClassifier = localClassifier,
-            apiClassifier = apiClassifier,
+            apiClassifier = CapturingClassifier(),
         )
 
-        val body: LLMRequest.Chat = localClassifier.requireBody()
-        val historyMessage = body.messages[1].content
-
-        assertFalse(historyMessage.contains("Old request about telegram"))
-        assertTrue(historyMessage.contains("USER: Please check `/tmp/notes.md`"))
-        assertTrue(historyMessage.contains("ASSISTANT: I found a few typos."))
+        assertEquals(
+            listOf(
+                LLMRequest.Message(LLMMessageRole.assistant, "Old telegram answer"),
+                LLMRequest.Message(LLMMessageRole.user, "Please check `/tmp/notes.md`"),
+                LLMRequest.Message(LLMMessageRole.assistant, "I found a few typos."),
+                LLMRequest.Message(LLMMessageRole.user, "Fix typos in `/tmp/notes.md` and apply the optional style edits"),
+            ),
+            localClassifier.requireBody().messages.drop(1),
+        )
     }
 
     @Test
     fun `classifier body ignores injected context messages`() {
-        val localClassifier = CapturingClassifier(
-            UserMessageClassifier.Reply(
-                categories = listOf(ToolCategory.FILES),
-                confidence = 90.0,
-            )
-        )
-        val apiClassifier = CapturingClassifier(
-            UserMessageClassifier.Reply(
-                categories = listOf(ToolCategory.FILES),
-                confidence = 90.0,
-            )
-        )
+        val localClassifier = CapturingClassifier()
 
         executeClassification(
             input = "do it",
@@ -282,33 +227,45 @@ class NodesClassificationPromptTest {
                 LLMRequest.Message(LLMMessageRole.user, "do it"),
             ),
             localClassifier = localClassifier,
-            apiClassifier = apiClassifier,
+            apiClassifier = CapturingClassifier(),
         )
 
-        val body: LLMRequest.Chat = localClassifier.requireBody()
-        val historyMessage = body.messages[1].content
+        assertEquals(
+            listOf(
+                LLMRequest.Message(LLMMessageRole.user, "Please fix typos in `/tmp/article.md`"),
+                LLMRequest.Message(LLMMessageRole.assistant, "The file is fixed. I can also apply a couple of style improvements."),
+                LLMRequest.Message(LLMMessageRole.assistant, "I would only apply the optional style improvements now."),
+                LLMRequest.Message(LLMMessageRole.user, "do it"),
+            ),
+            localClassifier.requireBody().messages.drop(1),
+        )
+    }
 
-        assertTrue(historyMessage.contains("USER: Please fix typos in `/tmp/article.md`"))
-        assertTrue(historyMessage.contains("ASSISTANT: I would only apply the optional style improvements now."))
-        assertFalse(historyMessage.contains("<context>"))
-        assertFalse(historyMessage.contains("Default browser"))
-        assertFalse(historyMessage.contains("Current date and time"))
+    @Test
+    fun `thanks and greetings get no direct tools without classification`() {
+        val failing = UserMessageClassifier { _, _ -> error("Classification must be skipped") }
+        for (input in listOf("Спасибо большое!", "привет", "Спасибо, на сегодня всё 🙏", "Thank you so much", "hi")) {
+            val result = executeClassification(input, emptyList(), localClassifier = failing, apiClassifier = failing)
+            assertEquals(emptyList(), result.activeTools, input)
+        }
+        for (input in listOf("да", "ок", "Спасибо, отправь письмо Олегу", "спасибо спасибо спасибо спасибо спасибо спасибо",
+                "покажи", "hire me", "все", "Всё!", "тебе", "Вам!", "большое", "a lot", "so much")) {
+            assertFalse(isThanksOrGreeting(input), input)
+        }
+    }
+
+    @Test
+    fun `category descriptions are single lines`() {
+        val prompt = buildPromptWith(ToolCategory.entries.associateWith { mapOf(it.name to dummySetup(it.name)) })
+        val lines = prompt.substringAfter("Категории:\n").substringBefore("\nПримеры:").trimEnd().lines()
+        assertEquals(ToolCategory.entries.map { "- ${it.name}" }, lines.map { it.substringBefore(":") })
+        assertContains(prompt, "\n- BROWSER: веб-страницы, вкладки, или браузерные горячие клавиши, а также открытие сайтов в браузере;\n")
     }
 
     @Test
     fun `classification drops categories with empty tool lists before prompting`() {
-        val localClassifier = CapturingClassifier(
-            UserMessageClassifier.Reply(
-                categories = listOf(ToolCategory.FILES),
-                confidence = 90.0,
-            )
-        )
-        val apiClassifier = CapturingClassifier(
-            UserMessageClassifier.Reply(
-                categories = listOf(ToolCategory.FILES),
-                confidence = 90.0,
-            )
-        )
+        val localClassifier = CapturingClassifier()
+        val apiClassifier = CapturingClassifier()
         val toolsWithEmptyCategory = mapOf(
             ToolCategory.FILES to mapOf("Read" to dummySetup("Read")),
             ToolCategory.BROWSER to emptyMap(),
@@ -334,18 +291,7 @@ class NodesClassificationPromptTest {
 
     @Test
     fun `classification keeps full desktop toolset for screen understanding`() {
-        val localClassifier = CapturingClassifier(
-            UserMessageClassifier.Reply(
-                categories = listOf(ToolCategory.DESKTOP, ToolCategory.IMAGE),
-                confidence = 90.0,
-            )
-        )
-        val apiClassifier = CapturingClassifier(
-            UserMessageClassifier.Reply(
-                categories = listOf(ToolCategory.DESKTOP, ToolCategory.IMAGE),
-                confidence = 90.0,
-            )
-        )
+        val reply = UserMessageClassifier.Reply(listOf(ToolCategory.DESKTOP, ToolCategory.IMAGE), 90.0)
         val imageTools = mapOf(
             ToolCategory.DESKTOP to mapOf(
                 "TakeScreenshot" to dummySetup("TakeScreenshot"),
@@ -363,23 +309,14 @@ class NodesClassificationPromptTest {
             input = "что видишь на экране?",
             history = emptyList(),
             tools = imageTools,
-            localClassifier = localClassifier,
-            apiClassifier = apiClassifier,
+            localClassifier = CapturingClassifier(reply),
+            apiClassifier = CapturingClassifier(reply),
         )
 
         assertEquals(
             listOf("ViewImage", "TakeScreenshot", "StartScreenRecording"),
             result.activeTools.map { it.name }
         )
-    }
-
-    private fun mockTelegramFilteredToolsSettings(telegramConnected: Boolean): AgentToolsFilter {
-        return mockk<AgentToolsFilter>().also { toolsSettings ->
-            every { toolsSettings.applyFilter(any()) } answers {
-                val input = firstArg<Map<ToolCategory, Map<String, LLMToolSetup>>>()
-                if (telegramConnected) input else input - ToolCategory.TELEGRAM
-            }
-        }
     }
 
     private fun buildPromptWith(filteredTools: Map<ToolCategory, Map<String, LLMToolSetup>>): String {
@@ -402,6 +339,7 @@ class NodesClassificationPromptTest {
         tools: Map<ToolCategory, Map<String, LLMToolSetup>> = defaultTools,
         localClassifier: UserMessageClassifier,
         apiClassifier: UserMessageClassifier,
+        fallbackClassifier: UserMessageClassifier? = null,
     ): AgentContext<String> {
         val toolsFactory = AgentToolCatalog(tools.mapValues { it.value.values })
         val toolsSettings = mockk<AgentToolsFilter> {
@@ -413,6 +351,7 @@ class NodesClassificationPromptTest {
             localClassifier = localClassifier,
             toolCatalog = toolsFactory,
             toolsFilter = toolsSettings,
+            fallbackClassifier = fallbackClassifier,
         )
 
         return runBlocking {
@@ -448,7 +387,7 @@ class NodesClassificationPromptTest {
     }
 
     private class CapturingClassifier(
-        private val reply: UserMessageClassifier.Reply,
+        private val reply: UserMessageClassifier.Reply = UserMessageClassifier.Reply(listOf(ToolCategory.FILES), 90.0),
     ) : UserMessageClassifier {
         private var body: LLMRequest.Chat? = null
         private var categories: Map<ToolCategory, String> = emptyMap()

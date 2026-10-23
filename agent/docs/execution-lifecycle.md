@@ -14,13 +14,17 @@ Each accepted continuation advances an execution-scoped stream revision under th
 
 Server-side and other concurrent callers must create an `AgentExecutionKernel` per request or isolated execution scope instead of sharing a facade, graph agent, or session service. The request-scoped kernel exposes one steerable skills graph under `AgentId.SKILLS_GRAPH`; unsupported persisted agent IDs normalize to the first configured agent. The graph advertises and executes only its fixed core Skill tools. Those tools discover capabilities from the request-scoped catalog through the Skill inventory, and queued input keeps the same core-tool boundary for the remainder of the execution.
 
+### Model routing
+
+`AgentSettings.routing` marks a skills-graph turn whose first LLM call may run on a simple or a complex model. With a `TaskComplexityClassifier`, `NodesLLM` starts the simple model at once and publishes none of its streamed output until the classifier decides; a complex decision cancels that call and calls the complex model, and a classifier failure keeps the turn's own model. Each target call uses the ordinary request preparation with that target's tools: conversation instructions, the turn's context budget, and compaction that keeps the active exchange. The chosen settings, without routing, serve the rest of the turn, and the core tools are rebound to them, so a `SpawnSubagent` child defaults to the chosen model.
+
 ## Why this is fragile
 
 The facade owns mutable context, execution state, active-agent routing, and session start/finish. Overlapping work can attach steps to the wrong session, overwrite newer context, or clear `isExecuting` early. Completed-turn memory capture is graph-owned and uses successful graph finalization as its boundary rather than facade acceptance.
 
 ## Safe changes
 
-- Agent graph retries require `Node(retryable = true)` and an `LLMException`; opt in only provider operations. Tool execution and enclosing coordination nodes must remain non-retryable. Steerable requests run through a nested graph with the active runtime so retries retain consumed input without restarting the mailbox loop. Summarization retries belong to the provider node, not memory finalization.
+- Agent graph retries require `Node(retryable = true)` and an `LLMException`; opt in only provider operations. Tool execution and enclosing coordination nodes must remain non-retryable. Steerable requests run through a nested graph with the active runtime so retries retain consumed input without restarting the mailbox loop. History compaction belongs to request preparation in the retryable LLM node.
 - Keep `executeForResult` cancellation, generation capture, session start, and session finish as one lifecycle.
 - Route mid-run input through the active controller owned by the steerable agent; do not reinterpret `executeForResult` as enqueueing.
 - Keep continuation state execution-scoped. Reserve and publish under the mailbox mutex, but run producer callbacks and wait for notifications outside it. Release every reservation even when its producer fails or is cancelled. Hosts must protect accepted durable commits from cancellation until their input is returned; publication and reservation release must also finish before cancellation propagates.
@@ -34,7 +38,7 @@ The facade owns mutable context, execution state, active-agent routing, and sess
 - Tool telemetry records one completion in `finally`, retaining the typed failure for host accounting even when cancellation interrupts runtime failure-event delivery.
 - Classification receives descriptions from the same filtered, nonempty catalog used for its LLM prompt. Keep the focused history and typed model/provider route intact. A null reply confidence is a completed provider selection decision, so do not apply LLM confidence or regex agreement to it. Empty selections and `HELP` retain the all-tools fallback; remote exceptions get two attempts before regex fallback.
 - Do not make `GraphSessionService` multi-task by adding more shared mutable state. Introduce an explicit execution/session object if parallel tracing becomes a requirement.
-- Keep memory recall immediately after history input and before the graph-specific turn setup. Identify injected memory through its structural provenance marker and remove the previous turn's injection even when the host disables `automaticMemoryRecall`. When enabled, insert fresh recall before classification or core-tool installation. The flag does not disable explicit memory tools or completed-turn capture. Keep capture inside graph finalization: snapshot before history summarization, schedule only after finalization succeeds, and isolate capture failures from the returned turn.
+- Keep memory recall immediately after history input and before the graph-specific turn setup. Identify injected memory through its structural provenance marker and remove the previous turn's injection even when the host disables `automaticMemoryRecall`. When enabled, insert fresh recall before classification or core-tool installation. The flag does not disable explicit memory tools or completed-turn capture. Keep capture inside graph finalization: snapshot the completed exchange, schedule only after finalization succeeds, and isolate capture failures from the returned turn.
 
 ## Verification
 

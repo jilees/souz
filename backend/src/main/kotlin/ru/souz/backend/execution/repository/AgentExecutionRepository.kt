@@ -2,6 +2,7 @@ package ru.souz.backend.execution.repository
 
 import java.time.Instant
 import java.util.UUID
+import ru.souz.agent.spi.RoutedModel
 import ru.souz.backend.agent.session.AgentConversationState
 import ru.souz.backend.chat.model.ChatMessage
 import ru.souz.backend.execution.model.AgentExecution
@@ -37,6 +38,8 @@ interface AgentExecutionRepository {
         output: String? = null,
         assistantMessageId: UUID? = null,
         attachments: List<ru.souz.llms.FileContent> = emptyList(),
+        /** Replaces the execution's model and provider, so an option continuation resumes on it. */
+        routedModel: RoutedModel? = null,
     ): CommittedAgentTurn?
     suspend fun start(execution: AgentExecution, userMessageId: UUID): AgentExecution?
     suspend fun get(userId: String, executionId: UUID): AgentExecution?

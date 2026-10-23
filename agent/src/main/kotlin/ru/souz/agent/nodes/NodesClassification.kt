@@ -20,6 +20,7 @@ internal class NodesClassification(
     private val localClassifier: UserMessageClassifier,
     private val toolCatalog: AgentToolCatalog,
     private val toolsFilter: AgentToolsFilter,
+    private val fallbackClassifier: UserMessageClassifier? = null,
 ) {
     private val l = LoggerFactory.getLogger(NodesClassification::class.java)
 
@@ -37,6 +38,7 @@ internal class NodesClassification(
      * Modifies [AgentContext.activeTools] based on the classification algorithm and [AgentToolCatalog].
      */
     fun node(name: String = "select categories"): Node<String, String> = Node(name, retryable = true) { ctx: AgentContext<String> ->
+        if (isThanksOrGreeting(ctx.input)) return@Node ctx.map(activeTools = emptyList()) { it }
         val categoryStates: Map<ToolCategory, Map<String, LLMToolSetup>> =
             toolsFilter.applyFilter(toolCatalog.toolsByCategory)
                 .filterValues { it.isNotEmpty() }
@@ -58,9 +60,9 @@ internal class NodesClassification(
     ): List<ToolCategory> {
         l.debug("Classifying user message, body: \n{}", logObjectMapper.writeValueAsString(body))
         val localResult = localClassifier.classify(body, categoryDescriptions)
-        repeat(2) {
+        for (classifier in listOfNotNull(apiClassifier, apiClassifier, fallbackClassifier)) {
             try {
-                val apiResult = apiClassifier.classify(body, categoryDescriptions)
+                val apiResult = classifier.classify(body, categoryDescriptions)
                 if (apiResult.confidence == null || apiResult.confidence > 50 ||
                     apiResult.categories.firstOrNull() == localResult.categories.firstOrNull()) {
                     return apiResult.categories
@@ -70,7 +72,7 @@ internal class NodesClassification(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                l.error("Error in apiClassifier: {}", e.message)
+                l.error("Error in remote classifier: {}", e.message)
             }
         }
         return localResult.categories
@@ -80,18 +82,14 @@ internal class NodesClassification(
         ctx: AgentContext<String>,
         categoryStates: Map<ToolCategory, Map<String, LLMToolSetup>>
     ): LLMRequest.Chat {
-        val formattedHistory = historyForClassification(ctx.input, ctx.history)
-            .joinToString(separator = "\n\n") { message ->
-                "${message.role.name.uppercase()}: ${message.content.trim()}"
-            }
-        val messages = listOf(
-            LLMRequest.Message(LLMMessageRole.system, buildPrompt(categoryStates)),
-            LLMRequest.Message(LLMMessageRole.user, "History:\n$formattedHistory\n"),
-            LLMRequest.Message(LLMMessageRole.user, "New message:\n${ctx.input}"),
-        )
+        val messages = listOf(LLMRequest.Message(LLMMessageRole.system, buildPrompt(categoryStates))) +
+            historyForClassification(ctx.input, ctx.history) +
+            LLMRequest.Message(LLMMessageRole.user, ctx.input)
         return LLMRequest.Chat(
             model = ctx.settings.model,
             provider = ctx.settings.provider,
+            maxTokens = CLASSIFICATION_MAX_OUTPUT_TOKENS,
+            contextSize = ctx.settings.contextSize,
             messages = messages,
             functions = emptyList(),
         )
@@ -177,8 +175,8 @@ CATEGORY1,CATEGORY2 0-100
     }
 
     private fun ToolCategory.description(): String = when (this) {
-        FILES -> """|навигация по файловой системе, чтение и поиск текста в файлах, 
-                    |создание, удаление или изменение файлов и папок"""
+        FILES -> """|работа с файлами и папками на компьютере: найти, открыть, прочитать, сохранить, переименовать,
+                    | переместить или удалить файл или папку, взять файл, чтобы отправить или вложить его"""
 
         IMAGE -> "анализ уже существующих локальных изображений и содержимого скриншотов после захвата"
         IMAGE_GENERATION -> "генерация новых изображений по текстовому описанию"
@@ -186,26 +184,28 @@ CATEGORY1,CATEGORY2 0-100
         BROWSER -> """|веб-страницы, вкладки, или браузерные горячие клавиши, 
                       |а также открытие сайтов в браузере"""
 
-        WEB_SEARCH -> """|поиск информации, фактов, новостей и источников в интернете, 
-                         |как для простого ответа на вопрос, так и для многошагового ресерча, сравнения и подбора решений"""
+        WEB_SEARCH -> """|поиск в интернете свежей или проверяемой информации: новости, погода, курсы и цены, результаты
+                         | матчей, события, источники; как для простого ответа, так и для многошагового ресерча, сравнения
+                         | и подбора решений"""
 
         CONFIG -> "изменение или сохранение настроек, вроде скорости речи, запоминание и исполнение инструкций"
         DATA_ANALYTICS -> "работа с Excel, таблицами, xlsx файлами, анализ данных, сводные таблицы, графики, поиск значений в таблицах"
         CALENDAR -> "поиск, создание и удаление событий в календаре"
         MAIL -> "получение и отправка писем, список писем, чтение писем, ответ на письмо, прочтение сообщений из почты."
-        NOTES -> "работа с заметками"
-        APPLICATIONS -> "работа с приложениями"
-        TEXT_REPLACE -> "работа с текстом, который сейчас выделен пользователем (находится под selection)"
+        NOTES -> "создание, поиск, чтение и изменение заметок в приложении «Заметки»"
+        APPLICATIONS -> "запуск, закрытие и переключение программ на компьютере, список открытых приложений"
+        TEXT_REPLACE -> "правка, перевод или замена текста, который пользователь сейчас выделил на экране (selection)"
         CALCULATOR -> "выполнение математических операций, подсчет выражений"
         OAUTH -> "подключение стороннего сервиса (OAuth) для активного скилла и вызов его API от имени пользователя"
-        CHAT -> "вопрос на общие знания, не относящиеся к работе с рабочим столом, или просто болтовня"
+        CHAT -> """|ответ своими силами, без поиска и без действий на компьютере: давно известные факты, объяснения,
+                   | советы, сочинение текста, перевод фразы из самого сообщения, благодарность или просто болтовня"""
         TELEGRAM -> "действия в Telegram (TG): чтение входящих, отправка сообщений, поиск по истории, изменение состояния чатов"
         DESKTOP -> "получение текущего состояния экрана: скриншоты и запись видео с экрана"
         HELP -> "вопрос о возможностях приложения, что оно умеет, какие есть функции, помощь"
         CHANNEL_MESSAGING -> """|пересылка сообщения из текущего разговора в другой настроенный канал связи пользователя
-                                |(Telegram и т.п.), а также вопрос о том, какие каналы доступны для пересылки"""
+                                | (Telegram и т.п.), а также вопрос о том, какие каналы доступны для пересылки"""
         SCHEDULING -> "отложенные и повторяющиеся задачи агента: напоминания, действия по расписанию, их список и отмена"
-    }.trimMargin().trimIndent()
+    }.trimMargin().replace("\n", "")
 
     private fun ToolCategory.examples(): List<String> = when (this) {
         FILES -> listOf(
@@ -352,3 +352,21 @@ CATEGORY1,CATEGORY2 0-100
 }
 
 internal const val CLASSIFY_NODE_NAME = "classify"
+
+private val THANKS_OR_GREETING_PHRASES = setOf(
+    "спасибо", "спасибо большое", "большое спасибо", "спасибо огромное", "огромное спасибо",
+    "спасибо тебе", "спасибо вам", "спасибо тебе большое", "спасибо вам большое",
+    "благодарю", "спс", "пасиб", "пасибо", "пасиба", "мерси",
+    "привет", "приветик", "здравствуй", "здравствуйте", "доброе утро", "добрый день", "добрый вечер",
+    "спокойной ночи", "пока", "до свидания", "на сегодня все", "спасибо на сегодня все", "понятно", "ясно",
+    "thanks", "thank you", "thx", "thanks a lot", "thank you so much", "hi", "hello", "hey", "bye", "good night",
+)
+
+/**
+ * A whole message that is one of the known thanks, greeting or goodbye phrases needs no tools or Skills.
+ * Fragments such as "тебе" or "a lot" and confirmations such as "да" or "ок" stay out: they may answer
+ * the assistant's question or approve an action it offered.
+ */
+internal fun isThanksOrGreeting(message: String): Boolean =
+    message.lowercase().replace('ё', 'е').replace(Regex("""[\s\p{P}\p{S}]+"""), " ").trim() in
+        THANKS_OR_GREETING_PHRASES

@@ -101,7 +101,8 @@ class SubagentToolTest {
         requests.forEach {
             assertEquals(parentSettings.model, it.model)
             assertEquals(parentSettings.temperature, it.temperature)
-            assertEquals(parentSettings.contextSize, it.maxTokens)
+            assertEquals(parentSettings.contextSize, it.contextSize)
+            assertEquals(ru.souz.agent.nodes.CHAT_MAX_OUTPUT_TOKENS, it.maxTokens)
         }
         assertEquals(listOf("ParentTool"), parentSettings.tools.byName.keys.toList())
     }
@@ -443,7 +444,7 @@ class SubagentToolTest {
         model = "child-model",
         provider = LlmProvider.OPENAI,
         temperature = 0.3f,
-        contextSize = 4096,
+        contextSize = 16_000,
         toolsByCategory = mapOf(ToolCategory.FILES to mapOf(parentTool.fn.name to parentTool)),
     )
 

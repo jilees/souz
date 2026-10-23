@@ -50,10 +50,9 @@ class BackendPublicThreadStartupE2eTest {
                 val socket = mockk<DefaultWebSocketServerSession> {
                     every { this@mockk.incoming } returns incoming
                     coEvery { send(any()) } coAnswers {
-                        val frame = firstArg<Frame>()
-                        val personalitySync = frame is Frame.Text && json.readTree(frame.readText())
-                            .path("payload").path("name").asText() == "prompt.personality.set"
-                        if (!personalitySync) {
+                        val frame = firstArg<Frame.Text>()
+                        if (json.readTree(frame.readText()).path("payload").path("name").asText() !=
+                            ru.souz.backend.personality.PERSONALITY_SYNC_COMMAND) {
                             writing.complete(Unit)
                             outgoing.send(frame)
                         }
