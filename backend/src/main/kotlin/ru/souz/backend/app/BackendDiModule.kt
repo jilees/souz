@@ -341,6 +341,7 @@ fun backendDiModule(
                 clock = instance(),
                 retainAsync = appConfig.hindsightRetainAsync,
                 captureRepository = instance(),
+                recallClassifier = ru.souz.backend.memory.hindsight.MemoryRecallClassifier { instance() },
             )
         } else {
             NoopConversationMemoryRuntime

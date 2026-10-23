@@ -23,6 +23,7 @@ Before changing this module, read the relevant pain-point topics below.
 - Hook intake capacity is isolated per configured owner and survives reload. Verifier commands use the trusted owner's configured LOCAL/DOCKER sandbox through `SandboxCommandExecutor`, before Skill discovery or LLM use. They share that sandbox's permissions and do not create a separate verification container.
 - Give each ordinary HTTP route explicit OpenAPI metadata. Keep the WebSocket routes out of the generated document and maintain its schema in `docs/public-souz-contract`.
 - Keep Prometheus instrumentation in `:backend`, using repository commits and existing LLM/tool hooks. Restrict `/metrics` at ingress; its [metric reference](docs/metrics.md) defines accounting and replica semantics.
+- Gate automatic Hindsight recall with the independent memory-necessity classifier; uncertain or failed classification preserves recall. Keep speaker attribution, explicit search and capture independent; see [external memory](docs/external-memory.md).
 - Keep [personality](docs/personality-settings.md) independent of system prompts and ordinary settings writes.
 
 ## Pain points

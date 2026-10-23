@@ -49,6 +49,7 @@ internal class HindsightConversationMemoryRuntime(
     private val clock: Clock = Clock.systemUTC(),
     private val retainAsync: Boolean = true,
     private val captureRepository: PostgresHistoryMemoryRepository? = null,
+    private val recallClassifier: MemoryRecallClassifier? = null,
 ) : ConversationMemoryRuntime {
     private val baseUrl = baseUrl.trimEnd('/')
     private val logger = LoggerFactory.getLogger(HindsightConversationMemoryRuntime::class.java)
@@ -59,6 +60,10 @@ internal class HindsightConversationMemoryRuntime(
             ExplicitMemoryIntent.DELETE_EXISTING,
             -> return MemoryRetrievalResult(renderedPromptBlock = UNSUPPORTED_MEMORY_MUTATION_NOTICE)
             else -> Unit
+        }
+
+        if (recallClassifier?.shouldRecall(request.query) == false) {
+            return MemoryRetrievalResult(renderedPromptBlock = speakerMemoryNotice(request.context))
         }
 
         val bankId = request.context.ownerId.value

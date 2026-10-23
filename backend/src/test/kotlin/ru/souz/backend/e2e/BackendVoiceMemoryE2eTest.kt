@@ -33,6 +33,35 @@ import kotlin.test.assertTrue
 
 class BackendVoiceMemoryE2eTest {
     @Test
+    fun `recall classification skips Hindsight without leaking stale memory and failures preserve scoped recall`() {
+        val remote = VoiceMemoryRemote()
+        backendE2eTest("voice_recall_gate", hindsightUrl = VOICE_MEMORY_URL, providerClients = remote.clients()) {
+            val owner = UUID.randomUUID().toString()
+            val voice = UUID.randomUUID().toString()
+            val chat = createPublicChat(owner)
+            remote.recalled["person:$owner:$voice"] = "A personal fact"
+            remote.recalled[owner] = "A household fact"
+            submitVoice(chat, owner, voice, "recall", "What is my name?")
+            assertEquals(2, remote.recalls.size)
+            assertTrue(llm.requests.last().messages.any { "A personal fact" in it.content })
+
+            remote.skipRecall = 0.95
+            submitVoice(chat, owner, voice, "skip", "Ты тут?\n\n(Голосовой канал: отвечай кратко.)")
+            assertEquals(2, remote.recalls.size)
+            assertFalse(llm.requests.last().messages.any { "A personal fact" in it.content || "A household fact" in it.content })
+            assertTrue(llm.requests.last().messages.any { "Current speaker voice ID: $voice" in it.content })
+            assertTrue(llm.requests.last().messages.any { it.content.startsWith("[souz_speaker id=\"$voice\"]") })
+
+            remote.failRecallClassification = true
+            submitVoice(chat, owner, voice, "fallback", "What is my name?")
+            assertEquals(4, remote.recalls.size)
+            assertTrue(llm.requests.last().messages.any { "A personal fact" in it.content })
+            awaitVoiceQueue(chat)
+            assertEquals(3, remote.recallClassifications.size)
+        }
+    }
+
+    @Test
     fun `JEV routes completed voice turns to personal household both or neither without changing banks`() {
         val remote = VoiceMemoryRemote()
         backendE2eTest("voice_routes", hindsightUrl = VOICE_MEMORY_URL, providerClients = remote.clients()) {
@@ -256,7 +285,8 @@ class BackendVoiceMemoryE2eTest {
 private const val VOICE_MEMORY_URL = "http://voice-memory.test"
 
 private fun BackendE2eScope.voiceFrame(chat: String, owner: String, voice: String?, request: String, text: String): String {
-    val frame = json.readTree(messageFrame(chat, owner, request, text = text))
+    val frame = json.readTree(messageFrame(chat, owner, request, text = "placeholder"))
+    (frame["payload"]["content"] as ObjectNode).put("text", text)
     if (voice != null) (frame["payload"] as ObjectNode).set<JsonNode>("voice", json.valueToTree(mapOf("embeddingId" to voice)))
     return frame.toString()
 }
@@ -294,11 +324,15 @@ private class VoiceMemoryRemote {
     data class Retain(val bank: String, val body: JsonNode)
     val retains = CopyOnWriteArrayList<Retain>()
     val classifications = CopyOnWriteArrayList<JsonNode>()
+    val recallClassifications = CopyOnWriteArrayList<JsonNode>()
+    val recalls = CopyOnWriteArrayList<String>()
     val recalled = java.util.concurrent.ConcurrentHashMap<String, String>()
     var personal = true
     var household = false
     var failJev = false
     var failHousehold = false
+    var skipRecall = 0.1
+    var failRecallClassification = false
 
     fun clients(): ProviderHttpClients {
         val client = HttpClient(MockEngine { request ->
@@ -306,6 +340,13 @@ private class VoiceMemoryRemote {
             val path = request.url.encodedPath.decodeURLPart()
             var status = HttpStatusCode.OK
             val body = when {
+                request.url.host == "api.typesafe.ai" && payload["questions"].has("choice") -> {
+                    recallClassifications.add(payload)
+                    if (failRecallClassification) { status = HttpStatusCode.ServiceUnavailable; "{}" }
+                    else restJsonMapper.writeValueAsString(mapOf("answers" to mapOf("choice" to mapOf(
+                        "type" to "choice", "probabilities" to mapOf("skip" to skipRecall, "recall" to 1-skipRecall),
+                    ))))
+                }
                 request.url.host == "api.typesafe.ai" -> {
                     classifications.add(payload)
                     if (failJev) { status = HttpStatusCode.ServiceUnavailable; "{}" }
@@ -314,9 +355,12 @@ private class VoiceMemoryRemote {
                         "household" to mapOf("type" to "noul", "noul" to if (household) 0.9 else 0.1),
                     )))
                 }
-                path.endsWith("/recall") -> restJsonMapper.writeValueAsString(mapOf("results" to listOfNotNull(
-                    recalled[path.substringAfter("/banks/").substringBefore('/')]?.let { mapOf("id" to "fact", "text" to it) },
-                )))
+                path.endsWith("/recall") -> {
+                    recalls += path
+                    restJsonMapper.writeValueAsString(mapOf("results" to listOfNotNull(
+                        recalled[path.substringAfter("/banks/").substringBefore('/')]?.let { mapOf("id" to "fact", "text" to it) },
+                    )))
+                }
                 path.endsWith("/memories") -> {
                     val bank = path.substringAfter("/banks/").substringBefore('/')
                     retains += Retain(bank, payload)
