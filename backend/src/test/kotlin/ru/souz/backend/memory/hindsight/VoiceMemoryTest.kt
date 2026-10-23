@@ -45,10 +45,13 @@ class VoiceMemoryTest {
             val text = result.renderedPromptBlock.orEmpty()
             assertTrue(text.indexOf("Speaker is Sasha") < text.indexOf("The user is Masha"))
             assertTrue(text.contains("prefer personal over household"))
+            assertEquals(listOf("my name", "my name"), bodies.map { it.second["query"].asText() })
             assertEquals(200, bodies.sumOf { it.second["max_tokens"].intValue() })
             assertEquals("exact", bodies.single { it.first.startsWith("person:") }.second["tags_match"].asText())
             assertEquals(listOf("chat:chat"), bodies.single { it.first == owner }.second["tags"].map { it.asText() })
-            assertEquals("personal", memory.searchMemory(context, "name", emptyList(), 1).single().scope)
+            bodies.clear()
+            assertEquals("personal", memory.searchMemory(context, "body weight", listOf("вес", "weight"), 1).single().scope)
+            assertEquals(listOf("body weight вес weight", "body weight вес weight"), bodies.map { it.second["query"].asText() })
         }
     }
 

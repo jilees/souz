@@ -204,7 +204,7 @@ internal class HindsightConversationMemoryRuntime(
         return coroutineScope {
             suspend fun read(bank: String, personal: Boolean): List<RecalledMemory> = try {
                 val budget = if (personal) maxTokens - maxTokens / 2 else maxTokens / 2
-                if (budget == 0) emptyList() else recall(context, if (personal) "Current speaker name, identity and: $query" else query,
+                if (budget == 0) emptyList() else recall(context, query,
                     maxFacts, budget, bank, personal).map {
                     it.copy(id = "$bank:${it.id}", bankScope = if (personal) "personal" else "household")
                 }
