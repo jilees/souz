@@ -577,6 +577,12 @@ private class HistoryHindsightStub {
             }
             respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
         }) { providerHttpClientDefaults() }
-        return ProviderHttpClients(client, client)
+        val classifier = HttpClient(MockEngine {
+            respond("""{"answers":{
+                "complexity":{"type":"choice","probabilities":{"simple":0.9,"complex":0.1}},
+                "memory":{"type":"choice","probabilities":{"skip":0.1,"recall":0.9}}
+            }}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
+        }) { providerHttpClientDefaults() }
+        return ProviderHttpClients(client, client, classifier)
     }
 }
