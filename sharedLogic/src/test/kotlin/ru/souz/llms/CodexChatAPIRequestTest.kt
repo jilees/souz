@@ -25,10 +25,30 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.codex.CodexChatAPI
+import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.http.providerHttpClientDefaults
 
 class CodexChatAPIRequestTest {
+    @Test
+    fun `default and custom Responses URLs preserve Codex auth and streaming`() = runTest {
+        for (endpoints in listOf(CodexEndpoints(), CodexEndpoints(baseUrl = "https://relay.test/souz-llm/chatgpt"))) {
+            val engine = responseEngine(CODEX_COMPLETED_STREAM)
+            HttpClient(engine) { providerHttpClientDefaults() }.use { client ->
+                val api = createApi(client, endpoints)
+                assertIs<LLMResponse.Chat.Ok>(api.message(chatRequest()))
+                assertIs<LLMResponse.Chat.Ok>(api.messageStream(chatRequest()).toList().last())
+                assertEquals(2, engine.requestHistory.size)
+                for (request in engine.requestHistory) {
+                    assertEquals(endpoints.responsesUrl, request.url.toString())
+                    assertEquals("Bearer access-token", request.headers[HttpHeaders.Authorization])
+                    assertEquals("account-id", request.headers["Chatgpt-Account-Id"])
+                    assertTrue(restJsonMapper.readTree(request.body.toByteArray())["stream"].asBoolean())
+                }
+            }
+        }
+    }
+
     @Test
     fun `user image is an input image alongside its caption`() = runTest {
         val image = "data:image/png;base64,aGVsbG8="
@@ -253,13 +273,13 @@ class CodexChatAPIRequestTest {
         }
     }
 
-    private fun createApi(client: HttpClient): CodexChatAPI {
+    private fun createApi(client: HttpClient, endpoints: CodexEndpoints = CodexEndpoints()): CodexChatAPI {
         val settingsProvider = mockk<SettingsProvider>(relaxed = true)
         every { settingsProvider.requestTimeoutMillis } returns 1_000L
         every { settingsProvider.codexAccountId } returns "account-id"
         val oauthService = mockk<CodexOAuthService>()
         coEvery { oauthService.refreshTokenIfNeeded() } returns "access-token"
-        return CodexChatAPI(settingsProvider, oauthService, client)
+        return CodexChatAPI(settingsProvider, oauthService, client, endpoints)
     }
 
     private data class StreamingFixture(val api: CodexChatAPI, val client: HttpClient)

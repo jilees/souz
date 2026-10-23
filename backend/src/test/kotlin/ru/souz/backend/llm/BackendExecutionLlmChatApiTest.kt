@@ -60,6 +60,7 @@ import ru.souz.llms.LLMRequest
 import ru.souz.llms.LLMResponse
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.codex.CodexOAuthService
+import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.http.ProviderHttpClients
 import ru.souz.llms.http.providerHttpClientDefaults
 import ru.souz.llms.local.LocalChatAPI
@@ -462,11 +463,13 @@ class BackendExecutionLlmChatApiTest {
 class BackendCodexRetryTest {
     @Test
     fun `real Codex adapter overload reaches backend retries in both modes`() = runTest {
+        val endpoints = CodexEndpoints(baseUrl = "https://relay.test/souz-llm/chatgpt")
         for (streaming in listOf(false, true)) {
             val requests = mutableListOf<JsonNode>()
             val delays = mutableListOf<Long>()
             val settings = LlmSettingsStub().apply { codexAccessToken = "test-token"; codexAccountId = "test-account" }
             val client = HttpClient(MockEngine { request ->
+                assertEquals(endpoints.responsesUrl, request.url.toString())
                 requests.add(restJsonMapper.readTree(request.body.toByteArray()))
                 val body = if (requests.size == 1) {
                     "event: error\ndata: {\"code\":\"server_is_overloaded\",\"message\":\"Try later\"}\n\n" +
@@ -478,6 +481,7 @@ class BackendCodexRetryTest {
                 respond(body + "data: [DONE]\n\n", headers = headersOf(HttpHeaders.ContentType, ContentType.Text.EventStream.toString()))
             }) { providerHttpClientDefaults() }
             facadeFixture(settingsProvider = settings, providerApiOverride = null, client = client,
+                codexEndpoints = endpoints,
                 retryPolicy = BackendProviderRetryPolicy(), delayMillis = { delays += it }).use { fixture ->
                 val request = chat("test-model").copy(provider = LlmProvider.CODEX)
                 val response = if (streaming) fixture.api.messageStream(request).toList().single() else fixture.api.message(request)
@@ -642,6 +646,7 @@ private fun recordingClient(requests: MutableList<CapturedRequest>): HttpClient 
     }
 
 private fun facadeFixture(
+    codexEndpoints: CodexEndpoints = CodexEndpoints(),
     namedModels: Map<String, NamedLlmModel> = emptyMap(),
     settingsProvider: SettingsProvider = LlmSettingsStub(),
     credentialResolver: CountingCredentialResolver = CountingCredentialResolver("test-key"),
@@ -665,6 +670,7 @@ private fun facadeFixture(
         httpClients = clients,
         localChatApi = mockk<LocalChatAPI>(relaxed = true),
         codexOAuthService = CodexOAuthService(settingsProvider, client),
+        codexEndpoints = codexEndpoints,
         initialUsage = initialUsage,
         delayMillis = delayMillis,
         providerApiOverride = providerApiOverride,

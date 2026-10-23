@@ -17,6 +17,7 @@ import ru.souz.llms.TokenLogging
 import ru.souz.llms.TokenLoggingChatApi
 import ru.souz.llms.anthropic.AnthropicChatAPI
 import ru.souz.llms.codex.CodexChatAPI
+import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.giga.GigaAuth
 import ru.souz.llms.giga.GigaRestChatAPI
@@ -77,7 +78,7 @@ fun runtimeLlmDiModule(
     bindSingleton<AnthropicChatAPI> { AnthropicChatAPI(instance(), instance<ProviderHttpClients>().standard) }
     bindSingleton { OpenAIImageGenerationGateway(instance(), instance<ProviderHttpClients>().openAi) }
     bindSingleton<CodexChatAPI> {
-        CodexChatAPI(instance(), instance(), instance<ProviderHttpClients>().standard)
+        CodexChatAPI(instance(), instance(), instance<ProviderHttpClients>().standard, instance())
     }
     bindSingleton { OpenAIVisionGateway(instance(), instance()) }
     bindSingleton { AnthropicVisionGateway(instance(), instance()) }
@@ -130,7 +131,8 @@ fun runtimeLlmDiModule(
 }
 
 /** Process-owned remote transports that are safe for backend and interactive hosts. */
-fun runtimeProviderHttpDiModule(): DI.Module = DI.Module("runtimeProviderHttp") {
+fun runtimeProviderHttpDiModule(codexEndpoints: CodexEndpoints = CodexEndpoints.load()): DI.Module = DI.Module("runtimeProviderHttp") {
+    bindSingleton { codexEndpoints }
     bindSingleton { ProviderHttpClients() }
     bindSingleton { JevClient(instance<ProviderHttpClients>().jev) }
     bindSingleton<SkillClassifier> {
@@ -143,6 +145,7 @@ fun runtimeProviderHttpDiModule(): DI.Module = DI.Module("runtimeProviderHttp") 
         CodexOAuthService(
             settingsProvider = instance(),
             client = instance<ProviderHttpClients>().standard,
+            endpoints = instance(),
         )
     }
 }

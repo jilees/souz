@@ -48,6 +48,7 @@ import ru.souz.llms.LLMToolSetup
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.anthropic.AnthropicVisionGateway
 import ru.souz.llms.codex.CodexOAuthService
+import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.http.ProviderHttpClients
 import ru.souz.llms.local.LocalChatAPI
 import ru.souz.llms.local.LocalVisionGateway
@@ -103,6 +104,7 @@ internal class BackendConversationRuntimeFactory(
     private val personalitySync: PersonalitySync,
     private val testLlmApiFactory: (suspend (SettingsProvider) -> LLMChatAPI)? = null,
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
+    private val codexEndpoints: CodexEndpoints = CodexEndpoints(),
 ) {
     internal suspend fun create(
         key: AgentConversationKey,
@@ -144,6 +146,7 @@ internal class BackendConversationRuntimeFactory(
             httpClients = providerHttpClients,
             localChatApi = localChatApi,
             codexOAuthService = codexOAuthService,
+            codexEndpoints = codexEndpoints,
             initialUsage = initialUsage,
             providerApiOverride = testApi?.let { api -> { api } },
             hookBudget = hookBudget,

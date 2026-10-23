@@ -31,6 +31,7 @@ class CodexChatAPI(
     private val settingsProvider: SettingsProvider,
     private val oauthService: CodexOAuthService,
     private val client: HttpClient,
+    private val endpoints: CodexEndpoints = CodexEndpoints(),
 ) : LLMChatAPI {
 
     private val l = LoggerFactory.getLogger(CodexChatAPI::class.java)
@@ -57,7 +58,7 @@ class CodexChatAPI(
             val accountId = settingsProvider.codexAccountId.orEmpty()
             val requestBody = buildResponsesRequest(body, stream = true)
 
-            client.preparePost(CODEX_BASE_URL) {
+            client.preparePost(endpoints.responsesUrl) {
                 timeout { requestTimeoutMillis = settingsProvider.requestTimeoutMillis }
                 contentType(ContentType.Application.Json)
                 header(HttpHeaders.Authorization, "Bearer $token")
@@ -381,7 +382,6 @@ class CodexChatAPI(
     }
 
     companion object {
-        private const val CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex/responses"
         private const val ORIGINATOR = "codex_cli_rs"
         private const val OPENAI_BETA = "responses=experimental"
     }

@@ -25,6 +25,7 @@ import ru.souz.llms.LlmProvider
 import ru.souz.llms.ModelResolution
 import ru.souz.llms.anthropic.AnthropicChatAPI
 import ru.souz.llms.codex.CodexChatAPI
+import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.resolveChatModel
 import ru.souz.llms.resolveEmbeddingsModel
@@ -48,6 +49,7 @@ internal class BackendExecutionLlmChatApi(
     private val metrics: BackendMetrics? = null,
     private val namedModels: Map<String, NamedLlmModel> = emptyMap(),
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
+    private val codexEndpoints: CodexEndpoints = CodexEndpoints(),
 ) : LLMChatAPI {
     private val providerStateMutex = Mutex()
     private val credentials = mutableMapOf<LlmProvider, String?>()
@@ -193,6 +195,7 @@ internal class BackendExecutionLlmChatApi(
                     settingsProvider,
                     codexOAuthService,
                     httpClients.standard,
+                    codexEndpoints,
                 )
                 LlmProvider.LOCAL -> localChatApi
                 LlmProvider.GIGA -> error(BackendLlmSupport.GIGA_UNSUPPORTED_MESSAGE)

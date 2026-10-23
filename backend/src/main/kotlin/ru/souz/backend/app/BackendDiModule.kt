@@ -167,7 +167,7 @@ fun backendDiModule(
             scopeResolver = BackendSandboxScopeResolver,
         )
     )
-    import(runtimeProviderHttpDiModule())
+    import(runtimeProviderHttpDiModule(appConfig.codexEndpoints))
     import(runtimeLocalLlmDiModule())
     import(fileSystemSkillRegistryDiModule())
     import(portableSkillRuntimeToolsDiModule())
@@ -191,6 +191,7 @@ fun backendDiModule(
             ru.souz.backend.attachments.AttachmentMedia(config, instance(), instance<ProviderHttpClients>().openAi, instance(), instance(),
                 codexImageGateway = if (config.imageProvider == "CODEX") ru.souz.llms.codex.CodexImageGenerationGateway(
                     instance<SettingsProvider>(), instance<CodexOAuthService>(), instance<ProviderHttpClients>().openAi, config.maxFileBytes,
+                    endpoints = instance(),
                 ) else null,
             )
         }
@@ -359,6 +360,7 @@ fun backendDiModule(
             providerHttpClients = instance(),
             localChatApi = instance<LocalChatAPI>(),
             codexOAuthService = instance<CodexOAuthService>(),
+            codexEndpoints = instance(),
             agentStateRepository = instance(),
             messageRepository = instance(),
             logObjectMapper = instance(BackendDiTags.LOG_OBJECT_MAPPER),

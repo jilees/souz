@@ -9,6 +9,7 @@
 - OpenAI base URLs are normalized by `OpenAIEndpoint`. Only the semantically official HTTPS endpoint sends `stream_options.include_usage`; compatible custom endpoints omit that request option but still parse usage chunks they return.
 
 - Codex Responses requests map `LLMRequest.Chat.reasoningEffort` to `reasoning.effort`; omit the object when unset. Backend user settings persist the optional effort and pass it into each turn's agent settings.
+- Hosts supply one immutable `CodexEndpoints` configuration to chat, image generation and OAuth adapters. [Base URL overrides](../../README.md#codex-endpoint-routing) preserve fixed API paths; OAuth client ID and redirect identity remain provider-defined.
 
 - Codex SSE `error`, `response.failed`, and `response.incomplete` events emit `codex.stream_failure` at WARN with the model, HTTP request/response IDs, error code/type/message/parameter and incomplete reason. Diagnostic scalar values are bounded to 2,000 characters; request bodies, response output and authorization headers are excluded. Use the host's execution context to correlate failures across chat and tool calls.
 - Codex maps SSE `server_is_overloaded` to `LLMResponse.Chat.Error(503, message)`, preserving object/string error messages. A standalone SSE error also prevents partial-output fallback success. Backend retries cover 429 and Codex 503 within the existing retry budget; incomplete output and unknown errors are not retryable.

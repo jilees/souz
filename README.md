@@ -85,6 +85,26 @@ curl -X PATCH http://127.0.0.1:8080/v1/me/settings \
 
 Codex models use one server-managed OAuth session because the refresh token, account ID, and expiry must stay together. Configure `CODEX_ACCESS_TOKEN`, `CODEX_REFRESH_TOKEN`, `CODEX_ACCOUNT_ID`, and `CODEX_EXPIRES_AT` on the backend, then select a Codex alias such as `gpt-5.5` through the settings API. The backend stores rotated OAuth credentials in Postgres with application-layer encryption. Docker Compose persists them in `postgres-data`; preserve that data and use the same `SOUZ_MASTER_KEY` when recreating the backend container. The per-user provider-key endpoint does not accept `codex`.
 
+### Codex endpoint routing
+
+Backend and desktop hosts accept these optional environment variables or identically named JVM properties. Environment values take precedence; unset or blank values use the official URLs. Configuration is read at host setup and requires a restart after edits.
+
+| Variable | Default |
+| --- | --- |
+| `CODEX_BASE_URL` | `https://chatgpt.com` |
+| `CODEX_AUTH_BASE_URL` | `https://auth.openai.com` |
+
+Each value is an HTTP(S) base URL with an optional proxy path prefix, without URL credentials, query or fragment. Whitespace and trailing slashes are trimmed. Codex chat and image generation append `/backend-api/codex/responses` to `CODEX_BASE_URL`. Authorization appends `/oauth/token`, `/api/accounts/deviceauth/usercode` and `/api/accounts/deviceauth/token` to `CODEX_AUTH_BASE_URL`. OAuth client ID, redirect URI and the browser verification address retain their OpenAI values.
+
+For a reverse proxy with separate routes:
+
+```bash
+CODEX_BASE_URL=https://llm.example.com/souz-llm/chatgpt
+CODEX_AUTH_BASE_URL=https://llm.example.com/souz-llm/auth
+```
+
+Docker Compose forwards these variables to the backend. The reverse proxy receives OAuth credentials and model payloads; use a trusted HTTPS endpoint. These settings route existing requests; they do not expose a backend login API. OpenRouter uses the existing `OPENAI_BASE_URL` setting or a named connection's `baseUrl`; see [named LLM connections](backend/docs/named-llm-connections.md).
+
 ## Project structure
 
 ```text

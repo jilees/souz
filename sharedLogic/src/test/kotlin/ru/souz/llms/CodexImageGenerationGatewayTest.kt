@@ -15,6 +15,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.codex.CodexImageGenerationGateway
+import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.runtime.ImageGenerationInput
 import kotlin.test.Test
@@ -24,6 +25,22 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class CodexImageGenerationGatewayTest {
+    @Test
+    fun `custom Responses URL also routes image generation`() = runTest {
+        val endpoints = CodexEndpoints(baseUrl = "https://relay.test/souz-llm/chatgpt")
+        val settings = mockk<SettingsProvider>(relaxed = true)
+        val oauth = mockk<CodexOAuthService>()
+        coEvery { oauth.refreshTokenIfNeeded() } returns "fresh-token"
+        HttpClient(MockEngine { request ->
+            assertEquals(endpoints.responsesUrl, request.url.toString())
+            assertEquals("Bearer fresh-token", request.headers[HttpHeaders.Authorization])
+            respond(item() + done)
+        }).use { client ->
+            assertContentEquals(png, CodexImageGenerationGateway(settings, oauth, client, endpoints = endpoints)
+                .generate(ImageGenerationInput("cat")).bytes)
+        }
+    }
+
     private val png = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")
     private val done = "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n"
     private fun item(bytes: ByteArray = png) = "data: " + restJsonMapper.writeValueAsString(mapOf(

@@ -23,6 +23,7 @@ class CodexImageGenerationGateway(
     private val oauth: CodexOAuthService,
     private val client: HttpClient,
     private val maxImageBytes: Int = 20_000_000,
+    private val endpoints: CodexEndpoints = CodexEndpoints(),
 ) : ImageGenerationGateway {
     override suspend fun generate(input: ImageGenerationInput): GeneratedImage {
         require(input.prompt.isNotBlank() && input.prompt.length <= 32_000)
@@ -44,7 +45,7 @@ class CodexImageGenerationGateway(
             "store" to false,
             "stream" to true,
         )
-        return client.preparePost("https://chatgpt.com/backend-api/codex/responses") {
+        return client.preparePost(endpoints.responsesUrl) {
             timeout { requestTimeoutMillis = 180_000 }
             contentType(ContentType.Application.Json)
             header(HttpHeaders.Authorization, "Bearer $token")
