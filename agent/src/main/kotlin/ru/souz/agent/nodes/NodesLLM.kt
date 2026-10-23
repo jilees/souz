@@ -80,13 +80,21 @@ internal class NodesLLM(
                 .withConversationInstructions(instructions)
 
         var history = ctx.history
-        var request = build(history)
+        var activeExchangeStartIndex = ctx.activeExchangeStartIndex
+        val requestHistory = if (ctx.useRecentDialogue) {
+            recentDialogueHistory(history, activeExchangeStartIndex)
+        } else history
+        var request = build(requestHistory)
         if (request.exceedsContextBudget(ctx.settings.contextSize)) {
-            history = llmApi.compactHistory(
-                ctx.toChatRequest(history, maxOutputTokens = SUMMARIZATION_MAX_OUTPUT_TOKENS),
-                ctx.activeExchangeStartIndex,
+            val compacted = llmApi.compactHistory(
+                ctx.toChatRequest(requestHistory, maxOutputTokens = SUMMARIZATION_MAX_OUTPUT_TOKENS),
+                activeExchangeStartIndex + requestHistory.size - history.size,
             )
-            request = build(history)
+            if (!ctx.useRecentDialogue) {
+                activeExchangeStartIndex += compacted.size - history.size
+                history = compacted
+            }
+            request = build(compacted)
         }
         val response = if (request.exceedsContextBudget(ctx.settings.contextSize)) {
             LLMResponse.Chat.Error(-1, "The conversation, instructions and tools exceed the context budget. " +
@@ -94,7 +102,7 @@ internal class NodesLLM(
         } else request(ctx, request, streamRevision, release)
         return ctx.map(
             history = history + (response as? LLMResponse.Chat.Ok)?.choices.orEmpty().mapNotNull { it.toMessage() },
-            activeExchangeStartIndex = ctx.activeExchangeStartIndex + history.size - ctx.history.size,
+            activeExchangeStartIndex = activeExchangeStartIndex,
         ) { response }
     }
 
@@ -111,8 +119,8 @@ internal class NodesLLM(
         streamRevision: Long,
     ): AgentContext<LLMResponse.Chat> {
         val normal = ctx.settings.copy(routing = null)
-        val simple = ctx.on(normal.routedTo(routing.simple))
-        val complex = ctx.on(normal.routedTo(routing.complex))
+        val simple = ctx.on(normal.routedTo(routing.simple)).copy(useRecentDialogue = true)
+        val complex = ctx.on(normal.routedTo(routing.complex)).copy(useRecentDialogue = false)
         // A failed speculative call matters only when the simple model is chosen.
         return supervisorScope {
             val decided = CompletableDeferred<Unit>()
@@ -124,7 +132,7 @@ internal class NodesLLM(
                 throw cancelled
             } catch (error: Exception) {
                 l.warn("Model routing classifier failed: {}", error.message)
-                "unknown" to ctx.on(normal)
+                "unknown" to ctx.on(normal).copy(useRecentDialogue = false)
             }
             l.info("Model routing class={} model={} durationMs={}", verdict, target.settings.model, started.elapsedNow().inWholeMilliseconds)
             if (target === simple) {

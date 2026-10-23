@@ -19,6 +19,7 @@ request is checked against the same limit. Exactly 80% fits. `maxTokens` only li
 Compaction sends the completed prefix before `AgentContext.activeExchangeStartIndex`, followed by the
 summarization prompt, in one call. Both must fit the same 80% limit. System instructions and the entire
 active exchange, including fresh memory, host context, tools, and mid-run inputs, stay intact.
+For the simple model route, the completed prefix comes from its [recent dialogue view](execution-lifecycle.md#model-routing), and its summary is transient rather than persisted.
 History is neither split nor dropped to fit the summary
 request; if it cannot fit, history stays unchanged and the conversational request is rejected.
 Requests without compactable history or still over the limit after compaction are also rejected.

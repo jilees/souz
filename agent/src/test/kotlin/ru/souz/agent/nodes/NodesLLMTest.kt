@@ -333,8 +333,67 @@ class NodesLLMTest {
 
             assertEquals(listOf(chosen to true, chosen to false), calls.map { it.model to it.isSummarization })
             assertEquals(completed, calls.first().messages.dropLast(1))
-            assertEquals(ctx.history.drop(2), calls.last().messages.drop(result.activeExchangeStartIndex))
-            assertEquals(1, result.activeExchangeStartIndex)
+            assertEquals(ctx.history.drop(2), calls.last().messages.drop(1))
+            assertEquals(if (complex) 1 else 2, result.activeExchangeStartIndex)
+            if (!complex) assertEquals(ctx.history, result.history.dropLast(1))
+        }
+    }
+
+    @Test
+    fun `simple routing bounds dialogue without losing stored history or active tool and file context`() = runTest {
+        val file = ru.souz.llms.FileContent(ru.souz.llms.FileReference("owned-file"), "report.txt", "text/plain", 4)
+        val completed = listOf(SYSTEM, INJECTED,
+            LLMRequest.Message(LLMMessageRole.assistant, "old summary", name = SPEAKER_SUMMARY_NAME),
+            LLMRequest.Message(LLMMessageRole.user, "stale memory", name = INJECTED_MEMORY_MESSAGE_NAME),
+        ) + (1..25).flatMap { turn ->
+            activeTurn("old tool output $turn", "question $turn") +
+                LLMRequest.Message(LLMMessageRole.assistant, "answer $turn")
+        }
+        val active = listOf(
+            LLMRequest.Message(LLMMessageRole.user, "fresh memory", name = INJECTED_MEMORY_MESSAGE_NAME),
+            INJECTED,
+            LLMRequest.Message(LLMMessageRole.user, "current question", name = "souz_speaker_bob", files = listOf(file)),
+        )
+        for ((verdict, chosen) in listOf<Pair<() -> Boolean, String>>(
+            { false } to "simple", { true } to "complex", { error("classifier unavailable") } to "test-model",
+        )) {
+            val calls = mutableListOf<LLMRequest.Chat>()
+            val api = mockk<LLMChatAPI> {
+                coEvery { message(capture(calls)) } returns block(0, "checking", tool = true)
+            }
+            val nodes = NodesLLM(api, mockk { every { useStreaming } returns false },
+                conversationInstructions = { "personality" }, complexityClassifier = { verdict() })
+            val original = context(completed + active, activeExchangeStartIndex = completed.size)
+            val routed = nodes.chat().execute(original.copy(settings = original.settings.copy(routing = ROUTING)), runtime())
+            val selected = calls.last { it.model == chosen }
+
+            assertEquals(completed + active, routed.history.dropLast(1))
+            assertEquals(completed.size, routed.activeExchangeStartIndex)
+            assertEquals(chosen == "simple", routed.useRecentDialogue)
+            assertEquals("system\n\npersonality", selected.messages.first().content)
+            assertEquals(listOf(file), selected.messages.last().files)
+            assertTrue(selected.messages.last().content.startsWith("[souz_speaker id=\"bob\"]\n"))
+            if (chosen == "simple") {
+                assertEquals((6..25).map { "[souz_speaker id=\"unknown\"]\nquestion $it" },
+                    selected.messages.filter { "question " in it.content && "current question" !in it.content }.map { it.content })
+                assertTrue(selected.messages.none { it.role == LLMMessageRole.function || it.functionCall != null ||
+                    it.content == "old summary" || it.content == "stale memory" })
+                assertTrue(selected.messages.any { it.content == "fresh memory" })
+                val toolResult = LLMRequest.Message(LLMMessageRole.function, "current tool output", name = "TestTool",
+                    functionsStateId = "call", files = listOf(file))
+                val afterTools = routed.map(history = routed.history + toolResult) { "continue" }
+                val next = nodes.chat().execute(afterTools, runtime())
+                val nextRequest = calls.last()
+                assertEquals(listOf(routed.history.last(), toolResult), nextRequest.messages.takeLast(2))
+                assertTrue(nextRequest.messages.none { "old tool output" in it.content })
+                assertEquals(afterTools.history, next.history.dropLast(1))
+                assertTrue(next.useRecentDialogue)
+                val newTurn = NodesPlain.inputToHistory().execute(next.map { "new turn" }, runtime())
+                assertEquals(false, newTurn.useRecentDialogue)
+            } else {
+                assertTrue(selected.messages.any { it.content == "old tool output 1" })
+                assertTrue(selected.messages.any { it.content == "old summary" })
+            }
         }
     }
 
