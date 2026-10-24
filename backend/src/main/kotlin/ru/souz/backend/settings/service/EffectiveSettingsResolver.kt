@@ -84,7 +84,7 @@ class EffectiveSettingsResolver(
                 ?: baseSettingsProvider.requestTimeoutMillis
         )
         val defaultModel = normalizeModel(
-            model = requestOverrides?.defaultModel ?: persisted.defaultModel,
+            model = requestOverrides?.defaultModel ?: persisted.defaultModel ?: defaultModel(providers),
             locale = locale,
             userManagedProviders = providers,
         )
