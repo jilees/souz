@@ -20,6 +20,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withTimeout
+import ru.souz.agent.spi.TurnClassifier
+import ru.souz.agent.spi.TurnClassification
 import ru.souz.backend.storage.postgres.newPostgresSchema
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.http.ProviderHttpClients
@@ -198,15 +200,22 @@ class BackendVoiceMemoryE2eTest {
             if (call < started.size) { started[call].complete(Unit); awaitCancellation() }
             reply(request, "done")
         }
-        backendE2eTest("voice_steer", hindsightUrl = VOICE_MEMORY_URL, providerClients = remote.clients(), llm = llm) {
+        val classifiedInputs = CopyOnWriteArrayList<String>()
+        backendE2eTest("voice_steer", hindsightUrl = VOICE_MEMORY_URL, providerClients = remote.clients(), llm = llm,
+            turnClassifier = TurnClassifier { request ->
+                classifiedInputs += request.messages.last().content
+                TurnClassification(false, classifiedInputs.size != 2)
+            }) {
             val owner = UUID.randomUUID().toString()
             val alice = UUID.randomUUID().toString(); val bob = UUID.randomUUID().toString()
+            remote.recalled["person:$owner:$bob"] = "Bob stored fact"
             val chat = createPublicChat(owner)
             withPublicSocket(chat) { socket ->
                 for ((index, voice) in listOf(alice, bob, null, bob).withIndex()) {
                     socket.send(Frame.Text(voiceFrame(chat, owner, voice, "input-$index", "My name is Bob $index")))
                     assertEquals("accepted", readJson(socket)["status"].asText())
                     assertEquals("thread.status", readJson(socket)["type"].asText())
+                    if (index == 0) assertEquals("assistant.message", readJson(socket)["type"].asText())
                     if (index < started.size) withTimeout(5_000) { started[index].await() }
                 }
                 assertEquals("thread.completed", readJson(socket)["type"].asText())
@@ -216,6 +225,9 @@ class BackendVoiceMemoryE2eTest {
             assertTrue(bob in injections[1] && alice !in injections[1])
             assertTrue("No voice identified" in injections[2] && bob !in injections[2])
             assertTrue(bob in injections[3])
+            assertFalse("Bob stored fact" in injections[1])
+            assertTrue("Bob stored fact" in injections[3])
+            assertEquals(List(4) { "My name is Bob $it" }, classifiedInputs.toList())
             val userLabels = llm.requests.last().messages.filter { it.content.startsWith("[souz_speaker") }
             assertEquals(listOf(alice, bob, "unknown", bob), userLabels.map { it.content.substringAfter("id=\"").substringBefore('"') })
             awaitVoiceQueue(chat)
@@ -269,7 +281,12 @@ private suspend fun BackendE2eScope.submitVoice(chat: String, owner: String, voi
         while (ack.path("kind").asText() != "ack" || ack.path("requestId").asText() != request) ack = readJson(socket)
         assertEquals("accepted", ack["status"].asText())
         assertEquals("thread.status", readJson(socket)["type"].asText())
-        assertEquals("thread.completed", readJson(socket)["type"].asText())
+        var terminal = readJson(socket)
+        if (terminal["type"].asText() == "assistant.message") {
+            assertTrue(terminal["payload"]["content"].asText().isNotBlank())
+            terminal = readJson(socket)
+        }
+        assertEquals("thread.completed", terminal["type"].asText())
     }
 }
 

@@ -30,8 +30,9 @@ import kotlin.test.assertTrue
 class NodesCommonTest {
     @Test
     fun `host context includes locale and refreshes request timezone across turns`() = runTest {
+        var localeReads = 0
         val environment = object : AgentRuntimeEnvironment {
-            override val locale = Locale.US
+            override val locale: Locale get() = Locale.US.also { localeReads++ }
             override var zoneId: ZoneId = ZoneId.of("Europe/Moscow")
         }
         val nodesCommon = nodesCommon(environment = environment)
@@ -46,6 +47,11 @@ class NodesCommonTest {
         assertTrue(injectedContext.content.contains("Текущие дата и время:"))
         assertTrue(injectedContext.content.contains("locale=en-US"))
         assertTrue(injectedContext.content.contains("timezone=Europe/Moscow"))
+        val readsBeforeSimple = localeReads
+        val simple = nodesCommon.nodeAppendAdditionalData().execute(result.copy(simpleReply = true), graphRuntime())
+        assertEquals(context.history, simple.history)
+        assertEquals(context.activeExchangeStartIndex, simple.activeExchangeStartIndex)
+        assertEquals(readsBeforeSimple, localeReads)
 
         var nextContext = result
         for (zoneId in listOf("America/New_York", "UTC")) {

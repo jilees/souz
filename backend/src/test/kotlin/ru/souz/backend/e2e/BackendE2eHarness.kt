@@ -1,6 +1,7 @@
 package ru.souz.backend.e2e
 
-import ru.souz.agent.spi.TaskComplexityClassifier
+import ru.souz.agent.spi.TurnClassifier
+import ru.souz.agent.spi.TurnClassification
 import ru.souz.agent.skills.SkillClassifier
 
 import ru.souz.backend.execution.service.AgentExecutionLauncher
@@ -151,7 +152,7 @@ internal fun backendE2eTest(
     sandboxFactory: ((SettingsProvider) -> RuntimeSandboxFactory)? = null,
     skillOAuth: Boolean = false,
     attachments: ru.souz.backend.attachments.AttachmentStorageConfig? = null,
-    complexityClassifier: TaskComplexityClassifier? = null,
+    turnClassifier: TurnClassifier? = null,
     block: suspend BackendE2eScope.() -> Unit,
 ) = testApplication {
     val backend = BackendE2eBackend(
@@ -173,7 +174,7 @@ internal fun backendE2eTest(
         llmLimits = llmLimits,
         sandboxFactory = sandboxFactory,
         attachments = attachments,
-        complexityClassifier = complexityClassifier,
+        turnClassifier = turnClassifier,
     )
     application {
         backendApplication(backend.dependencies)
@@ -362,7 +363,7 @@ internal class BackendE2eBackend(
     private val llmLimits: BackendLlmLimits = BackendLlmLimits(),
     private val sandboxFactory: ((SettingsProvider) -> RuntimeSandboxFactory)? = null,
     attachments: ru.souz.backend.attachments.AttachmentStorageConfig? = null,
-    private val complexityClassifier: TaskComplexityClassifier? = null,
+    private val turnClassifier: TurnClassifier? = null,
 ) : AutoCloseable {
     private val appConfig: BackendAppConfig = postgresAppConfig(
         schema = schema,
@@ -423,8 +424,8 @@ internal class BackendE2eBackend(
         if (turnRunnerOverride != null) {
             bindSingleton<BackendConversationTurnRunner>(overrides = true) { turnRunnerOverride }
         }
-        if (complexityClassifier != null) {
-            bindSingleton<TaskComplexityClassifier>(overrides = true) { complexityClassifier }
+        bindSingleton<TurnClassifier>(overrides = true) {
+            turnClassifier ?: TurnClassifier { TurnClassification(false, hindsightUrl != null) }
         }
     }
 

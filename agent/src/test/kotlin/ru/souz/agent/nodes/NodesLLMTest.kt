@@ -8,9 +8,9 @@ import io.mockk.mockk
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -30,7 +30,8 @@ import ru.souz.agent.runtime.ActiveRunInputController
 import ru.souz.agent.state.AgentContext
 import ru.souz.agent.spi.ModelRouting
 import ru.souz.agent.spi.RoutedModel
-import ru.souz.agent.spi.TaskComplexityClassifier
+import ru.souz.agent.spi.TurnClassifier
+import ru.souz.agent.spi.TurnClassification
 import ru.souz.agent.state.AgentSettings
 import ru.souz.testTool
 import ru.souz.llms.LLMChatAPI
@@ -282,41 +283,40 @@ class NodesLLMTest {
     }
 
     @Test
-    fun `routing holds the simple stream until the classifier decides and keeps the chosen model`() = runTest {
-        val cases = listOf<Pair<() -> Boolean, String>>({ false } to "simple", { true } to "complex", { error("Jev down") } to "test-model")
-        for ((verdict, chosen) in cases) {
+    fun `preparation classifies before calling a model and only routed simple replies lose tools`() = runTest {
+        val decisions = listOf(TurnClassification(false, false), TurnClassification(false, true),
+            TurnClassification(true, false), TurnClassification(true, true), null)
+        for (decision in decisions) for (route in listOf(null, ROUTING)) {
             val events = mutableListOf<AgentRuntimeEvent>()
             val requests = mutableListOf<LLMRequest.Chat>()
-            val simpleStreamed = CompletableDeferred<Unit>()
             val api = mockk<LLMChatAPI> {
-                coEvery { messageStream(any()) } answers {
-                    val request = firstArg<LLMRequest.Chat>().also { requests += it }
-                    flow {
-                        emit(block(0, "${request.model} answer"))
-                        if (request.model == "simple") simpleStreamed.complete(Unit)
-                    }
-                }
+                coEvery { message(capture(requests)) } returns block(0, "answer")
             }
-            val classifier = TaskComplexityClassifier { request ->
-                assertEquals(listOf("system", "Prompt"), request.messages.map { it.content })
-                simpleStreamed.await()
-                assertEquals(emptyList(), events)
-                verdict()
-            }
-            val nodes = NodesLLM(api, mockk { every { useStreaming } returns true }, conversationInstructions = { "Be brief." },
-                complexityClassifier = classifier, routedTools = { listOf(testTool(it.model)) })
-            val context = context(listOf(SYSTEM, INJECTED, LLMRequest.Message(LLMMessageRole.user, "Prompt")), recordingSink(events))
-            val result = nodes.chat().execute(context.copy(settings = context.settings.copy(routing = ROUTING)), runtime())
-
-            assertEquals("$chosen answer", (result.input as LLMResponse.Chat.Ok).choices.single().message.content)
-            assertEquals<List<AgentRuntimeEvent>>(listOf(AgentRuntimeEvent.LlmMessageDelta("$chosen answer")), events)
-            assertEquals(listOf("simple", chosen).distinct(), requests.map { it.model })
-            // Each routed call is prepared like any other, with the tools rebound to its model.
-            assertTrue(requests.all { it.messages.first().content == "system\n\nBe brief." && it.maxTokens == CHAT_MAX_OUTPUT_TOKENS })
-            assertEquals(requests.map { listOf(it.model) }, requests.map { request -> request.functions.map { it.name } })
-            assertEquals(chosen, result.settings.model)
-            assertEquals(null, result.settings.routing)
+            val nodes = NodesLLM(api, mockk { every { useStreaming } returns false },
+                turnClassifier = TurnClassifier { request ->
+                    assertEquals(listOf("stale inventory", "Prompt"), request.messages.map { it.content })
+                    assertTrue(requests.isEmpty())
+                    decision ?: error("Jev down")
+                }, routedTools = { listOf(testTool(it.model)) })
+            val ctx = context(listOf(SYSTEM.copy(content = "stale inventory"), INJECTED, LLMRequest.Message(LLMMessageRole.user, "Prompt")), recordingSink(events), activeExchangeStartIndex = 2)
+                .withOnlyTools(listOf(testTool("original")))
+            val prepared = nodes.prepareTurn().execute(ctx.copy(settings = ctx.settings.copy(routing = route)), runtime())
+            val chosen = if (route == null) "test-model" else if (decision?.complex == false) "simple" else "complex"
+            val simple = route != null && decision?.complex == false
+            assertEquals(chosen, prepared.settings.model)
+            assertEquals(null, prepared.settings.routing)
+            assertEquals(decision?.recallMemory != false, prepared.recallMemory)
+            assertEquals(simple, prepared.simpleReply)
+            assertEquals(if (simple) listOf(SYSTEM) + ctx.history.drop(1) else ctx.history, prepared.history)
+            assertEquals(2, prepared.activeExchangeStartIndex)
+            assertEquals(if (decision?.expectedFast == true) emptyList() else listOf(AgentRuntimeEvent.InitialWait), events)
+            nodes.chat().execute(prepared, runtime())
+            assertEquals(listOf(chosen), requests.map { it.model })
+            assertEquals(if (simple) emptyList() else listOf(if (route == null) "original" else chosen),
+                requests.single().functions.map { it.name })
         }
+        val cancelled = NodesLLM(mockk(), mockk(), turnClassifier = { throw CancellationException("stop") })
+        assertFailsWith<CancellationException> { cancelled.prepareTurn().execute(context(listOf(SYSTEM)), runtime()) }
     }
 
     @Test
@@ -326,16 +326,90 @@ class NodesLLMTest {
             val api = mockk<LLMChatAPI> {
                 coEvery { message(capture(calls)) } returnsMany listOf(block(0, "short summary"), block(0, "answer"))
             }
-            val nodes = NodesLLM(api, mockk { every { useStreaming } returns false }, complexityClassifier = { complex })
-            val completed = exchange("old ".repeat(18000))
-            val ctx = context(completed + activeTurn("result ".repeat(1000)), activeExchangeStartIndex = 2)
-            val result = nodes.chat().execute(ctx.copy(settings = ctx.settings.copy(routing = ROUTING)), runtime())
+            val nodes = NodesLLM(api, mockk { every { useStreaming } returns false }, turnClassifier = { TurnClassification(complex, true) })
+            val completed = listOf(SYSTEM) + exchange("old ".repeat(18000))
+            val ctx = context(completed + activeTurn("result ".repeat(1000)), activeExchangeStartIndex = 3)
+            val prepared = nodes.prepareTurn().execute(ctx.copy(settings = ctx.settings.copy(routing = ROUTING)), runtime())
+            val result = nodes.chat().execute(prepared, runtime())
 
             assertEquals(listOf(chosen to true, chosen to false), calls.map { it.model to it.isSummarization })
             assertEquals(completed, calls.first().messages.dropLast(1))
-            assertEquals(ctx.history.drop(2), calls.last().messages.drop(result.activeExchangeStartIndex))
-            assertEquals(1, result.activeExchangeStartIndex)
+            assertEquals(ctx.history.drop(3), calls.last().messages.drop(2))
+            assertEquals(if (complex) 2 else 3, result.activeExchangeStartIndex)
+            if (!complex) assertEquals(ctx.history, result.history.dropLast(1))
         }
+    }
+
+    @Test
+    fun `simple route limits completed dialogue while retaining canonical history and the active exchange`() = runTest {
+        val retainedSystem = SYSTEM.copy(content = "retained system instructions")
+        val excludedTexts = setOf("stale memory", "old summary", "speaker summary")
+        val completed = listOf(SYSTEM,
+            LLMRequest.Message(LLMMessageRole.assistant, "old summary"),
+            LLMRequest.Message(LLMMessageRole.user, "stale memory", name = INJECTED_MEMORY_MESSAGE_NAME), INJECTED,
+        ) + (1..25).flatMap { turn ->
+            activeTurn("old tool output $turn", "question $turn") + listOf(
+                LLMRequest.Message(LLMMessageRole.assistant, "answer $turn"),
+                LLMRequest.Message(LLMMessageRole.assistant, "speaker summary", name = "souz_speaker_summary"),
+            )
+        } + retainedSystem
+        val active = listOf(
+            LLMRequest.Message(LLMMessageRole.user, "fresh memory", name = INJECTED_MEMORY_MESSAGE_NAME),
+            INJECTED,
+        ) + activeTurn().map { it.copy(attachments = listOf("current-file")) } +
+            LLMRequest.Message(LLMMessageRole.user, "queued follow-up")
+        for (decision in listOf(TurnClassification(false, true), TurnClassification(true, false), null)) for (route in listOf(null, ROUTING)) {
+            val calls = mutableListOf<LLMRequest.Chat>()
+            val api = mockk<LLMChatAPI> { coEvery { message(capture(calls)) } returns block(0, "answer") }
+            val nodes = NodesLLM(api, mockk { every { useStreaming } returns false },
+                conversationInstructions = { "personality" }, turnClassifier = { decision ?: error("Jev down") })
+            val original = context(completed + active, activeExchangeStartIndex = completed.size)
+            val prepared = nodes.prepareTurn().execute(original.copy(settings = original.settings.copy(routing = route)), runtime())
+            val result = nodes.chat().execute(prepared, runtime())
+            val request = calls.single()
+
+            assertEquals(original.history, result.history.dropLast(1))
+            assertEquals(completed.size, result.activeExchangeStartIndex)
+            val expectedActive = active.map { message ->
+                if (message.role == LLMMessageRole.user && !message.isInjectedMemoryContextMessage() &&
+                    !message.isInjectedContextMessage()) message.copy(content = "[souz_speaker id=\"unknown\"]\n${message.content}")
+                else message
+            }
+            assertEquals(expectedActive, request.messages.takeLast(active.size))
+            assertEquals("system\n\npersonality", request.messages.first().content)
+            assertTrue(retainedSystem in request.messages)
+            if (prepared.simpleReply) {
+                assertEquals((6..25).map { "question $it" }, request.messages.filter { it.content.substringAfter('\n').startsWith("question ") }.map { it.content.substringAfter('\n') })
+                assertEquals((6..25).map { "answer $it" }, request.messages.filter { it.content.startsWith("answer ") }.map { it.content })
+                assertTrue(request.messages.none { it.content.startsWith("old tool output") ||
+                    it.content in excludedTexts })
+                val next = nodes.chat().execute(result.map { "continue" }, runtime())
+                assertEquals(request.messages + result.history.last(), calls.last().messages)
+                assertEquals(result.history, next.history.dropLast(1))
+                val fresh = NodesPlain.inputToHistory().execute(next.map { "new turn" }, runtime())
+                assertFalse(fresh.simpleReply)
+            } else {
+                assertTrue(request.messages.any { it.content == "old tool output 1" })
+                assertTrue(request.messages.any { it.content == "old summary" })
+            }
+        }
+    }
+
+    @Test
+    fun `simple request window excludes oversized old history before checking its token budget`() = runTest {
+        val calls = mutableListOf<LLMRequest.Chat>()
+        val api = mockk<LLMChatAPI> { coEvery { message(capture(calls)) } returns block(0, "answer") }
+        val nodes = NodesLLM(api, mockk { every { useStreaming } returns false })
+        val completed = listOf(SYSTEM) + exchange("x".repeat(100_000)) + (1..20).flatMap { exchange("question $it") }
+        val original = context(completed + activeTurn(), activeExchangeStartIndex = completed.size).copy(simpleReply = true)
+
+        val result = nodes.chat().execute(original, runtime())
+
+        assertTrue(result.input is LLMResponse.Chat.Ok)
+        assertEquals(original.history, result.history.dropLast(1))
+        assertEquals(completed.size, result.activeExchangeStartIndex)
+        assertFalse(calls.single().isSummarization)
+        assertTrue(calls.single().messages.none { it.content.startsWith("xxxx") })
     }
 
     private fun exchange(prompt: String) = listOf(

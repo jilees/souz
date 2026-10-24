@@ -21,6 +21,9 @@ data class AgentContext<I>(
     val replyAttachments: List<ru.souz.agent.MessageAttachment> = emptyList(),
     /** Execution-local boundary; messages from here onward must survive compaction unchanged. */
     val activeExchangeStartIndex: Int = 0,
+    /** Turn-local preparation choices; never persisted in conversation history. */
+    val recallMemory: Boolean = true,
+    val simpleReply: Boolean = false,
 ) {
     init {
         require(activeExchangeStartIndex in 0..history.size) { "Active exchange boundary must be within history." }
@@ -53,6 +56,8 @@ data class AgentContext<I>(
         inputAttachments = inputAttachments,
         replyAttachments = replyAttachments,
         activeExchangeStartIndex = activeExchangeStartIndex,
+        recallMemory = recallMemory,
+        simpleReply = simpleReply,
     )
 }
 
@@ -84,7 +89,7 @@ data class AgentSettings(
     val tools: AgentTools,
     val contextSize: Int = DEFAULT_MAX_TOKENS,
     val reasoningEffort: String? = null,
-    /** Pending model routing for the turn's first LLM call; cleared once the model is chosen. */
+    /** Pending model routing; cleared during initial turn classification. */
     val routing: ModelRouting? = null,
 ) {
     constructor(
