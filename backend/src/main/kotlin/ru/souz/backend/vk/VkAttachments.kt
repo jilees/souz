@@ -39,9 +39,11 @@ class VkAttachments(private val storage: AttachmentStorage, private val api: VkB
             }
             val saved = storage.save(binding.userId, "vk:${binding.id}:${message.peerId}:${message.id}:$index:${file.id}",
                 if (file.ext != null && !name.endsWith(".${file.ext}", true)) "$name.${file.ext}" else name, bytes.inputStream())
-            if (saved.mimeType !in setOf("text/plain", "text/markdown", "text/html", "application/pdf", "application/xhtml+xml") &&
-                !saved.mimeType.startsWith("image/") && !saved.mimeType.startsWith("audio/")) {
-                throw AttachmentException("attachment_unsupported_type")
+            when (saved.mimeType) {
+                "text/plain", "text/markdown", "text/html", "application/pdf", "application/xhtml+xml" -> Unit
+                else -> if (!saved.mimeType.startsWith("image/") && !saved.mimeType.startsWith("audio/")) {
+                    throw AttachmentException("attachment_unsupported_type")
+                }
             }
             saved.toContent(presentation)
         }

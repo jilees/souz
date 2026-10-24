@@ -324,7 +324,10 @@ class TelegramBotPollingService(
                     }
                 }
             } catch (error: ru.souz.backend.attachments.AttachmentException) {
-                if (error.code !in setOf("attachment_too_large", "attachment_audio_too_long", "attachment_unsupported_type", "attachment_message_too_large")) throw error
+                when (error.code) {
+                    "attachment_too_large", "attachment_audio_too_long", "attachment_unsupported_type", "attachment_message_too_large" -> Unit
+                    else -> throw error
+                }
                 sendReplySafely(binding.id, token, message.chat.id, "Не удалось принять вложение: ${error.code}.")
                 return binding
             }

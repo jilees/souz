@@ -76,5 +76,5 @@ internal fun JsonNode.imageResourceUri(): String? {
         listOf(".png", ".jpg", ".jpeg", ".webp", ".gif").any { uri.path.orEmpty().lowercase().endsWith(it) }
     val stored = uri.scheme == "attachment" && runCatching { UUID.fromString(uri.schemeSpecificPart) }.isSuccess
     return url.takeIf { image && it.length <= 8192 && (stored ||
-        (uri.scheme in listOf("https", "http") && !uri.host.isNullOrBlank() && uri.userInfo == null)) }
+        ((uri.scheme == "https" || uri.scheme == "http") && !uri.host.isNullOrBlank() && uri.userInfo == null)) }
 }

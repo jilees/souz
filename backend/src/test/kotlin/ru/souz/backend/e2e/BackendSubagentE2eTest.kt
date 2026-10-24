@@ -70,7 +70,7 @@ class BackendSubagentE2eTest {
                         reply(request, "parent completed")
                     } else {
                         val choices = request.functions.single { it.name == "SpawnSubagent" }.parameters.properties.getValue("model").enum
-                        assertEquals(setOf(childModel, E2E_LOCAL_MODEL.alias), choices?.toSet())
+                        assertEquals(setOf(childModel, E2E_MODEL.alias), choices?.toSet())
                         toolCallReply(request, "SpawnSubagent", mapOf("task" to "Answer privately", "model" to childModel, "skillIds" to listOf("speaker.say")))
                     }
                 },
@@ -79,7 +79,7 @@ class BackendSubagentE2eTest {
                 val chatId = createPublicChat(userId, tools = clientToolsJson("speaker.say"))
                 client.patch(BackendHttpRoutes.SETTINGS) {
                     trusted(userId)
-                    jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}","streamingMessages":$streaming}""")
+                    jsonBody("""{"defaultModel":"${E2E_MODEL.alias}","streamingMessages":$streaming}""")
                 }
                 client.post(BackendHttpRoutes.chatMessages(chatId)) { trusted(userId); jsonBody("""{"content":"Delegate"}""") }
                 val events = eventually("cross-provider completion") {
@@ -222,7 +222,7 @@ class BackendSubagentE2eTest {
             val chatId = createPublicChat(userId)
             client.patch(BackendHttpRoutes.SETTINGS) {
                 trusted(userId)
-                jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}","streamingMessages":true,"showToolEvents":false,"enabledTools":["Calculator"]}""")
+                jsonBody("""{"defaultModel":"${E2E_MODEL.alias}","streamingMessages":true,"showToolEvents":false,"enabledTools":["Calculator"]}""")
             }
             val sent = client.post(BackendHttpRoutes.chatMessages(chatId)) {
                 trusted(userId)
@@ -269,7 +269,7 @@ class BackendSubagentE2eTest {
             val chatId = createPublicChat(userId)
             val settings = client.patch(BackendHttpRoutes.SETTINGS) {
                 trusted(userId)
-                jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}","enabledTools":["InternetSearch"]}""")
+                jsonBody("""{"defaultModel":"${E2E_MODEL.alias}","enabledTools":["InternetSearch"]}""")
             }
             assertEquals(HttpStatusCode.OK, settings.status)
             assertEquals(0, settings.jsonBody()["settings"]["enabledTools"].size())

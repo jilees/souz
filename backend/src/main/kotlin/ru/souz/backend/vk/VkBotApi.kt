@@ -186,7 +186,7 @@ internal fun vkMediaUri(raw: String): URI {
     val uri = URI(raw)
     val host = uri.host?.lowercase().orEmpty()
     val allowed = listOf("vk.com", "userapi.com", "vkuseraudio.net", "vkuseraudio.ru", "vkuserphoto.ru", "vk-cdn.net")
-    require(uri.scheme == "https" && uri.rawUserInfo == null && uri.rawFragment == null && uri.port in setOf(-1, 443) &&
+    require(uri.scheme == "https" && uri.rawUserInfo == null && uri.rawFragment == null && (uri.port == -1 || uri.port == 443) &&
         allowed.any { host == it || host.endsWith(".$it") }) { "Untrusted VK media URL." }
     return uri
 }

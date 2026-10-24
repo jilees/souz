@@ -34,7 +34,7 @@ class BackendAttachmentInput(
                 val saved = try {
                     storage.get(userId, attachmentId(reference.fileId))
                 } catch (error: AttachmentException) {
-                    if (error.code !in setOf("attachment_expired", "attachment_not_found")) throw error
+                    if (error.code != "attachment_expired" && error.code != "attachment_not_found") throw error
                     notes += restJsonMapper.writeValueAsString(mapOf("fileId" to reference.fileId, "status" to error.code))
                     continue
                 }

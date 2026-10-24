@@ -49,7 +49,7 @@ class BackendAttachmentsE2eTest {
             api.enqueue(TelegramUpdate(1, TelegramMessage(1, sender, peer, secret)))
             backend.pollTelegramOnce()
             client.patch(BackendHttpRoutes.SETTINGS) {
-                trusted(user); jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}"}""")
+                trusted(user); jsonBody("""{"defaultModel":"${E2E_MODEL.alias}"}""")
             }
             api.requestedOffsets.clear()
             listOf("first" to "Первый", "second" to "Второй").forEachIndexed { index, (id, caption) ->
@@ -103,7 +103,7 @@ class BackendAttachmentsE2eTest {
                 api.enqueue(TelegramUpdate(1, TelegramMessage(1, TelegramUser(701, firstName = "STT"), TelegramChat(701, "private"), secret)))
                 backend.pollTelegramOnce()
                 client.patch(BackendHttpRoutes.SETTINGS) {
-                    trusted(user); jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}"}""")
+                    trusted(user); jsonBody("""{"defaultModel":"${E2E_MODEL.alias}"}""")
                 }
                 api.enqueue(TelegramUpdate(2, TelegramMessage(2, TelegramUser(701, firstName = "STT"), TelegramChat(701, "private"),
                     voice = TelegramFile("voice", duration = 1))))
@@ -141,7 +141,7 @@ class BackendAttachmentsE2eTest {
                 VkMessageObjectWrapper(VkMessage(1, 701, 701, secret))))))
             backend.pollVkOnce()
             client.patch(BackendHttpRoutes.SETTINGS) {
-                trusted(user); jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}","enabledTools":["AttachFileToReply"]}""")
+                trusted(user); jsonBody("""{"defaultModel":"${E2E_MODEL.alias}","enabledTools":["AttachFileToReply"]}""")
             }
             val document = VkAttachment("doc", doc = VkFile(23, "document", "md", "https://vk.com/file"))
             api.responses.add(VkLongPollResponse("3", listOf(VkLongPollUpdate("message_new",
@@ -209,7 +209,7 @@ class BackendAttachmentsE2eTest {
                     api.enqueue(update(1, secret))
                     backend.pollTelegramOnce()
                     client.patch(BackendHttpRoutes.SETTINGS) {
-                        trusted(user); jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}","enabledTools":["$tool","AttachFileToReply"]}""")
+                        trusted(user); jsonBody("""{"defaultModel":"${E2E_MODEL.alias}","enabledTools":["$tool","AttachFileToReply"]}""")
                     }
                     api.enqueue(update(2, "Скажи привет"))
                     backend.pollTelegramOnce()
@@ -253,7 +253,7 @@ class BackendAttachmentsE2eTest {
             api.enqueue(message(1, secret))
             backend.pollTelegramOnce()
             client.patch(BackendHttpRoutes.SETTINGS) {
-                trusted(user); jsonBody("""{"defaultModel":"${E2E_LOCAL_MODEL.alias}","enabledTools":["AttachFileToReply"]}""")
+                trusted(user); jsonBody("""{"defaultModel":"${E2E_MODEL.alias}","enabledTools":["AttachFileToReply"]}""")
             }
             api.sentMessages.clear()
             api.enqueue(message(2, document = TelegramFile(fileId = "remote-document", fileUniqueId = "unique",

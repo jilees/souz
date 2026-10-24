@@ -211,7 +211,7 @@ class BackendVoiceMemoryE2eTest {
                 }
                 assertEquals("thread.completed", readJson(socket)["type"].asText())
             }
-            val injections = llm.requests.map { it.messages.filter { message -> message.name in setOf("souz_injected_memory", "souz_current_speaker") }.joinToString("\n") { it.content } }
+            val injections = llm.requests.map { it.messages.filter { message -> (message.name == "souz_injected_memory" || message.name == "souz_current_speaker") }.joinToString("\n") { it.content } }
             assertTrue(alice in injections[0])
             assertTrue(bob in injections[1] && alice !in injections[1])
             assertTrue("No voice identified" in injections[2] && bob !in injections[2])

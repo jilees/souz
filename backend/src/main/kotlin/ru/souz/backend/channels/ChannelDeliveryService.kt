@@ -89,7 +89,7 @@ class ChannelDeliveryService(
             require(fileIds.size <= 10)
             val files = fileIds.distinct().map {
                 val saved = storage.get(userId, ru.souz.backend.attachments.attachmentId(it))
-                val presentation = if (channel == "Telegram" && saved.mimeType in setOf("image/png", "image/jpeg", "image/webp")) {
+                val presentation = if (channel == "Telegram" && (saved.mimeType == "image/png" || saved.mimeType == "image/jpeg" || saved.mimeType == "image/webp")) {
                     ru.souz.llms.FilePresentation.image
                 } else ru.souz.llms.FilePresentation.document
                 saved.toContent(presentation)

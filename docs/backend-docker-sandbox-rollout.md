@@ -33,7 +33,7 @@ Names are separated by commas or whitespace. Missing or blank values are ignored
 ## Verification
 
 ```sh
-SOUZ_TEST_DOCKER=1 ./gradlew :sharedLogic:jvmTest --tests 'ru.souz.runtime.sandbox.docker.*'
+SOUZ_TEST_DOCKER=1 ./gradlew :sharedLogic:test --tests 'ru.souz.runtime.sandbox.docker.*'
 ./gradlew :backend:test :agent:test
 ```
 

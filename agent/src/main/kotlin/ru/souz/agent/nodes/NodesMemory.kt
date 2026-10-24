@@ -30,7 +30,7 @@ internal const val INJECTED_MEMORY_MESSAGE_NAME = "souz_injected_memory"
 private const val SPEAKER_MESSAGE_NAME = "souz_current_speaker"
 
 internal fun LLMRequest.Message.isInjectedMemoryContextMessage(): Boolean =
-    role == LLMMessageRole.user && name in setOf(INJECTED_MEMORY_MESSAGE_NAME, SPEAKER_MESSAGE_NAME)
+    role == LLMMessageRole.user && (name == INJECTED_MEMORY_MESSAGE_NAME || name == SPEAKER_MESSAGE_NAME)
 
 /** Nodes responsible for persistent conversation-memory recall and completed-turn capture. */
 internal class NodesMemory(

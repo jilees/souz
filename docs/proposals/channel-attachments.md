@@ -47,22 +47,22 @@
 
 ## 3. Проверенный задел в текущем коде
 
-Это результаты чтения checkout, а не live-проверка развёрнутых сервисов или внешних моделей.
+Это снимок исходного задела при подготовке предложения; ссылки на исходники закреплены за ревизией до удаления desktop/KMP. Действующую JVM-структуру описывает [корневое руководство](../../README.md#project-structure). Это не live-проверка развёрнутых сервисов или внешних моделей.
 
 | Область | Состояние и точка расширения |
 | --- | --- |
 | Backend-каналы | [ChannelProvider](../../backend/src/main/kotlin/ru/souz/backend/channels/ChannelProvider.kt) принимает только текст. [TelegramBotApi](../../backend/src/main/kotlin/ru/souz/backend/telegram/TelegramBotApi.kt) и [VkBotApi](../../backend/src/main/kotlin/ru/souz/backend/vk/VkBotApi.kt) не предоставляют законченный приём/отправку вложений; polling пропускает сообщения без текста. |
 | История и выполнение | [ChatMessage](../../backend/src/main/kotlin/ru/souz/backend/chat/model/ChatMessage.kt), [BackendConversationTurnRequest](../../backend/src/main/kotlin/ru/souz/backend/agent/model/BackendConversationTurnRequest.kt) и [результат агента](../../agent/src/main/kotlin/ru/souz/agent/Agent.kt) ориентированы на текст. |
 | LLM-контент | [LLMRequest.Message](../../llms/src/main/kotlin/ru/souz/llms/DTO.kt) содержит `attachments: List<String>`, смысл которых зависит от провайдера: URL/data URL, provider file ID или локальный путь. |
-| Sol | Встроенные Sol-модели используют CODEX; [CodexChatAPI](../../sharedLogic/src/commonJvmMain/kotlin/ru/souz/llms/codex/CodexChatAPI.kt) строит пользовательский контент из строки и не передаёт `attachments`. Конкретный deployment может использовать иной named route; его требуется проверить отдельно. |
-| Vision | [ViewImage](../../sharedLogic/src/commonJvmMain/kotlin/ru/souz/tool/files/ToolViewImage.kt), `VisionGateway`, OpenAI/Anthropic/local-адаптеры уже есть. [LLMCapabilityResolver](../../sharedLogic/src/commonJvmMain/kotlin/ru/souz/llms/runtime/LLMCapabilityResolver.kt) выбирает обработчик по провайдеру текущей модели. |
-| Создание изображений | [GenerateImage](../../sharedLogic/src/commonJvmMain/kotlin/ru/souz/tool/files/ToolGenerateImage.kt) сохраняет файл и возвращает путь/метаданные. Генерация через OpenAI-адаптер не равнозначна vision-возможности chat-модели. |
-| Документы | Есть файловые read/write-инструменты, [ExtractTextFromFile](../../sharedLogic/src/jvmMain/kotlin/ru/souz/tool/files/ToolExtractText.kt) через Tika и [ReadPdfPages](../../sharedLogic/src/jvmMain/kotlin/ru/souz/tool/files/ToolReadPdfPages.kt) через PDFBox. Законченный backend-процесс OCR/рендера сканов/создания PDF отсутствует. |
-| Речь | [SpeechRecognitionProvider](../../sharedLogic/src/jvmMain/kotlin/ru/souz/service/speech/SpeechRecognitionProvider.kt) объединяет STT-провайдеры. [GigaVoiceAPI](../../sharedLogic/src/commonJvmMain/kotlin/ru/souz/llms/giga/GigaVoiceAPI.kt) содержит синтез речи. Текущий STT-вход ориентирован на PCM. |
+| Sol | Встроенные Sol-модели используют CODEX; [CodexChatAPI](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/sharedLogic/src/commonJvmMain/kotlin/ru/souz/llms/codex/CodexChatAPI.kt) строит пользовательский контент из строки и не передаёт `attachments`. Конкретный deployment может использовать иной named route; его требуется проверить отдельно. |
+| Vision | [ViewImage](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/sharedLogic/src/commonJvmMain/kotlin/ru/souz/tool/files/ToolViewImage.kt), `VisionGateway`, OpenAI/Anthropic/local-адаптеры уже есть. [LLMCapabilityResolver](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/sharedLogic/src/commonJvmMain/kotlin/ru/souz/llms/runtime/LLMCapabilityResolver.kt) выбирает обработчик по провайдеру текущей модели. |
+| Создание изображений | [GenerateImage](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/sharedLogic/src/commonJvmMain/kotlin/ru/souz/tool/files/ToolGenerateImage.kt) сохраняет файл и возвращает путь/метаданные. Генерация через OpenAI-адаптер не равнозначна vision-возможности chat-модели. |
+| Документы | Есть файловые read/write-инструменты, [ExtractTextFromFile](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/sharedLogic/src/jvmMain/kotlin/ru/souz/tool/files/ToolExtractText.kt) через Tika и [ReadPdfPages](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/sharedLogic/src/jvmMain/kotlin/ru/souz/tool/files/ToolReadPdfPages.kt) через PDFBox. Законченный backend-процесс OCR/рендера сканов/создания PDF отсутствует. |
+| Речь | [SpeechRecognitionProvider](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/sharedLogic/src/jvmMain/kotlin/ru/souz/service/speech/SpeechRecognitionProvider.kt) объединяет STT-провайдеры. [GigaVoiceAPI](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/sharedLogic/src/commonJvmMain/kotlin/ru/souz/llms/giga/GigaVoiceAPI.kt) содержит синтез речи. Текущий STT-вход ориентирован на PCM. |
 | Выбранный TTS | В отдельном репозитории `orion-emulator` есть `docs/tts-api.md`, `tts/SpeechRoutes.kt`, `tts/SpeechService.kt` и готовый buffered HTTP API. Союз подключает его по сети, без project dependency на эмулятор и без дублирования его upstream-авторизации. |
-| Desktop Telegram | [TelegramBotController](../../desktopApp/src/main/kotlin/ru/souz/service/telegram/TelegramBotController.kt) скачивает документы, конвертирует голосовые через ffmpeg и расшифровывает их. Это отдельный desktop-путь. |
+| Desktop Telegram | [TelegramBotController](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/desktopApp/src/main/kotlin/ru/souz/service/telegram/TelegramBotController.kt) скачивает документы, конвертирует голосовые через ffmpeg и расшифровывает их. Это отдельный desktop-путь. |
 | Skills и история | `ToolInvokeSkill` сохраняет вложения compiled tool; [composite-команды](../composite-skill-commands.md) их не передают. Контракт [субагентов](../subagents.md) не обеспечивает полноценного возврата файловых результатов. Knowledge хранит текст. |
-| Sandbox | [SandboxFileSystem](../../sharedLogic/src/commonJvmMain/kotlin/ru/souz/runtime/sandbox/SandboxFileSystem.kt) предоставляет потоковое чтение и запись байтов. [DockerSandboxFileSystem](../../sharedLogic/src/jvmMain/kotlin/ru/souz/runtime/sandbox/docker/DockerSandboxFileSystem.kt) использует существующие host mounts. |
+| Sandbox | [SandboxFileSystem](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/sharedLogic/src/commonJvmMain/kotlin/ru/souz/runtime/sandbox/SandboxFileSystem.kt) предоставляет потоковое чтение и запись байтов. [DockerSandboxFileSystem](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/sharedLogic/src/jvmMain/kotlin/ru/souz/runtime/sandbox/docker/DockerSandboxFileSystem.kt) использует существующие host mounts. |
 | Runtime-зависимости | [Dockerfile sandbox](../../sharedLogic/Dockerfile) не содержит подготовленного набора ffmpeg/OCR/PDF-renderer. S3-подсистема вложений отсутствует. |
 
 ## 4. Предлагаемая архитектура
@@ -218,13 +218,11 @@ Read-only проверка `GET /health` на VPS при подготовке pr
 | --- | --- |
 | `:llms` | Provider-neutral image/content contracts и совместимость старых сообщений; узкие сведения о возможностях маршрута при необходимости. Без S3, host filesystem и HTTP-реализаций. |
 | `:agent` | Структурированные ссылки во входе/результате; active-run input; сохранение контекста вложений при summarization; host SPI доступа/публикации; передача результатов субагента. Без SDK хранения и транспортов TG/VK. |
-| `:sharedLogic` `commonJvmMain` | Provider-адаптеры, vision routing, интеграция `ViewImage`/`GenerateImage`, файловые инструменты, Skills/composite results, узкие изменения `SandboxFileSystem`. |
-| `:sharedLogic` `jvmMain` | Обработка документов, страниц PDF, OCR/QR, аудиоконвертация, серверно-пригодные STT/TTS-компоненты, реализация sandbox IO. |
+| `:sharedLogic` `main` | Provider-адаптеры, vision routing, интеграция `ViewImage`/`GenerateImage`, файловые инструменты, Skills/composite results, узкие изменения `SandboxFileSystem`. |
+| `:sharedLogic` `main` — media | Обработка документов, страниц PDF, OCR/QR, аудиоконвертация, серверно-пригодные STT/TTS-компоненты, реализация sandbox IO. |
 | `:backend` | S3 client/lifecycle и общая приватная корзина; PostgreSQL metadata/repositories/migrations; подготовка входа; сохранение и восстановление runtime; TG/VK adapters; delivery state; конфигурация и DI; tool capability policy. |
 | Sandbox image / deployment | Версионированные зависимости PDF/OCR/audio, установка PDF Skill, настройки S3 и media providers, ресурсы и эксплуатационные проверки. |
-| `:native` | Только совместимость с эволюцией общих LLM DTO, если она затрагивает local adapter. Новые local vision-возможности не являются целью. |
-| `:desktopApp`, `:sharedUI` | Только необходимая source compatibility при изменении общих контрактов. Новые UI/Telegram desktop-сценарии исключены. |
-| `:graph-engine`, `:ambientAgent`, OAuth-модули | Изменения функциональности не предполагаются. |
+| `:graph-engine`, OAuth-модули | Изменения функциональности не предполагаются. |
 
 Новые production project dependencies не планируются. S3 SDK, если выбран, является библиотечной зависимостью backend. Не создавать отдельный универсальный media framework; расширять существующие точки композиции.
 
@@ -363,11 +361,11 @@ Read-only проверка `GET /health` на VPS при подготовке pr
 При реализации выполнять команды из актуальных module AGENTS.md, включая:
 
 ```sh
-./gradlew :llms:test :agent:test :sharedLogic:jvmTest :backend:test
+./gradlew :llms:test :agent:test :sharedLogic:test :backend:test
 ./gradlew souzGateFast
 npm ci --prefix quality
 ./gradlew souzDuplicationCheck
-./gradlew test :sharedLogic:allTests :sharedUI:allTests :koverXmlReport :koverHtmlReport koverLog -Psouz.coverage --no-parallel
+./gradlew test :koverXmlReport :koverHtmlReport koverLog -Psouz.coverage --no-parallel
 ```
 
 Backend-тестам требуется Docker. При изменении sandbox дополнительно собрать образ и выполнить opt-in Docker tests по [инструкциям модуля](../../sharedLogic/AGENTS.md). Для общих DTO включить проверки затронутых consumers; repository-wide `check` выполнить, когда масштаб изменения это требует. Команды coverage и ratchet относятся к реализации, а не к текущему documentation-only изменению.
@@ -489,7 +487,7 @@ Backend-тестам требуется Docker. При изменении sandbo
 - [Execution и events](../../backend/docs/execution-openapi-and-events.md).
 - [Public client WebSocket](../../backend/docs/public-client-websocket.md): сохраняется text-only scope данного проекта.
 - [Conversation Knowledge](../../backend/docs/conversation-knowledge.md) и [субагенты](../../agent/docs/subagents.md).
-- [Docker runtime и named connections](../backend-docker-sandbox-rollout.md), [голосовая транскрипция](../voice-transcription.md), [файловые инструменты](../file-tools.md).
+- [Docker runtime и named connections](../backend-docker-sandbox-rollout.md), [голосовая транскрипция](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/docs/voice-transcription.md), [файловые инструменты](../file-tools.md).
 
 ## 10. Реализация и оставшаяся приёмка
 

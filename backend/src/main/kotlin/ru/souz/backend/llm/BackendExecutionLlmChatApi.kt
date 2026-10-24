@@ -32,7 +32,6 @@ import ru.souz.llms.findLLMModel
 import ru.souz.llms.resolveChatModel
 import ru.souz.llms.resolveEmbeddingsModel
 import ru.souz.llms.http.ProviderHttpClients
-import ru.souz.llms.local.LocalChatAPI
 import ru.souz.llms.openai.OpenAICompatibleChatAPI
 
 /** Execution-scoped LLM routing, credentials, retries, and usage over process-owned transports. */
@@ -42,11 +41,10 @@ internal class BackendExecutionLlmChatApi(
     private val credentialResolver: ProviderCredentialResolver,
     private val retryPolicy: BackendProviderRetryPolicy,
     private val httpClients: ProviderHttpClients,
-    private val localChatApi: LocalChatAPI,
     private val codexOAuthService: CodexOAuthService,
     initialUsage: LLMResponse.Usage = ZERO_USAGE,
     private val delayMillis: suspend (Long) -> Unit = { delay(it) },
-    private val providerApiOverride: ((LlmProvider) -> LLMChatAPI)? = null,
+    private val providerApiOverride: ((LlmProvider) -> LLMChatAPI?)? = null,
     private val hookBudget: HookLlmBudget? = null,
     private val metrics: BackendMetrics? = null,
     private val namedModels: Map<String, NamedLlmModel> = emptyMap(),
@@ -197,7 +195,6 @@ internal class BackendExecutionLlmChatApi(
         require(provider in BackendLlmSupport.chatProviders) {
             "Provider $provider is not supported by the backend."
         }
-        if (provider == LlmProvider.LOCAL && providerApiOverride == null) return localChatApi
         return providerStateMutex.withLock {
             val cacheKey = provider to namedModel
             providerApis[cacheKey]?.let { return@withLock it }
@@ -226,7 +223,6 @@ internal class BackendExecutionLlmChatApi(
                     httpClients.standard,
                     codexEndpoints,
                 )
-                LlmProvider.LOCAL -> localChatApi
                 LlmProvider.GIGA -> error(BackendLlmSupport.GIGA_UNSUPPORTED_MESSAGE)
             }
             providerApis[cacheKey] = api

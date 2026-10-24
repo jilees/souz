@@ -110,15 +110,11 @@ import ru.souz.backend.user.repository.UserRepository
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.http.ProviderHttpClients
-import ru.souz.llms.local.LocalChatAPI
-import ru.souz.llms.local.LocalProviderAvailability
 import ru.souz.llms.giga.toGiga
 import ru.souz.memory.ConversationMemoryRuntime
 import ru.souz.memory.NoopConversationMemoryRuntime
 import ru.souz.agent.skills.SkillClassifier
 import ru.souz.runtime.di.FRIDA_FALLBACK_TAG
-import ru.souz.runtime.di.runtimeCoreDiModule
-import ru.souz.runtime.di.runtimeLocalLlmDiModule
 import ru.souz.runtime.di.runtimeProviderHttpDiModule
 import ru.souz.runtime.files.FilesToolUtil
 import ru.souz.skills.registry.fileSystemSkillRegistryDiModule
@@ -139,7 +135,7 @@ import ru.souz.jobs.impl.PostgresJobService
 import ru.souz.tool.RuntimeToolsFactory
 import ru.souz.tool.ToolCategory
 import ru.souz.tool.runtimeToolsDiModule
-import ru.souz.tool.portableSkillRuntimeToolsDiModule
+import ru.souz.tool.skillRuntimeToolsDiModule
 import ru.souz.tool.knowledge.ToolGetKnowledge
 import ru.souz.tool.knowledge.ToolSearchKnowledge
 import ru.souz.tool.memory.ToolSearchMemory
@@ -163,18 +159,14 @@ fun backendDiModule(
             .enable(SerializationFeature.INDENT_OUTPUT)
     }
 
-    import(runtimeCoreDiModule(bindSettingsProvider = false))
     import(
-        // Compiled web tools are excluded by policy; skip the image-search downloader's construction.
         runtimeToolsDiModule(
-            includeWebImageSearch = false,
             scopeResolver = BackendSandboxScopeResolver,
         )
     )
     import(runtimeProviderHttpDiModule(appConfig.codexEndpoints))
-    import(runtimeLocalLlmDiModule())
     import(fileSystemSkillRegistryDiModule())
-    import(portableSkillRuntimeToolsDiModule())
+    import(skillRuntimeToolsDiModule())
     val skillOAuthConfig = SkillOAuthBackendConfig.from(appConfig)
     import(skillOAuthBackendModule(skillOAuthConfig))
 
@@ -221,7 +213,6 @@ fun backendDiModule(
     bindSingleton<SettingsProvider> {
         BackendSettingsProvider(
             preferenceStore = instance(),
-            localProviderAvailability = instance<LocalProviderAvailability>(),
             namedModels = instance(),
         )
     }
@@ -251,7 +242,6 @@ fun backendDiModule(
                 instance<ProviderHttpClients>().close()
                 (instanceOrNull<VkBotApi>() as? AutoCloseable)?.close()
             },
-            closeLocalRuntime = { instance<ru.souz.llms.local.LocalLlamaRuntime>().close() },
             closeSkillOAuthClients = {
                 skillOAuthConfig?.providers?.values.orEmpty().filterIsInstance<AutoCloseable>().forEach { it.close() }
                 instanceOrNull<SkillOAuthGatewayImpl>()?.close()
@@ -297,7 +287,6 @@ fun backendDiModule(
             userProviderKeyRepository = instance(),
             featureFlags = instance(),
             toolCatalog = instance<AgentToolCatalog>(tag = BackendDiTags.MERGED_TOOL_CATALOG),
-            localModelAvailability = instance<LocalProviderAvailability>(),
         )
     }
     bindSingleton {
@@ -369,7 +358,7 @@ fun backendDiModule(
             effectiveSettingsResolver = instance(),
             retryPolicy = appConfig.providerRetryPolicy,
             providerHttpClients = instance(),
-            localChatApi = instance<LocalChatAPI>(),
+            providerApiOverride = instanceOrNull(),
             codexOAuthService = instance<CodexOAuthService>(),
             codexEndpoints = instance(),
             agentStateRepository = instance(),
@@ -620,7 +609,6 @@ fun backendDiModule(
             effectiveSettingsResolver = instance(),
             toolCatalog = instance<AgentToolCatalog>(tag = BackendDiTags.MERGED_TOOL_CATALOG),
             featureFlags = instance(),
-            localModelAvailability = instance<LocalProviderAvailability>(),
             userProviderKeyRepository = instance(),
         )
     }
