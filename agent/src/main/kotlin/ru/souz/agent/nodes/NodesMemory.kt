@@ -42,10 +42,7 @@ internal class NodesMemory(
 
     /** Removes previous memory augmentation and optionally retrieves memory for the current input. */
     fun recall(name: String = "Memory recall", refreshSpeaker: Boolean = false): Node<String, String> = Node(name) { ctx ->
-        val identifiedVoice = ctx.toolInvocationMeta.attributes["voiceEmbeddingId"] != null
-        val voiceContext = identifiedVoice || ctx.toolInvocationMeta.attributes["voiceContext"] == "true"
-        val memoryBlock = if ((automaticMemoryRecall || refreshSpeaker || identifiedVoice) &&
-            (ctx.recallMemory || voiceContext)) retrieveMemoryBlock(ctx) else null
+        val memoryBlock = if (automaticMemoryRecall || refreshSpeaker || ctx.toolInvocationMeta.attributes["voiceEmbeddingId"] != null) retrieveMemoryBlock(ctx) else null
         var activeExchangeStartIndex = ctx.activeExchangeStartIndex
         val history = ctx.history
             .filterIndexed { index, message ->
@@ -100,7 +97,6 @@ internal class NodesMemory(
                 MemoryRetrievalRequest(
                     context = ctx.toolInvocationMeta.toMemoryContext(),
                     query = ctx.input,
-                    recallFacts = ctx.recallMemory,
                 )
             )
         } catch (error: CancellationException) {

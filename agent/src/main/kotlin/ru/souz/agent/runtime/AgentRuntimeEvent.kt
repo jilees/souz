@@ -18,9 +18,6 @@ interface AgentRuntimeEventSink {
 }
 
 sealed interface AgentRuntimeEvent {
-    /** Initial turn needs waiting feedback; the host chooses its text and delivery. */
-    data object InitialWait : AgentRuntimeEvent
-
     data class MemoryPromptAugmented(
         val addedBlock: String,
         val facts: List<ru.souz.memory.MemoryPromptFact> = emptyList(),

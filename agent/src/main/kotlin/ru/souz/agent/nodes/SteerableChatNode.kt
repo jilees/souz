@@ -108,9 +108,6 @@ internal class SteerableChatNode(
         )
         val next = map(history = nextHistory) { inputs.last().input }.copy(toolInvocationMeta = meta)
         val refresh = toolInvocationMeta.attributes["voiceEmbeddingId"] != null || meta.attributes["voiceEmbeddingId"] != null
-        return if (refresh && nodesMemory != null) {
-            val classified = nodesLLM.refreshMemoryDecision().execute(next, runtime)
-            nodesMemory.recall(refreshSpeaker = true).execute(classified, runtime)
-        } else next
+        return if (refresh && nodesMemory != null) nodesMemory.recall(refreshSpeaker = true).execute(next, runtime) else next
     }
 }

@@ -61,8 +61,6 @@ internal class HindsightConversationMemoryRuntime(
             else -> Unit
         }
 
-        if (!request.recallFacts) return MemoryRetrievalResult(renderedPromptBlock = speakerMemoryNotice(request.context))
-
         val bankId = request.context.ownerId.value
         val maxFacts = request.maxFacts ?: MemorySearchPolicy.DEFAULT_MAX_FACTS
         return try {

@@ -14,11 +14,8 @@ internal fun speakerMessageName(attributes: Map<String, String>, history: List<L
 internal fun List<LLMRequest.Message>.hasSpeakerContext(): Boolean =
     any { it.name?.startsWith(SPEAKER_NAME_PREFIX) == true }
 
-internal fun renderSpeakerContext(
-    history: List<LLMRequest.Message>,
-    speakerContext: Boolean = history.hasSpeakerContext(),
-): List<LLMRequest.Message> {
-    if (!speakerContext) return history
+internal fun renderSpeakerContext(history: List<LLMRequest.Message>): List<LLMRequest.Message> {
+    if (!history.hasSpeakerContext()) return history
     return history.map { message ->
         if (message.role != LLMMessageRole.user || message.isInjectedMemoryContextMessage() ||
             message.isInjectedContextMessage() || message.name == "souz_summarization_request") message

@@ -32,7 +32,6 @@ internal object NodesPlain {
                 images = ctx.inputAttachments.filter { it.mimeType.startsWith("image/") }.map { ru.souz.llms.ImageContent(it.file) }))
         }
         ctx.map(history = history, activeExchangeStartIndex = history.lastIndex) { ctx.input }
-            .copy(recallMemory = true, simpleReply = false)
     }
 
     fun responseToString(

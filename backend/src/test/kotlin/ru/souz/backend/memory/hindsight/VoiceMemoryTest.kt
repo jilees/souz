@@ -23,24 +23,6 @@ import kotlin.test.assertTrue
 
 class VoiceMemoryTest {
     @Test
-    fun `skipping fact retrieval preserves speaker context and explicit search remains independent`() = runTest {
-        var calls = 0
-        HttpClient(MockEngine {
-            calls++
-            respond("""{"results":[]}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
-        }) { providerHttpClientDefaults() }.use { client ->
-            val memory = HindsightConversationMemoryRuntime(client, "http://memory.test")
-            val context = MemoryContext(MemoryOwnerId("owner"), null, null, null, "speaker")
-            val skipped = memory.retrieveMemory(MemoryRetrievalRequest(context, "hello", recallFacts = false))
-            assertTrue(skipped.renderedPromptBlock.orEmpty().contains("Current speaker voice ID: speaker"))
-            assertTrue(skipped.facts.isEmpty())
-            assertEquals(0, calls)
-            memory.searchMemory(context, "name", emptyList(), 1)
-            assertEquals(2, calls)
-        }
-    }
-
-    @Test
     fun `personal recall takes precedence regardless of scores with a shared total budget`() = runTest {
         val bodies = mutableListOf<Pair<String, com.fasterxml.jackson.databind.JsonNode>>()
         val owner = UUID.randomUUID().toString()

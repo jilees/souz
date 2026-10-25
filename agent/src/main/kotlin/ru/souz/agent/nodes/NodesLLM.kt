@@ -1,10 +1,15 @@
 package ru.souz.agent.nodes
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import ru.souz.agent.AgentStreamChunk
@@ -14,16 +19,15 @@ import ru.souz.agent.runtime.AgentRuntimeEventSink
 import ru.souz.agent.state.AgentContext
 import ru.souz.agent.state.AgentSettings
 import ru.souz.agent.spi.AgentSettingsProvider
+import ru.souz.agent.spi.ModelRouting
 import ru.souz.agent.spi.RoutedModel
-import ru.souz.agent.spi.TurnClassification
-import ru.souz.agent.spi.TurnClassifier
+import ru.souz.agent.spi.TaskComplexityClassifier
 import ru.souz.llms.LLMChatAPI
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.LLMRequest
 import ru.souz.llms.LLMResponse
 import ru.souz.llms.LLMToolSetup
 import ru.souz.llms.toMessage
-import ru.souz.llms.toSystemPromptMessage
 import kotlin.time.TimeSource
 
 /**
@@ -33,7 +37,7 @@ internal class NodesLLM(
     private val llmApi: LLMChatAPI,
     private val settingsProvider: AgentSettingsProvider,
     private val conversationInstructions: suspend () -> String = { "" },
-    private val turnClassifier: TurnClassifier? = null,
+    private val complexityClassifier: TaskComplexityClassifier? = null,
     /** Rebinds a routed turn's tools to the chosen model: a `SpawnSubagent` child defaults to its parent's model. */
     private val routedTools: ((AgentSettings) -> List<LLMToolSetup>)? = null,
 ) {
@@ -42,88 +46,95 @@ internal class NodesLLM(
     private val mutableSideEffects = MutableSharedFlow<AgentStreamChunk>(extraBufferCapacity = 16)
     val sideEffects: Flow<AgentStreamChunk> = mutableSideEffects
 
-    /** Classify once, before recall or any conversational LLM call. */
-    fun prepareTurn(): Node<String, String> = Node("Turn classification") { ctx ->
-        val started = TimeSource.Monotonic.markNow()
-        val decision = classify(ctx)
-        val routing = ctx.settings.routing
-        val target = routing?.let { if (decision?.complex == false) it.simple else it.complex }
-        var prepared = if (target == null) ctx else ctx.on(ctx.settings.routedTo(target))
-        val simpleReply = routing != null && decision?.complex == false
-        if (simpleReply) {
-            // Discard the previous turn's Skill inventory along with executable tools.
-            val replaced = if (prepared.history.firstOrNull()?.role == LLMMessageRole.system) 1 else 0
-            prepared = prepared.withOnlyTools(emptyList()).map(
-                history = listOf(ctx.systemPrompt.toSystemPromptMessage()) + prepared.history.drop(replaced),
-                activeExchangeStartIndex = prepared.activeExchangeStartIndex + 1 - replaced,
-            )
+    /**
+     * Calls LLM's API with the current [AgentContext.history].
+     * Converts [AgentContext.history] into [AgentContext.input] as [LLMRequest.Chat] suitable for LLM call
+     *
+     * Modifies [AgentContext.history] and [AgentContext.input]
+     */
+    fun chat(
+        name: String = "LLM Chat",
+        streamRevision: Long = 0L,
+    ): Node<String, LLMResponse.Chat> =
+        Node(name, retryable = true) { ctx: AgentContext<String> ->
+            // Reuse one personality snapshot if compaction requires rebuilding this call.
+            val instructions = conversationInstructions()
+            val routing = ctx.settings.routing
+            if (routing != null && complexityClassifier != null) {
+                route(ctx, routing, complexityClassifier, instructions, streamRevision)
+            } else {
+                call(ctx, instructions, streamRevision)
+            }
         }
-        if (decision?.expectedFast != true) ctx.runtimeEventSink.emit(AgentRuntimeEvent.InitialWait)
-        l.info("Turn classification fast={} recall={} model={} durationMs={}",
-            decision?.expectedFast, decision?.recallMemory, prepared.settings.model, started.elapsedNow().inWholeMilliseconds)
-        prepared.copy(recallMemory = decision?.recallMemory != false, simpleReply = simpleReply)
-    }
-
-    fun refreshMemoryDecision(): Node<String, String> = Node("Memory classification") { ctx ->
-        ctx.copy(recallMemory = classify(ctx)?.recallMemory != false)
-    }
-
-    private suspend fun classify(ctx: AgentContext<String>): TurnClassification? = try {
-        turnClassifier?.classify(ctx.classificationRequest())
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (error: Exception) {
-        l.warn("Turn classification failed category={}", error.javaClass.simpleName)
-        null
-    }
-
-    fun chat(name: String = "LLM Chat", streamRevision: Long = 0L): Node<String, LLMResponse.Chat> =
-        Node(name, retryable = true) { ctx -> call(ctx, conversationInstructions(), streamRevision) }
 
     /** Calls the LLM on [ctx]'s settings and tools, compacting completed history when the request exceeds the budget. */
     private suspend fun call(
         ctx: AgentContext<String>,
         instructions: String,
         streamRevision: Long,
+        release: Deferred<Unit>? = null,
     ): AgentContext<LLMResponse.Chat> {
         fun build(history: List<LLMRequest.Message>) =
             ctx.toChatRequest(history, maxOutputTokens = CHAT_MAX_OUTPUT_TOKENS)
-                .copy(messages = renderSpeakerContext(history, ctx.history.hasSpeakerContext()))
+                .copy(messages = renderSpeakerContext(history))
                 .withConversationInstructions(instructions)
 
         var history = ctx.history
-        val requestHistory = if (ctx.simpleReply) ctx.recentDialogueHistory() else history
-        var request = build(requestHistory)
+        var request = build(history)
         if (request.exceedsContextBudget(ctx.settings.contextSize)) {
-            val compacted = llmApi.compactHistory(
-                ctx.toChatRequest(requestHistory, maxOutputTokens = SUMMARIZATION_MAX_OUTPUT_TOKENS),
-                ctx.activeExchangeStartIndex + requestHistory.size - history.size,
+            history = llmApi.compactHistory(
+                ctx.toChatRequest(history, maxOutputTokens = SUMMARIZATION_MAX_OUTPUT_TOKENS),
+                ctx.activeExchangeStartIndex,
             )
-            if (!ctx.simpleReply) history = compacted
-            request = build(compacted)
+            request = build(history)
         }
         val response = if (request.exceedsContextBudget(ctx.settings.contextSize)) {
             LLMResponse.Chat.Error(-1, "The conversation, instructions and tools exceed the context budget. " +
                 "Shorten the request or increase the configured context size.")
-        } else request(ctx, request, streamRevision)
+        } else request(ctx, request, streamRevision, release)
         return ctx.map(
             history = history + (response as? LLMResponse.Chat.Ok)?.choices.orEmpty().mapNotNull { it.toMessage() },
             activeExchangeStartIndex = ctx.activeExchangeStartIndex + history.size - ctx.history.size,
         ) { response }
     }
 
-    /** A request-only view: system instructions, twenty completed dialogue turns, and the full active exchange. */
-    private fun AgentContext<*>.recentDialogueHistory(): List<LLMRequest.Message> {
-        val previous = history.take(activeExchangeStartIndex)
-        val dialogue = previous.filter { message ->
-            !message.isInjectedContextMessage() && !message.isInjectedMemoryContextMessage() &&
-                (message.role == LLMMessageRole.user || message.role == LLMMessageRole.assistant &&
-                    message.content.isNotBlank() && message.functionCall == null &&
-                    message.functionsStateId == null && message.name != "souz_speaker_summary")
+    /**
+     * Starts the simple model at once and holds its streamed output until [classifier] decides. A complex turn
+     * cancels it and calls the complex model; a classifier failure uses the turn's own model. The chosen
+     * context, with settings without routing and tools bound to them, serves every later call of the turn.
+     */
+    private suspend fun route(
+        ctx: AgentContext<String>,
+        routing: ModelRouting,
+        classifier: TaskComplexityClassifier,
+        instructions: String,
+        streamRevision: Long,
+    ): AgentContext<LLMResponse.Chat> {
+        val normal = ctx.settings.copy(routing = null)
+        val simple = ctx.on(normal.routedTo(routing.simple))
+        val complex = ctx.on(normal.routedTo(routing.complex))
+        // A failed speculative call matters only when the simple model is chosen.
+        return supervisorScope {
+            val decided = CompletableDeferred<Unit>()
+            val speculative = async { call(simple, instructions, streamRevision, decided) }
+            val started = TimeSource.Monotonic.markNow()
+            val (verdict, target) = try {
+                if (classifier.isComplex(ctx.classificationRequest())) "complex" to complex else "simple" to simple
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                l.warn("Model routing classifier failed: {}", error.message)
+                "unknown" to ctx.on(normal)
+            }
+            l.info("Model routing class={} model={} durationMs={}", verdict, target.settings.model, started.elapsedNow().inWholeMilliseconds)
+            if (target === simple) {
+                decided.complete(Unit)
+                speculative.await()
+            } else {
+                speculative.cancelAndJoin()
+                call(target, instructions, streamRevision)
+            }
         }
-        val first = dialogue.indices.filter { dialogue[it].role == LLMMessageRole.user }.takeLast(20).firstOrNull()
-        return previous.filter { it.role == LLMMessageRole.system } +
-            (first?.let { dialogue.drop(it) }.orEmpty()) + history.drop(activeExchangeStartIndex)
     }
 
     private fun AgentSettings.routedTo(target: RoutedModel): AgentSettings =
@@ -138,11 +149,12 @@ internal class NodesLLM(
             maxOutputTokens = CLASSIFICATION_MAX_OUTPUT_TOKENS,
         ).copy(functions = emptyList())
 
-    /** Runs one call on the model already selected for this turn. */
+    /** Runs one LLM call; a streamed call holds its deltas until [release] completes. */
     private suspend fun request(
         ctx: AgentContext<*>,
         request: LLMRequest.Chat,
         streamRevision: Long,
+        release: Deferred<Unit>? = null,
     ): LLMResponse.Chat {
         l.debug("LLM input is {}", ctx.input)
         val response = withContext(Dispatchers.IO) {
@@ -151,6 +163,7 @@ internal class NodesLLM(
                     request = request.copy(stream = true),
                     eventSink = ctx.runtimeEventSink,
                     streamRevision = streamRevision,
+                    release = release,
                 )
             } else {
                 llmApi.message(request)
@@ -164,10 +177,12 @@ internal class NodesLLM(
         request: LLMRequest.Chat,
         eventSink: AgentRuntimeEventSink,
         streamRevision: Long,
+        release: Deferred<Unit>?,
     ): LLMResponse.Chat {
         var lastResponse: LLMResponse.Chat = LLMResponse.Chat.Error(-1, "Connection error")
         val choices = sortedMapOf<Int, ChoiceAccumulator>()
         val pending = StringBuilder()
+        val held = mutableListOf<String>()
         var chunkSize = 20
 
         suspend fun publish(content: String) {
@@ -186,11 +201,19 @@ internal class NodesLLM(
         }.collect { response ->
             response as LLMResponse.Chat.Ok
             val content = response.choices.firstOrNull()?.message?.content.orEmpty()
-            if (content.isNotEmpty()) publish(content)
+            if (content.isNotEmpty()) {
+                held += content
+                if (release?.isCompleted != false) {
+                    held.forEach { publish(it) }
+                    held.clear()
+                }
+            }
             response.choices.forEach { choice ->
                 choices.getOrPut(choice.index) { ChoiceAccumulator(choice.message.role) }.merge(choice)
             }
         }
+        release?.await()
+        held.forEach { publish(it) }
         if (pending.isNotEmpty()) {
             mutableSideEffects.tryEmit(AgentStreamChunk(pending.toString(), streamRevision))
         }

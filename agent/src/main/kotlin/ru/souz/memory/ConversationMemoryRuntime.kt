@@ -85,8 +85,6 @@ data class MemoryRetrievalRequest(
     val query: String,
     val maxFacts: Int? = null,
     val maxPromptTokens: Int? = null,
-    /** False requests attribution notices without searching stored facts. */
-    val recallFacts: Boolean = true,
 )
 
 data class MemoryRetrievalTrace(
