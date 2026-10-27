@@ -16,6 +16,7 @@ import ru.souz.backend.hooks.HookLlmBudget.Companion.withProviderCall
 import ru.souz.backend.metrics.BackendMetrics
 import ru.souz.backend.metrics.metricOutcome
 import ru.souz.backend.metrics.responseMetricOutcome
+import ru.souz.backend.config.NamedLlmConfig
 import ru.souz.backend.config.NamedLlmModel
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.EmbeddingsModelSelection
@@ -47,7 +48,7 @@ internal class BackendExecutionLlmChatApi(
     private val providerApiOverride: ((LlmProvider) -> LLMChatAPI?)? = null,
     private val hookBudget: HookLlmBudget? = null,
     private val metrics: BackendMetrics? = null,
-    private val namedModels: Map<String, NamedLlmModel> = emptyMap(),
+    private val llmConfig: NamedLlmConfig = NamedLlmConfig(),
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
     private val codexEndpoints: CodexEndpoints = CodexEndpoints(),
     private val fallbackModels: List<String> = emptyList(),
@@ -112,7 +113,7 @@ internal class BackendExecutionLlmChatApi(
             is ChatRoute.Rejected -> return flow { emit(route.error) }
         }
         val api = apiFor(provider, namedModel)
-        return retryingStream(provider, api, request, body.model.takeIf(namedModels::containsKey))
+        return retryingStream(provider, api, request, body.model.takeIf(llmConfig.models::containsKey))
     }
 
     override suspend fun embeddings(body: LLMRequest.Embeddings): LLMResponse.Embeddings {
@@ -164,18 +165,20 @@ internal class BackendExecutionLlmChatApi(
 
     private fun currentProvider(): LlmProvider = settingsProvider.gigaModel.provider
 
-    private fun currentNamedModel(): NamedLlmModel? = namedModels[
+    private fun currentNamedModel(): NamedLlmModel? = llmConfig.models[
         settingsProvider.executionModelId(settingsProvider.gigaModel)
     ]
 
     private fun chatRoute(body: LLMRequest.Chat): ChatRoute {
         if (body.provider == null || body.provider == LlmProvider.OPENAI) {
-            namedModels[body.model]?.let { model ->
+            llmConfig.models[body.model]?.let { model ->
                 return ChatRoute.Ready(LlmProvider.OPENAI, body.copy(model = model.modelId, provider = LlmProvider.OPENAI), model, body.model)
             }
         }
         body.provider?.let { provider ->
-            return if (provider in BackendLlmSupport.chatProviders) ChatRoute.Ready(provider, body)
+            val effort = body.reasoningEffort ?: findLLMModel(body.model)?.takeIf { it.provider == provider }
+                ?.let { llmConfig.reasoningEfforts[it.alias] }
+            return if (provider in BackendLlmSupport.chatProviders) ChatRoute.Ready(provider, body.copy(reasoningEffort = effort))
             else rejectChatRoute(ModelResolution.UnsupportedProvider(body, provider))
         }
         return when (val resolution = resolveChatModel(
@@ -211,6 +214,7 @@ internal class BackendExecutionLlmChatApi(
                     },
                     apiKey = namedModel?.apiKey ?: resolveCredentialLocked(provider).apiKey,
                     baseUrl = namedModel?.baseUrl,
+                    requestParameters = namedModel?.parameters,
                 )
                 LlmProvider.ANTHROPIC -> AnthropicChatAPI(
                     settingsProvider,
@@ -308,7 +312,7 @@ internal class BackendExecutionLlmChatApi(
             )
         })
         return input.prepare(userId, body, modelName) { model, prompt, image ->
-            val named = namedModels[model]
+            val named = llmConfig.models[model]
             val known = ru.souz.llms.findLLMModel(model)
             require(named != null || known != null) { "attachment_vision_model_unknown" }
             val response = message(body.copy(

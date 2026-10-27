@@ -23,6 +23,7 @@ import ru.souz.backend.http.BackendHttpRoutes
 import ru.souz.backend.toolcall.model.ToolCallStatus
 import ru.souz.backend.toolcall.repository.ToolCallContext
 import ru.souz.backend.llm.withNamedLlmConfig
+import ru.souz.backend.memory.hindsight.MEMORY_MUTATION_NOTICE
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.restJsonMapper
 import ru.souz.llms.http.ProviderHttpClients
@@ -127,16 +128,20 @@ class BackendSubagentE2eTest {
             withPublicSocket(chatId) { session -> withMultiChatSocket { observer ->
                 try {
                     observer.send(Frame.Text("""{"kind":"chat.subscribe","chatId":"$chatId","requestId":"watch"}"""))
-                    assertEquals("accepted", readJson(observer)["status"].asText())
+                    assertEquals("accepted", readJson(observer, includeProgress = true)["status"].asText())
                     session.send(Frame.Text(messageFrame(chatId, userId, "delegate", text = "delegate the question", deviceId = "child-device")))
-                    val ack = readJson(session)
+                    val ack = readJson(session, includeProgress = true)
                     assertEquals("accepted", ack["status"].asText())
-                    assertEquals("thread.status", readJson(session)["type"].asText())
+                    assertEquals("thread.status", readJson(session, includeProgress = true)["type"].asText())
                     val threadId = ack["thread"]["id"].asText()
                     // The tool has started before either subscriber reads or acknowledges progress.
                     llm.awaitPrompt(task)
+                    val wait = readJson(session, includeProgress = true)
+                    assertEquals("assistant.message", wait["type"].asText())
+                    assertTrue(wait["payload"]["content"].asText().isNotBlank())
+                    assertEquals(wait, readJson(observer, includeProgress = true))
                     for (socket in listOf(session, observer)) for (content in blocks) {
-                        val event = readJson(socket)
+                        val event = readJson(socket, includeProgress = true)
                         assertEquals("assistant.message", event["type"].asText())
                         assertEquals(chatId, event["chatId"].asText())
                         assertEquals(threadId, event["threadId"].asText())
@@ -144,14 +149,14 @@ class BackendSubagentE2eTest {
                         assertEquals(json.createObjectNode().put("content", content), event["payload"])
                     }
                     releaseChild.complete(Unit)
-                    val childProgress = readJson(session)
-                    assertEquals(childProgress, readJson(observer))
+                    val childProgress = readJson(session, includeProgress = true)
+                    assertEquals(childProgress, readJson(observer, includeProgress = true))
                     assertEquals("assistant.message", childProgress["type"].asText())
                     assertEquals(threadId, childProgress["threadId"].asText())
                     assertEquals("child progress", childProgress["payload"]["content"].asText())
                     assertTrue(childProgress["seq"].isNull)
-                    val started = readJson(session)
-                    assertEquals(started, readJson(observer))
+                    val started = readJson(session, includeProgress = true)
+                    assertEquals(started, readJson(observer, includeProgress = true))
                     val payload = started["payload"]
                     assertEquals("tool.call.started", started["type"].asText())
                     assertEquals(chatId, started["chatId"].asText())
@@ -162,16 +167,16 @@ class BackendSubagentE2eTest {
                     session.send(Frame.Text(
                         """{"kind":"tool.result","chatId":"$chatId","threadId":"$threadId","toolCallId":${payload["toolCallId"]},"status":"succeeded","result":{"answer":"Horror"}}"""
                     ))
-                    assertEquals("accepted", readJson(session)["status"].asText())
-                    val terminal = readJson(session)
+                    assertEquals("accepted", readJson(session, includeProgress = true)["status"].asText())
+                    val terminal = readJson(session, includeProgress = true)
                     assertEquals("thread.completed", terminal["type"].asText())
                     assertEquals(threadId, terminal["threadId"].asText())
-                    assertEquals(terminal, readJson(observer))
+                    assertEquals(terminal, readJson(observer, includeProgress = true))
                     withPublicSocket(chatId) { replay ->
-                        assertEquals(started, readJson(replay))
-                        assertEquals(terminal, readJson(replay))
+                        assertEquals(started, readJson(replay, includeProgress = true))
+                        assertEquals(terminal, readJson(replay, includeProgress = true))
                         replay.send(Frame.Text(historyFrame(chatId, "history", "user", "passive context")))
-                        assertEquals("ack", readJson(replay)["kind"].asText())
+                        assertEquals("ack", readJson(replay, includeProgress = true)["kind"].asText())
                     }
                 } finally {
                     releaseChild.complete(Unit)
@@ -181,7 +186,7 @@ class BackendSubagentE2eTest {
             val system = llm.requests.first().messages.first().content
             assertTrue("custom base" in system)
             assertTrue("Перед каждым вызовом инструментов" in system)
-            assertTrue(ru.souz.backend.memory.hindsight.UNSUPPORTED_MEMORY_MUTATION_NOTICE in system)
+            assertTrue(MEMORY_MUTATION_NOTICE in system)
             val childRequests = llm.requests.filter { it.functions.map { tool -> tool.name } == listOf("RunSkillCommand") }
             assertEquals(2, childRequests.size)
             assertTrue("# Ask the user" in childRequests.first().messages.first().content)

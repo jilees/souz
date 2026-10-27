@@ -57,6 +57,7 @@ class SubagentToolTest {
                 toolCallId = "spawn-call", eventSink = collectingSink(events),
             )
             assertEquals("child answer", restJsonMapper.readTree(result.content)["result"].asText())
+            assertTrue(events.none { it is AgentRuntimeEvent.InitialWait })
             assertEquals(listOf("SpawnSubagent", "Selected"), events.filterIsInstance<AgentRuntimeEvent.ToolCallStarted>().map { it.name })
             assertEquals(listOf("Selected", "SpawnSubagent"), events.filterIsInstance<AgentRuntimeEvent.ToolCallFinished>().map { it.name })
             assertEquals("screen contents", events.filterIsInstance<AgentRuntimeEvent.ToolCallFinished>().first().result)

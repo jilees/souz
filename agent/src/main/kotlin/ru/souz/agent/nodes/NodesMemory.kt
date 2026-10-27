@@ -41,8 +41,8 @@ internal class NodesMemory(
     private val logger = LoggerFactory.getLogger(NodesMemory::class.java)
 
     /** Removes previous memory augmentation and optionally retrieves memory for the current input. */
-    fun recall(name: String = "Memory recall", refreshSpeaker: Boolean = false): Node<String, String> = Node(name) { ctx ->
-        val memoryBlock = if (automaticMemoryRecall || refreshSpeaker || ctx.toolInvocationMeta.attributes["voiceEmbeddingId"] != null) retrieveMemoryBlock(ctx) else null
+    fun recall(name: String = "Memory recall"): Node<String, String> = Node(name) { ctx ->
+        val memoryBlock = if (automaticMemoryRecall) retrieveMemoryBlock(ctx) else null
         var activeExchangeStartIndex = ctx.activeExchangeStartIndex
         val history = ctx.history
             .filterIndexed { index, message ->
@@ -154,6 +154,9 @@ internal class NodesMemory(
             precedingAssistantMessage = ctx.history.take(userMessageIndex).lastOrNull {
                 it.role == LLMMessageRole.assistant && it.functionCall == null
             }?.content,
+            toolNames = evidenceMessages.mapNotNullTo(HashSet()) { message ->
+                message.name?.takeIf { message.role == LLMMessageRole.function }
+            },
         )
     }
 

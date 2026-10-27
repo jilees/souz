@@ -60,15 +60,16 @@ class BackendVoiceMemoryE2eTest {
                 assertEquals(retained.bank == personalBank, item["tags"].isEmpty)
                 assertTrue(retained.body.has("operation_id"))
             }
-            // Default recall flag is off, but identified voice turns still receive scoped recall.
-            assertTrue(llm.requests.all { request -> request.messages.any { it.name == "souz_injected_memory" && voice in it.content } })
+            // The default off flag applies to identified voices as well as other channels.
+            assertTrue(llm.requests.none { request -> request.messages.any { it.name == "souz_injected_memory" } })
         }
     }
 
     @Test
     fun `personal facts are recalled across chats and isolated by both owner and voice`() {
         val remote = VoiceMemoryRemote()
-        backendE2eTest("voice_recall", hindsightUrl = VOICE_MEMORY_URL, providerClients = remote.clients()) {
+        backendE2eTest("voice_recall", hindsightUrl = VOICE_MEMORY_URL, providerClients = remote.clients(),
+            featureFlags = ru.souz.backend.config.BackendFeatureFlags(wsEvents = true, wsAutomaticMemoryRecall = true)) {
             val owner = UUID.randomUUID().toString(); val voice = UUID.randomUUID().toString()
             val first = createPublicChat(owner)
             submitVoice(first, owner, voice, "name", "My name is Sasha")
@@ -189,7 +190,7 @@ class BackendVoiceMemoryE2eTest {
     }
 
     @Test
-    fun `active speaker changes refresh memory and final capture belongs to the submitted message`() {
+    fun `active speaker changes respect disabled recall and final capture belongs to submitted message`() {
         val remote = VoiceMemoryRemote()
         val started = listOf(CompletableDeferred<Unit>(), CompletableDeferred(), CompletableDeferred())
         var attempt = 0
@@ -205,17 +206,18 @@ class BackendVoiceMemoryE2eTest {
             withPublicSocket(chat) { socket ->
                 for ((index, voice) in listOf(alice, bob, null, bob).withIndex()) {
                     socket.send(Frame.Text(voiceFrame(chat, owner, voice, "input-$index", "My name is Bob $index")))
-                    assertEquals("accepted", readJson(socket)["status"].asText())
-                    assertEquals("thread.status", readJson(socket)["type"].asText())
+                    assertEquals("accepted", readJson(socket, includeProgress = true)["status"].asText())
+                    assertEquals("thread.status", readJson(socket, includeProgress = true)["type"].asText())
+                    if (index == 0) assertEquals("assistant.message", readJson(socket, includeProgress = true)["type"].asText())
                     if (index < started.size) withTimeout(5_000) { started[index].await() }
                 }
-                assertEquals("thread.completed", readJson(socket)["type"].asText())
+                assertEquals("thread.completed", readJson(socket, includeProgress = true)["type"].asText())
             }
             val injections = llm.requests.map { it.messages.filter { message -> (message.name == "souz_injected_memory" || message.name == "souz_current_speaker") }.joinToString("\n") { it.content } }
-            assertTrue(alice in injections[0])
-            assertTrue(bob in injections[1] && alice !in injections[1])
+            assertEquals("", injections[0])
+            assertEquals("", injections[1])
             assertTrue("No voice identified" in injections[2] && bob !in injections[2])
-            assertTrue(bob in injections[3])
+            assertEquals("", injections[3])
             val userLabels = llm.requests.last().messages.filter { it.content.startsWith("[souz_speaker") }
             assertEquals(listOf(alice, bob, "unknown", bob), userLabels.map { it.content.substringAfter("id=\"").substringBefore('"') })
             awaitVoiceQueue(chat)
@@ -265,11 +267,12 @@ private suspend fun BackendE2eScope.submitVoice(chat: String, owner: String, voi
     withPublicSocket(chat) { socket ->
         socket.send(Frame.Text(voiceFrame(chat, owner, voice, request, text)))
         // Reconnecting to this chat may replay completed events before the new request ACK.
-        var ack = readJson(socket)
-        while (ack.path("kind").asText() != "ack" || ack.path("requestId").asText() != request) ack = readJson(socket)
+        var ack = readJson(socket, includeProgress = true)
+        while (ack.path("kind").asText() != "ack" || ack.path("requestId").asText() != request) ack = readJson(socket, includeProgress = true)
         assertEquals("accepted", ack["status"].asText())
-        assertEquals("thread.status", readJson(socket)["type"].asText())
-        assertEquals("thread.completed", readJson(socket)["type"].asText())
+        assertEquals("thread.status", readJson(socket, includeProgress = true)["type"].asText())
+        assertEquals("assistant.message", readJson(socket, includeProgress = true)["type"].asText())
+        assertEquals("thread.completed", readJson(socket, includeProgress = true)["type"].asText())
     }
 }
 

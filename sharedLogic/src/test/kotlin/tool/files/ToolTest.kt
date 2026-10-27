@@ -264,18 +264,18 @@ class ToolTest {
     @Test
     fun `test ToolListFiles`() {
         val tempDir = createTempDirectory()
+        val canonicalBase = tempDir.canonicalPath
         try {
             createSampleFiles(tempDir)
             val listFiles = ToolListFiles(createFilesToolUtil(listOf("~/Library/")))
             val resources = listFiles(ToolListFiles.Input(tempDir.absolutePath))
             val resourceFiles = resources.removePrefix("[").removeSuffix("]").split(",").toSet()
-            val canonicalRoot = tempDir.canonicalPath
             assertEquals(
                 setOf(
-                    "${canonicalRoot}/directory/",
-                    "${canonicalRoot}/directory/file.txt",
-                    "${canonicalRoot}/sample.csv",
-                    "${canonicalRoot}/test.txt",
+                    "$canonicalBase/directory/",
+                    "$canonicalBase/directory/file.txt",
+                    "$canonicalBase/sample.csv",
+                    "$canonicalBase/test.txt",
                 ),
                 resourceFiles
             )

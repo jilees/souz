@@ -14,6 +14,7 @@ import ru.souz.agent.state.AgentContext
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.LLMRequest
 import ru.souz.llms.LLMResponse
+import ru.souz.llms.isToolUse
 
 /** Main steerable chat node that owns each cancellable LLM attempt and replans around queued input. */
 internal class SteerableChatNode(
@@ -41,7 +42,7 @@ internal class SteerableChatNode(
 
             val responseContext = runLlmAttempt(current, runtime, request) ?: continue
             val response = responseContext.input
-            val toolResponse = (response as? LLMResponse.Chat.Ok)?.takeIf { it.isToolUse }
+            val toolResponse = (response as? LLMResponse.Chat.Ok)?.takeIf { it.isToolUse() }
             val queuedInputs = if (toolResponse != null) {
                 // An empty drain accepts this tool batch. Later input waits for its results.
                 controller.drain()
@@ -88,9 +89,6 @@ internal class SteerableChatNode(
         }
     }
 
-    private val LLMResponse.Chat.Ok.isToolUse: Boolean
-        get() = choices.any { it.message.functionCall != null }
-
     private suspend fun AgentContext<*>.appendInputs(inputs: List<ActiveRunInput>, runtime: GraphRuntime): AgentContext<String> {
         require(inputs.isNotEmpty()) { "Queued input is required" }
         val nextHistory = buildList {
@@ -108,6 +106,6 @@ internal class SteerableChatNode(
         )
         val next = map(history = nextHistory) { inputs.last().input }.copy(toolInvocationMeta = meta)
         val refresh = toolInvocationMeta.attributes["voiceEmbeddingId"] != null || meta.attributes["voiceEmbeddingId"] != null
-        return if (refresh && nodesMemory != null) nodesMemory.recall(refreshSpeaker = true).execute(next, runtime) else next
+        return if (refresh && nodesMemory != null) nodesMemory.recall().execute(next, runtime) else next
     }
 }

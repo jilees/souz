@@ -21,6 +21,8 @@ data class AgentContext<I>(
     val replyAttachments: List<ru.souz.agent.MessageAttachment> = emptyList(),
     /** Execution-local boundary; messages from here onward must survive compaction unchanged. */
     val activeExchangeStartIndex: Int = 0,
+    /** Execution-local discovery hints, separate from advertised and executable tools. */
+    val routingCapabilities: Map<String, String> = emptyMap(),
 ) {
     init {
         require(activeExchangeStartIndex in 0..history.size) { "Active exchange boundary must be within history." }
@@ -41,6 +43,7 @@ data class AgentContext<I>(
         activeTools: List<LLMRequest.Function> = this.activeTools,
         systemPrompt: String = this.systemPrompt,
         activeExchangeStartIndex: Int = this.activeExchangeStartIndex,
+        routingCapabilities: Map<String, String> = this.routingCapabilities,
         transform: (I) -> O = { it as O },
     ): AgentContext<O> = AgentContext(
         input = transform(input),
@@ -53,6 +56,7 @@ data class AgentContext<I>(
         inputAttachments = inputAttachments,
         replyAttachments = replyAttachments,
         activeExchangeStartIndex = activeExchangeStartIndex,
+        routingCapabilities = routingCapabilities,
     )
 }
 

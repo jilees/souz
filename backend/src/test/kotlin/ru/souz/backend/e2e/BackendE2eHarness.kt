@@ -48,6 +48,8 @@ import org.kodein.di.direct
 import org.kodein.di.instance
 import org.kodein.di.instanceOrNull
 import ru.souz.backend.memory.hindsight.HistoryMemoryWorker
+import ru.souz.backend.memory.hindsight.HindsightConversationMemoryRuntime
+import ru.souz.backend.options.repository.OptionRepository
 import ru.souz.backend.scheduler.ScheduledTaskConfig
 import ru.souz.backend.scheduler.ScheduledTaskRunner
 import ru.souz.jobs.JobService
@@ -84,6 +86,7 @@ import ru.souz.backend.vk.VkBotPollingService
 import ru.souz.llms.LLMChatAPI
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.LLMModel
+import ru.souz.memory.ConversationMemoryRuntime
 import kotlin.time.Duration.Companion.milliseconds
 
 internal const val E2E_PROXY_TOKEN = "proxy-secret"
@@ -215,10 +218,12 @@ internal class BackendE2eScope(
 
     private val personalityCalls = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
-    // Emulate Orion's settings handler in unrelated workflows. Protocol tests read raw frames.
-    suspend fun readJson(session: DefaultClientWebSocketSession): JsonNode {
+    // Emulate Orion settings and ignore optional speech progress in unrelated workflows.
+    // Progress tests opt in; protocol tests can also read raw frames.
+    suspend fun readJson(session: DefaultClientWebSocketSession, includeProgress: Boolean = false): JsonNode {
         while (true) {
             val frame = readRawJson(session)
+            if (!includeProgress && frame.path("type").asText() == "assistant.message") continue
             if (frame.path("payload").path("name").asText() == ru.souz.backend.personality.PERSONALITY_SYNC_COMMAND) {
                 personalityCalls.add(frame["payload"]["toolCallId"].asText())
                 session.send(Frame.Text(toolResultFrame(frame, "succeeded", mapOf(
@@ -398,6 +403,20 @@ internal class BackendE2eBackend(
         )
         bindSingleton<SkillClassifier>(overrides = true) { SkillClassifier { _, _ -> emptySet() } }
         bindSingleton<Clock>(overrides = true) { clock }
+        bindSingleton<PostgresJobService>(overrides = true) {
+            PostgresJobService(instance<HikariDataSource>(), pollIntervalMillis = 50)
+        }
+        if (appConfig.hindsightApiUrl != null) {
+            bindSingleton<HistoryMemoryWorker>(overrides = true) {
+                HistoryMemoryWorker(
+                    repository = instance(),
+                    memory = instance<ConversationMemoryRuntime>() as HindsightConversationMemoryRuntime,
+                    clock = instance(),
+                    pollIntervalMillis = 50,
+                    voiceRouting = ru.souz.backend.memory.hindsight.VoiceMemoryRouting { instance<ru.souz.jev.JevClient>() },
+                )
+            }
+        }
         if (sandboxFactory != null) {
             bindSingleton<RuntimeSandboxFactory>(overrides = true) { sandboxFactory(instance()) }
         }
@@ -491,6 +510,8 @@ internal class BackendE2eBackend(
     val executionRepository: ru.souz.backend.execution.repository.AgentExecutionRepository get() = di.direct.instance()
 
     val chatRepository: ru.souz.backend.chat.repository.ChatRepository get() = di.direct.instance()
+
+    val optionRepository: OptionRepository get() = di.direct.instance()
 
     suspend fun recoverClientThreads() = di.direct.instance<ClientThreadRecoveryService>().recover()
 

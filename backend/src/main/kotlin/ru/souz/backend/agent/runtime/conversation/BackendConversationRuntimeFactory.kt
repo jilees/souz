@@ -43,7 +43,7 @@ import ru.souz.backend.common.backendLogContext
 import ru.souz.backend.hooks.HookLlmBudget
 import ru.souz.backend.hooks.HookLlmBudget.Companion.withProviderCall
 import ru.souz.backend.hooks.HookStore
-import ru.souz.backend.config.NamedLlmModel
+import ru.souz.backend.config.NamedLlmConfig
 import ru.souz.backend.http.clientFrameMapper
 import ru.souz.backend.llm.BackendExecutionLlmChatApi
 import ru.souz.backend.llm.ModelFailureMemory
@@ -105,6 +105,7 @@ internal class BackendConversationRuntimeFactory(
     private val getKnowledgeTool: LLMToolSetup,
     private val searchKnowledgeTool: LLMToolSetup,
     private val searchMemoryTool: LLMToolSetup,
+    private val forgetMemoryTools: List<LLMToolSetup>,
     private val knowledgeStore: ConversationKnowledgeStore,
     private val agentBackgroundScope: CoroutineScope,
     private val memoryRuntime: ConversationMemoryRuntime,
@@ -112,7 +113,7 @@ internal class BackendConversationRuntimeFactory(
     private val hookStore: HookStore,
     private val executionQuotas: ExecutionQuotaManager,
     private val metrics: BackendMetrics? = null,
-    private val namedModels: Map<String, NamedLlmModel> = emptyMap(),
+    private val llmConfig: NamedLlmConfig = NamedLlmConfig(),
     private val providerApiOverride: ((LlmProvider) -> LLMChatAPI?)? = null,
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
     private val codexEndpoints: CodexEndpoints = CodexEndpoints(),
@@ -150,7 +151,7 @@ internal class BackendConversationRuntimeFactory(
         val hookBudget = request.executionId?.let { id -> hookStore.find(key.userId, UUID.fromString(id)) }
             ?.let { HookLlmBudget(it, hookStore, executionQuotas) }
         val executionApi = BackendExecutionLlmChatApi(
-            namedModels = namedModels,
+            llmConfig = llmConfig,
             userId = key.userId,
             settingsProvider = settingsProvider,
             credentialResolver = credentialResolver,
@@ -291,6 +292,7 @@ internal class BackendConversationRuntimeFactory(
                 searchMemory = searchMemoryTool,
                 runtimeCommand = runtimeCommandTool,
                 spawnSubagent = subagentTools::create,
+                forgetMemory = forgetMemoryTools,
             ),
             knowledgeStore = knowledgeStore,
             telemetry = toolTelemetry,

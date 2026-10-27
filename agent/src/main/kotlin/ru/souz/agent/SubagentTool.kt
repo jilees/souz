@@ -90,7 +90,11 @@ class SubagentTool(
                 activeTools = setup.settings.tools.byName.values.map { it.fn },
                 systemPrompt = setup.systemPrompt,
                 toolInvocationMeta = meta,
-                runtimeEventSink = eventSink,
+                runtimeEventSink = object : AgentRuntimeEventSink {
+                    override suspend fun emit(event: ru.souz.agent.runtime.AgentRuntimeEvent) {
+                        if (event != ru.souz.agent.runtime.AgentRuntimeEvent.InitialWait) eventSink.emit(event)
+                    }
+                },
             )
             val result = createAgent(input.maxTurns).execute(childContext)
             currentCoroutineContext().ensureActive()

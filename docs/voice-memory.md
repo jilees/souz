@@ -8,9 +8,13 @@ The Client-Souz `message.submit` payload accepts optional `voice.embeddingId`, a
 - Personal bank: `person:<userId>:<embeddingId>`. Personal captures are untagged and available across chats.
 - Household captures retain the existing scope rule: ordinary turns use `chat:<chatId>`, explicit remember requests are global.
 
-Identified voice messages automatically recall both banks even when `SOUZ_FEATURE_WS_AUTOMATIC_MEMORY_RECALL` is false. Requests run concurrently and share the recall token budget. Personal results precede household results within the total fact limit. The prompt and `SearchMemory` results identify the source scope; personal facts about the current speaker take precedence over conflicting household facts. An unspecified household “user” cannot establish the speaker's name. A missing personal bank is normal; a failure of one bank does not discard the other's results.
+Automatic recall is disabled by default for identified voices too. When `SOUZ_FEATURE_WS_AUTOMATIC_MEMORY_RECALL` is enabled, identified voice messages recall both banks. Requests run concurrently and share the recall token budget. Personal results precede household results within the total fact limit. The prompt and `SearchMemory` results identify the source scope; personal facts about the current speaker take precedence over conflicting household facts. An unspecified household “user” cannot establish the speaker's name. A missing personal bank is normal; a failure of one bank does not discard the other's results.
 
-Each accepted message carries its own voice and durable message ID. Active-run input updates those values when consumed and refreshes memory before another LLM attempt. Missing voice clears the prior identity. In-flight tools keep the identity with which they started. Only the latest submitted input and accepted final response are new capture evidence; superseded inputs are not independently completed turns. Names use ordinary memory capture and recall; there are no name-specific tools or profile tables.
+Each accepted message carries its own voice and durable message ID. Active-run input updates those values when consumed and refreshes memory before another LLM attempt only when automatic recall is enabled. Missing voice clears the prior identity. In-flight tools keep the identity with which they started. Only the latest submitted input and accepted final response are new capture evidence; superseded inputs are not independently completed turns. Names use ordinary memory capture and recall; there are no name-specific tools or profile tables.
+
+## Memory deletion scope
+
+`ForgetMemoryFact` and `ForgetAllMemory` address the account's household bank only. They do not route by voice identity. `ForgetMemoryFact` expects a raw household fact ID; bank-prefixed IDs returned by voice `SearchMemory` are not supported. `ForgetAllMemory` leaves personal banks intact. The deletion tools' user-wide wording does not describe this two-bank voice configuration; personal-bank deletion needs a separate integration.
 
 ## Speaker attribution in conversation
 
