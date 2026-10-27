@@ -157,6 +157,7 @@ data class BackendAppConfig(
     val policyPrompt: String? = null,
     val attachments: AttachmentStorageConfig? = null,
     val codexEndpoints: CodexEndpoints = CodexEndpoints(),
+    val imageModel: String = "gpt-image-1",
 ) {
     fun validate(): BackendAppConfig {
         server.validate()
@@ -206,6 +207,7 @@ data class BackendAppConfig(
             BackendAppConfig(
                 codexEndpoints = CodexEndpoints.load { source.value(it, it) },
                 attachments = AttachmentStorageConfig.load(source),
+                imageModel = ru.souz.backend.config.loadImageModel(source),
                 featureFlags = BackendFeatureFlags.load(source),
                 hooks = HookConfig(
                     owners = source.value("SOUZ_HOOK_OWNERS", "souz.hooks.owners")

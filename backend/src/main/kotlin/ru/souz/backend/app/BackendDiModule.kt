@@ -186,12 +186,7 @@ fun backendDiModule(
         bindSingleton { ru.souz.tool.files.DocumentMediaTools(instance()) }
         bindSingleton { ru.souz.backend.attachments.AttachmentMediaOperations(instance<HikariDataSource>()) }
         bindSingleton {
-            ru.souz.backend.attachments.AttachmentMedia(config, instance(), instance<ProviderHttpClients>().openAi, instance(), instance(),
-                codexImageGateway = if (config.imageProvider == "CODEX") ru.souz.llms.codex.CodexImageGenerationGateway(
-                    instance<SettingsProvider>(), instance<CodexOAuthService>(), instance<ProviderHttpClients>().openAi, config.maxFileBytes,
-                    endpoints = instance(),
-                ) else null,
-            )
+            ru.souz.backend.attachments.AttachmentMedia(config, instance(), instance<ProviderHttpClients>().openAi, instance(), instance())
         }
         bindSingleton { ru.souz.backend.attachments.AttachmentMediaTools(instance()) }
     }
@@ -354,6 +349,8 @@ fun backendDiModule(
             userSettingsRepository = instance(),
             personalitySync = instance(),
             llmConfig = instance(),
+            imageModel = appConfig.imageModel,
+            attachmentMediaTools = instanceOrNull(),
             attachmentInput = instanceOrNull(),
             skillClassifier = instance(),
             fallbackSkillClassifier = instanceOrNull<SkillClassifier>(tag = FRIDA_FALLBACK_TAG),

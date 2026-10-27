@@ -85,7 +85,7 @@ internal class NodesLLM(
         var request = build(history)
         if (request.exceedsContextBudget(ctx.settings.contextSize)) {
             history = llmApi.compactHistory(
-                ctx.toChatRequest(history, maxOutputTokens = SUMMARIZATION_MAX_OUTPUT_TOKENS),
+                ctx.toChatRequest(history, maxOutputTokens = settingsProvider.summarizationMaxOutputTokens),
                 ctx.activeExchangeStartIndex,
             )
             request = build(history)

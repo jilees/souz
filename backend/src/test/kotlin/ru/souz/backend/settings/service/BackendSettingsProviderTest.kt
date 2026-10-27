@@ -20,6 +20,19 @@ import ru.souz.db.SUBAGENT_MODELS_JSON
 
 class BackendSettingsProviderTest {
     @Test
+    fun `summary output budget defaults to 2048 and validates server overrides`() {
+        assertEquals(2_048, provider().summarizationMaxOutputTokens)
+        assertEquals(3_072, provider(properties = mapOf("SUMMARIZATION_MAX_OUTPUT_TOKENS" to "3072")).summarizationMaxOutputTokens)
+        val configured = provider(env = mapOf("SUMMARIZATION_MAX_OUTPUT_TOKENS" to " 4096 "),
+            properties = mapOf("SUMMARIZATION_MAX_OUTPUT_TOKENS" to "3072"))
+        assertEquals(4_096, configured.summarizationMaxOutputTokens)
+        assertEquals(125_000, configured.contextSize)
+        for (value in listOf("0", "-1", "1.5", "invalid", "", " ", "2147483648")) {
+            assertFailsWith<IllegalArgumentException> { provider(env = mapOf("SUMMARIZATION_MAX_OUTPUT_TOKENS" to value)) }
+        }
+    }
+
+    @Test
     fun `one server context window is loaded and validated at startup`() {
         assertEquals(125_000, provider().contextSize)
         assertEquals(24_000, provider(env = mapOf("CONTEXT_SIZE" to "24000")).contextSize)

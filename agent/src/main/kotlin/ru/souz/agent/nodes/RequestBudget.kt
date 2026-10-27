@@ -4,7 +4,6 @@ import ru.souz.llms.LLMRequest
 import ru.souz.llms.restJsonMapper
 
 internal const val CHAT_MAX_OUTPUT_TOKENS = 4_096
-internal const val SUMMARIZATION_MAX_OUTPUT_TOKENS = 1_024
 internal const val CLASSIFICATION_MAX_OUTPUT_TOKENS = 512
 
 // Include message framing, tool schemas and call arguments as well as text.

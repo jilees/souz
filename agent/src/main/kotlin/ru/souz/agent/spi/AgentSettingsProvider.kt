@@ -3,6 +3,8 @@ package ru.souz.agent.spi
 import ru.souz.agent.AgentId
 import ru.souz.llms.LLMModel
 
+const val DEFAULT_SUMMARIZATION_MAX_OUTPUT_TOKENS = 2_048
+
 /**
  * Minimal settings surface the agent runtime needs from the host application.
  *
@@ -34,6 +36,9 @@ interface AgentSettingsProvider {
 
     /** Max context window to request from the model. */
     var contextSize: Int
+
+    /** Server output budget for history compaction, independent of the context window. */
+    val summarizationMaxOutputTokens: Int get() = DEFAULT_SUMMARIZATION_MAX_OUTPUT_TOKENS
 
     /** Sampling temperature for model requests. */
     var temperature: Float

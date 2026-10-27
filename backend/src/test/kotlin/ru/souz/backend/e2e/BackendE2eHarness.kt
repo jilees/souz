@@ -1,6 +1,7 @@
 package ru.souz.backend.e2e
 
 import ru.souz.agent.spi.TaskComplexityClassifier
+import ru.souz.backend.config.loadImageModel
 import ru.souz.agent.skills.SkillClassifier
 
 import ru.souz.backend.execution.service.AgentExecutionLauncher
@@ -382,6 +383,8 @@ internal class BackendE2eBackend(
         scheduledTasks = scheduledTasks,
         llmLimits = llmLimits,
         policyPrompt = E2E_POLICY_PROMPT,
+        imageModel = settingsSource?.let(::loadImageModel) ?: "gpt-image-1",
+        codexEndpoints = ru.souz.llms.codex.CodexEndpoints.load { settingsSource?.value(it, it) },
         attachments = attachments,
     )
     private val source = object : BackendConfigSource {

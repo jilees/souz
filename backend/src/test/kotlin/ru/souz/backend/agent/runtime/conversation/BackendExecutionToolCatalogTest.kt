@@ -29,7 +29,7 @@ import ru.souz.tool.web.ToolWebImageSearch
 
 class BackendExecutionToolCatalogTest {
     @Test
-    fun `client search executions cannot select reply attachments while bot executions can`() {
+    fun `client and bot executions expose enabled attachment tools`() {
         for (clientSearch in listOf(true, false)) {
             val catalog = backendExecutionToolCatalog(
                 compiledToolCatalog = TestToolCatalog(ToolCategory.FILES to listOf("PrepareAttachment", "AttachFileToReply")),
@@ -39,7 +39,7 @@ class BackendExecutionToolCatalogTest {
                 includeFewShotExamples = false,
             )
             assertTrue("PrepareAttachment" in toolNames(catalog))
-            assertEquals(!clientSearch, "AttachFileToReply" in toolNames(catalog))
+            assertTrue("AttachFileToReply" in toolNames(catalog))
         }
     }
 

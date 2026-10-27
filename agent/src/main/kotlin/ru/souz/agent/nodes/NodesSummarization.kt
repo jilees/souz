@@ -19,7 +19,6 @@ internal suspend fun LLMChatAPI.compactHistory(
     val body = request.copy(
         messages = renderSpeakerContext(previous) + LLMRequest.Message(LLMMessageRole.user, SUMMARIZATION_PROMPT),
         functions = emptyList(),
-        maxTokens = SUMMARIZATION_MAX_OUTPUT_TOKENS,
         isSummarization = true,
     )
     // Keep history intact if the complete summary request cannot fit.

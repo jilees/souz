@@ -2,6 +2,7 @@ package ru.souz.backend.settings.service
 
 import com.fasterxml.jackson.module.kotlin.readValue
 import ru.souz.agent.AgentId
+import ru.souz.agent.spi.DEFAULT_SUMMARIZATION_MAX_OUTPUT_TOKENS
 import ru.souz.backend.config.NamedLlmConfig
 import ru.souz.backend.config.loadNamedModels
 import ru.souz.backend.config.BackendConfigSource
@@ -66,6 +67,12 @@ class BackendSettingsProvider(
                 "CONTEXT_SIZE must be an integer of at least 24000 tokens."
             }
         } ?: 125_000
+    override val summarizationMaxOutputTokens: Int =
+        source.value(SUMMARIZATION_MAX_OUTPUT_TOKENS, SUMMARIZATION_MAX_OUTPUT_TOKENS)?.let { value ->
+            requireNotNull(value.trim().toIntOrNull()?.takeIf { it > 0 }) {
+                "SUMMARIZATION_MAX_OUTPUT_TOKENS must be a positive integer."
+            }
+        } ?: DEFAULT_SUMMARIZATION_MAX_OUTPUT_TOKENS
     override var temperature: Float = configured(TEMPERATURE)?.toFloatOrNull() ?: 0.7f
     override var forbiddenFolders: List<String> = configured(FORBIDDEN_FOLDERS)
         ?.lines()
@@ -185,6 +192,7 @@ class BackendSettingsProvider(
         const val GIGA_MODEL = "GIGA_MODEL"
         const val REQUEST_TIMEOUT_MILLIS = "REQUEST_TIMEOUT_MILLIS"
         const val CONTEXT_SIZE = "CONTEXT_SIZE"
+        const val SUMMARIZATION_MAX_OUTPUT_TOKENS = "SUMMARIZATION_MAX_OUTPUT_TOKENS"
         const val TEMPERATURE = "TEMPERATURE"
         const val FORBIDDEN_FOLDERS = "FORBIDDEN_FOLDERS"
         const val EMBEDDINGS_MODEL = "EMBEDDINGS_MODEL"

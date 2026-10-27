@@ -10,8 +10,8 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
-import java.util.Base64
 import kotlinx.coroutines.CancellationException
+import ru.souz.backend.llm.BackendImageModel
 import ru.souz.llms.FileContent
 import ru.souz.llms.FilePresentation
 import ru.souz.llms.ToolInvocationMeta
@@ -29,7 +29,6 @@ class AttachmentMedia(
     private val client: HttpClient,
     private val sandboxResolver: ToolInvocationRuntimeSandboxResolver,
     private val operations: AttachmentMediaOperations,
-    private val codexImageGateway: ImageGenerationGateway? = null,
 ) {
     suspend fun cachedTranscript(userId: String, fileId: String): String? {
         val id = attachmentId(fileId)
@@ -108,28 +107,24 @@ class AttachmentMedia(
         }
     }
 
-    suspend fun generateImage(meta: ToolInvocationMeta, prompt: String): FileContent = safeMedia {
-        if (prompt.isBlank() || prompt.length > 32_000) throw AttachmentException("attachment_image_prompt_limit")
-        if (config.imageProvider == "OPENAI" && config.mediaApiKey == null ||
-            config.imageProvider == "CODEX" && codexImageGateway == null) {
-            throw AttachmentException("attachment_image_generation_unconfigured")
-        }
-        val body = restJsonMapper.writeValueAsBytes(mapOf("model" to config.imageModel, "prompt" to prompt,
-            "size" to "1024x1024", "output_format" to "png"))
-        val key = "image:${config.imageProvider}:${requireNotNull(meta.requestId)}:${body.attachmentChecksum()}"
+    internal suspend fun generateImage(
+        meta: ToolInvocationMeta, prompt: String, model: BackendImageModel, gateway: ImageGenerationGateway,
+    ): FileContent = safeMedia {
+        val normalizedPrompt = prompt.trim()
+        if (normalizedPrompt.isEmpty() || normalizedPrompt.length > 32_000) throw AttachmentException("attachment_image_prompt_limit")
+        // Preserve existing built-in route claims across upgrades; named endpoints have distinct identities.
+        val body = restJsonMapper.writeValueAsBytes(buildMap {
+            put("model", model.modelId)
+            put("prompt", prompt)
+            put("size", "1024x1024")
+            put("output_format", "png")
+            model.connection?.let { put("endpoint", it.baseUrl) }
+        })
+        val key = "image:${model.provider.name}:${requireNotNull(meta.requestId)}:${body.attachmentChecksum()}"
         storage.find(meta.userId, key)?.let { return@safeMedia it.toContent(FilePresentation.image) }
         require(meta.userId.isNotBlank())
         operations.run(meta.userId, key) {
-            val bytes = if (config.imageProvider == "CODEX") {
-                requireNotNull(codexImageGateway).generate(ImageGenerationInput(
-                    prompt = prompt, model = config.imageModel, size = "1024x1024", quality = "medium", outputFormat = "png",
-                )).bytes
-            } else {
-                val response = post(config.imageEndpoint, body, apiKey = config.mediaApiKey, limit = config.maxFileBytes * 2)
-                val data = restJsonMapper.readTree(response)["data"]?.firstOrNull()?.get("b64_json")?.asText()
-                    ?: throw AttachmentException("attachment_image_generation_empty")
-                Base64.getDecoder().decode(data)
-            }
+            val bytes = gateway.generate(ImageGenerationInput(prompt = normalizedPrompt)).bytes
             if (!attachmentMime(bytes, "image.png").startsWith("image/")) throw AttachmentException("attachment_image_invalid")
             storage.save(meta.userId, key, "image.png", bytes.inputStream()).toContent(FilePresentation.image)
         }

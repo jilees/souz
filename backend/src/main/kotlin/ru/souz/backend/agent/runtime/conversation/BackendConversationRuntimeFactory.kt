@@ -41,10 +41,12 @@ import ru.souz.backend.client.normalizeClientTools
 import ru.souz.backend.common.BackendToolCapabilityPolicy
 import ru.souz.backend.common.backendLogContext
 import ru.souz.backend.hooks.HookLlmBudget
-import ru.souz.backend.hooks.HookLlmBudget.Companion.withProviderCall
 import ru.souz.backend.hooks.HookStore
 import ru.souz.backend.config.NamedLlmConfig
 import ru.souz.backend.http.clientFrameMapper
+import ru.souz.backend.attachments.AttachmentMediaTools
+import ru.souz.backend.llm.imageGenerationGateway
+import ru.souz.backend.llm.resolveImageModel
 import ru.souz.backend.llm.BackendExecutionLlmChatApi
 import ru.souz.backend.llm.ModelFailureMemory
 import ru.souz.backend.llm.ProviderCredentialResolver
@@ -61,10 +63,8 @@ import ru.souz.llms.anthropic.AnthropicVisionGateway
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.http.ProviderHttpClients
-import ru.souz.llms.openai.OpenAIImageGenerationGateway
 import ru.souz.llms.openai.OpenAIVisionGateway
 import ru.souz.llms.runtime.LLMCapabilityResolver
-import ru.souz.llms.runtime.ImageGenerationGateway
 import ru.souz.memory.ConversationMemoryRuntime
 import ru.souz.runtime.files.FilesToolUtil
 import ru.souz.tool.RuntimePassThroughToolsFilter
@@ -115,10 +115,13 @@ internal class BackendConversationRuntimeFactory(
     private val metrics: BackendMetrics? = null,
     private val llmConfig: NamedLlmConfig = NamedLlmConfig(),
     private val providerApiOverride: ((LlmProvider) -> LLMChatAPI?)? = null,
+    imageModel: String = "gpt-image-1",
+    private val attachmentMediaTools: AttachmentMediaTools? = null,
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
     private val codexEndpoints: CodexEndpoints = CodexEndpoints(),
 ) {
     private val modelFailures = ModelFailureMemory()
+    private val imageSelection = resolveImageModel(imageModel, llmConfig.models)
 
     internal suspend fun create(
         key: AgentConversationKey,
@@ -172,10 +175,10 @@ internal class BackendConversationRuntimeFactory(
             openAiGateway = OpenAIVisionGateway(settingsProvider, executionApi),
             anthropicGateway = AnthropicVisionGateway(settingsProvider, executionApi),
         )
-        val imageGenerationGateway = OpenAIImageGenerationGateway(
-            settingsProvider = settingsProvider,
-            client = providerHttpClients.openAi,
-            apiKeyProvider = { executionApi.credentialFor(LlmProvider.OPENAI) },
+        val imageGenerationGateway = imageGenerationGateway(
+            model = imageSelection, settings = settingsProvider, clients = providerHttpClients,
+            oauth = codexOAuthService, openAiCredential = { executionApi.credentialFor(LlmProvider.OPENAI) },
+            hookBudget = hookBudget, codexEndpoints = codexEndpoints,
         )
         val executionLlmToolCatalog = LlmBackedToolCatalog(
             llmApi = executionApi,
@@ -183,9 +186,7 @@ internal class BackendConversationRuntimeFactory(
             filesToolUtil = filesToolUtil,
             webResearchClient = webResearchClient,
             visionGateway = visionGateway,
-            imageGenerationGateway = ImageGenerationGateway { input ->
-                withProviderCall(hookBudget, LlmProvider.OPENAI) { imageGenerationGateway.generate(input) }
-            },
+            imageGenerationGateway = imageGenerationGateway,
         )
         val clientTools = chatRepository.clientTools(key.userId, key.chatId()).filter { it.name != PersonalityTool.NAME }
         val serverNames = toolCatalog.toolsByCategory.values.flatMap { it.keys }.toSet() +
@@ -217,7 +218,11 @@ internal class BackendConversationRuntimeFactory(
             null
         })
         baseCatalog = backendExecutionToolCatalog(
-            compiledToolCatalog = toolCatalog,
+            compiledToolCatalog = toolCatalog.mapTools { _, tool ->
+                if (tool.fn.name == "GenerateAttachmentImage" && attachmentMediaTools != null) {
+                    attachmentMediaTools.imageTool(imageGenerationGateway, imageSelection)
+                } else tool
+            },
             executionLlmToolCatalog = AgentToolCatalog.compose(executionLlmToolCatalog.catalog,
                 AgentToolCatalog(mapOf(ToolCategory.CONFIG to listOf(
                     PersonalityTool(userSettingsRepository, personalitySync, executionApi, settingsProvider, agentBackgroundScope),
@@ -225,7 +230,6 @@ internal class BackendConversationRuntimeFactory(
             ),
             enabledCompiledToolNames = request.enabledTools,
             clientToolCatalog = clientToolCatalog,
-            replyAttachmentsEnabled = !request.clientToolsEnabled,
             includeFewShotExamples = settingsProvider.useFewShotExamples,
             metrics = metrics,
         )

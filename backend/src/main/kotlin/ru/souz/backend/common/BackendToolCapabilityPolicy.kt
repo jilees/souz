@@ -42,12 +42,8 @@ object BackendToolCapabilityPolicy {
         processToolCatalog: AgentToolCatalog,
         executionLlmToolCatalog: AgentToolCatalog,
         enabledToolNames: Set<String>?,
-        replyAttachmentsEnabled: Boolean = true,
     ): AgentToolCatalog {
-        val isEnabled = { toolName: String ->
-            (enabledToolNames == null || toolName in enabledToolNames) &&
-                (replyAttachmentsEnabled || toolName != "AttachFileToReply")
-        }
+        val isEnabled = { toolName: String -> enabledToolNames == null || toolName in enabledToolNames }
         return AgentToolCatalog.compose(
             hostableTools(processToolCatalog, isEnabled),
             hostableTools(executionLlmToolCatalog) { it in executionBoundToolNames && isEnabled(it) },

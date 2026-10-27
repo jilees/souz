@@ -28,6 +28,8 @@ import ru.souz.agent.runtime.AgentRuntimeEventSink
 import ru.souz.agent.runtime.AgentToolExecutor
 import ru.souz.agent.runtime.ActiveRunInputController
 import ru.souz.agent.state.AgentContext
+import ru.souz.agent.spi.AgentSettingsProvider
+import ru.souz.agent.spi.DEFAULT_SUMMARIZATION_MAX_OUTPUT_TOKENS
 import ru.souz.agent.spi.ModelRouting
 import ru.souz.agent.spi.RoutedModel
 import ru.souz.agent.spi.TaskComplexityClassifier
@@ -54,11 +56,12 @@ class NodesLLMTest {
         val api = mockk<LLMChatAPI> {
             coEvery { message(capture(calls)) } returnsMany listOf(block(0, "Alice owns the report"), block(0, "answer"))
         }
-        val nodes = NodesLLM(api, mockk { every { useStreaming } returns false })
+        val nodes = NodesLLM(api, settings())
 
         val result = nodes.chat().execute(context(completed + active, activeExchangeStartIndex = 2), runtime())
 
         assertEquals(listOf(true, false), calls.map { it.isSummarization })
+        assertEquals(2_048, calls.first().maxTokens)
         assertTrue(calls.first().messages.first().content.startsWith("[souz_speaker id=\"alice\"]\n"))
         assertEquals(listOf(file), result.history.first().files)
         assertEquals(SPEAKER_SUMMARY_NAME, result.history.first().name)
@@ -81,7 +84,7 @@ class NodesLLMTest {
                 block(0, "answer", tool = true),
             )
         }
-        val nodes = NodesLLM(api, mockk { every { useStreaming } returns false }, conversationInstructions = {
+        val nodes = NodesLLM(api, settings(summaryLimit = 3_072), conversationInstructions = {
             if (instructionReads++ == 0) style else "updated style"
         })
         val system = LLMRequest.Message(LLMMessageRole.system, "system")
@@ -106,7 +109,7 @@ class NodesLLMTest {
         val summary = calls.dropLast(1).single()
         assertTrue(summary.isSummarization)
         assertEquals(completed, summary.messages.dropLast(1))
-        assertEquals(SUMMARIZATION_MAX_OUTPUT_TOKENS, summary.maxTokens)
+        assertEquals(3_072, summary.maxTokens)
         assertTrue(summary.functions.isEmpty())
         assertTrue(calls.all { it.contextSize == 24_000 && !it.exceedsContextBudget(24_000) })
         assertEquals("system\n\n$style", calls.last().messages.first().content)
@@ -135,7 +138,7 @@ class NodesLLMTest {
     @ValueSource(strings = ["tool schemas", "completed history"])
     fun `oversized tools or summary input never call the provider`(oversizedPart: String) = runTest {
         val api = mockk<LLMChatAPI>()
-        val nodes = NodesLLM(api, mockk { every { useStreaming } returns false })
+        val nodes = NodesLLM(api, settings())
         val oversized = "x".repeat(100_000)
         val original = if (oversizedPart == "completed history") context(exchange(oversized) + activeTurn(), activeExchangeStartIndex = 2) else
             context(activeTurn()).copy(activeTools = listOf(
@@ -162,7 +165,7 @@ class NodesLLMTest {
         val request = ctx.toChatRequest(ctx.history, maxOutputTokens = 24_000)
         assertEquals(inputTokens > 19_200, request.exceedsContextBudget(24_000))
 
-        val result = NodesLLM(api, mockk { every { useStreaming } returns false }).chat()
+        val result = NodesLLM(api, settings()).chat()
             .execute(ctx, GraphRuntime(retryPolicy = RetryPolicy(), maxSteps = 10))
 
         assertEquals(inputTokens > 19_200, result.input is LLMResponse.Chat.Error)
@@ -271,7 +274,7 @@ class NodesLLMTest {
             coEvery { message(capture(calls)) } returns block(0, text,
                 finishReason = if (failure == "truncated") LLMResponse.FinishReason.length else null)
         }
-        val nodes = NodesLLM(api, mockk { every { useStreaming } returns false })
+        val nodes = NodesLLM(api, settings())
         val ctx = context(exchange("old ".repeat(18000)) + activeTurn("result ".repeat(1000)), activeExchangeStartIndex = 2)
         val runtime = GraphRuntime(retryPolicy = RetryPolicy(), maxSteps = 10)
         if (failure == "oversized") {
@@ -335,7 +338,7 @@ class NodesLLMTest {
             val api = mockk<LLMChatAPI> {
                 coEvery { message(capture(calls)) } returnsMany listOf(block(0, "short summary"), block(0, "answer"))
             }
-            val nodes = NodesLLM(api, mockk { every { useStreaming } returns false }, complexityClassifier = { _, _ -> complex })
+            val nodes = NodesLLM(api, settings(), complexityClassifier = { _, _ -> complex })
             val completed = exchange("old ".repeat(18000))
             val ctx = context(completed + activeTurn("result ".repeat(1000)), activeExchangeStartIndex = 2)
             val result = nodes.chat().execute(ctx.copy(settings = ctx.settings.copy(routing = ROUTING)), runtime())
@@ -357,6 +360,11 @@ class NodesLLMTest {
         LLMRequest.Message(LLMMessageRole.assistant, "", functionCall = LLMRequest.FunctionCall("work", "{}"), functionsStateId = "call"),
         LLMRequest.Message(LLMMessageRole.function, toolOutput, name = "work", functionsStateId = "call"),
     )
+
+    private fun settings(summaryLimit: Int = DEFAULT_SUMMARIZATION_MAX_OUTPUT_TOKENS): AgentSettingsProvider = mockk {
+        every { useStreaming } returns false
+        every { summarizationMaxOutputTokens } returns summaryLimit
+    }
 
     private fun runtime() = GraphRuntime(retryPolicy = RetryPolicy(), maxSteps = 10)
 

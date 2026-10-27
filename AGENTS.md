@@ -10,6 +10,8 @@ Orion query-based memory results enter through acknowledged `history.append` too
 
 Backend uses one startup-validated `CONTEXT_SIZE` (minimum 24,000 tokens) for all models, including summaries. Compaction and input validation share an 80% limit independent of output limits; context size is not a user or execution setting.
 
+Summary output uses the startup-validated `SUMMARIZATION_MAX_OUTPUT_TOKENS` server setting (positive integer, default 2,048), independent of the context window.
+
 Backend [personality settings](backend/docs/personality-settings.md) are separate from system prompts and synchronize revisioned snapshots to Orion.
 
 - Read and maintain this file before changing the repository. Before editing a module, read its linked `AGENTS.md`, any applicable nested instructions, and relevant topics linked in its `Pain points` section.

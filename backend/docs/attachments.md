@@ -2,7 +2,7 @@
 
 File IDs are opaque references scoped to the authenticated user, never S3 URLs or filesystem authority. Resolve ownership and expiry on every read, preparation, selection and delivery. Recreating a Docker container with its existing `/souz` bind mount preserves workspace files and installed Skills. Deleting that mounted storage removes working copies; immutable originals/results in S3 have their independent retention policy. See the [runtime guide](../../docs/channel-attachments.md) for configuration and bounds.
 
-Configured attachment storage is available to every user. Channel account linking, file ownership and expiry remain mandatory boundaries; availability does not grant access to another user’s files.
+Configured attachment storage is available to every user. Attachment registration and selection tools follow the user’s enabled-tool snapshot for both parent and child agents, independently of the source transport. Destination channel support is checked when sending; public Client-Souz delivery remains text-only. Channel account linking, file ownership and expiry remain mandatory boundaries; availability does not grant access to another user’s files.
 
 Provider request preparation must operate on a copy of persisted LLM history. Binary image URLs, signed download URLs and credentials must not enter continuation state, message metadata or tool output. Summarization must retain stable references. Tool output files and files selected for a final reply are distinct: a subagent returning a file does not authorize its delivery by the parent.
 
@@ -15,3 +15,5 @@ Telegram photo conversion belongs at the upload boundary and uses memory-backed 
 Removing or recreating a local user row does not delete files or reset retention. Cleanup leases fence concurrent object deletion; successful deletion removes metadata. Configure the bucket lifecycle described in [storage](s3-storage.md) for exceptionally late uploads. Expiry is checked before S3 access and before cache restoration; PrepareAttachment must not return an existing cache path without rechecking the file ID. Ordinary copies created by the user or a Skill remain workspace files and have the workspace retention policy. Failed cleanup attempts must not starve other expired objects.
 
 Verify against real PostgreSQL and MinIO, faking only channel/provider HTTP boundaries. Cover foreign IDs, expiry, interrupted PUT/commit, edited working copies, file-only turns, repeated delivery, unknown remote outcomes and unchanged text-only WebSocket behavior.
+
+Image generation is bound per execution for both `GenerateImage` and `GenerateAttachmentImage`. Their gateway, model selection, credentials and hook admission are shared; only sandbox/S3 result persistence differs. Process tool metadata must be rebound before execution. Keep STT credentials separate and retain the S3 operation claim and cache on attachment generation.

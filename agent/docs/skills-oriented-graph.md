@@ -14,7 +14,7 @@ transport JSON escaping does not increase the text estimate.
 Conversational and summary input must fit 80% of the configured `CONTEXT_SIZE`, shared by all models.
 Compaction runs before a conversational call when the prepared input exceeds that limit, and the rebuilt
 request is checked against the same limit. Exactly 80% fits. `maxTokens` only limits provider output
-(4,096 tokens for conversation, 1,024 for summaries); it does not change the input budget.
+(4,096 tokens for conversation; host-configured summary output, default 2,048); it does not change the input budget.
 
 Compaction sends the completed prefix before `AgentContext.activeExchangeStartIndex`, followed by the
 summarization prompt, in one call. Both must fit the same 80% limit. System instructions and the entire
