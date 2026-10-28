@@ -4,12 +4,15 @@ import io.ktor.client.HttpClient
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.header
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
 import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
 import ru.souz.tool.web.internal.WebHttpSupport
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.Headers
 import io.ktor.http.isSuccess
 import java.util.Base64
 import kotlinx.coroutines.CancellationException
@@ -35,22 +38,36 @@ class OpenAIImageGenerationGateway(
     override suspend fun generate(input: ImageGenerationInput): GeneratedImage = try {
         require(maxImageBytes in 1..100_000_000)
         val outputFormat = (input.outputFormat ?: OpenAIImageGenerationRequestBuilder.DEFAULT_OUTPUT_FORMAT).lowercase()
-        client.preparePost(imagesUrl) {
-            header(HttpHeaders.ContentType, ContentType.Application.Json)
+        val payload = buildRequestPayload(input)
+        client.preparePost(settingsProvider.openAIEndpoint(baseUrl).endpoint(
+            if (input.images.isEmpty()) "images/generations" else "images/edits",
+        )) {
             header(HttpHeaders.Accept, ContentType.Application.Json)
             header(HttpHeaders.Authorization, "Bearer ${apiKeyProvider()}")
             timeout { requestTimeoutMillis = settingsProvider.requestTimeoutMillis }
-            setBody(buildRequestPayload(input))
-        }.execute { response ->
-            val text = readResponse(response)
-            if (!response.status.isSuccess()) {
-                throw IllegalStateException("OpenAI image generation failed: ${response.status.value}. $text")
+            if (input.images.isEmpty()) {
+                header(HttpHeaders.ContentType, ContentType.Application.Json)
+                setBody(payload)
+            } else {
+                setBody(MultiPartFormDataContent(formData {
+                    payload.forEach { (key, value) -> append(key, value.toString()) }
+                    input.images.forEachIndexed { index, image ->
+                        append("image[]", image.bytes, Headers.build {
+                            append(HttpHeaders.ContentType, image.mimeType)
+                            append(HttpHeaders.ContentDisposition,
+                                "filename=\"source-$index.${ImageFileFormats.primaryExtensionForMimeType(image.mimeType)}\"")
+                        })
+                    }
+                }))
             }
-            parseResponse(text, outputFormat, input.model ?: DEFAULT_IMAGE_MODEL)
+        }.execute { response ->
+            if (!response.status.isSuccess()) {
+                throw IllegalStateException("OpenAI image generation failed: HTTP ${response.status.value}")
+            }
+            parseResponse(readResponse(response), outputFormat, input.model ?: DEFAULT_IMAGE_MODEL)
         }
     } catch (e: ClientRequestException) {
-        val text = readResponse(e.response)
-        throw IllegalStateException("OpenAI image generation failed: ${e.response.status.value}. $text")
+        throw IllegalStateException("OpenAI image generation failed: HTTP ${e.response.status.value}")
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (t: Throwable) {
@@ -83,10 +100,6 @@ class OpenAIImageGenerationGateway(
     }
 
     private companion object {
-        const val IMAGES_PATH = "images/generations"
         const val DEFAULT_IMAGE_MODEL = "gpt-image-1"
     }
-
-    private val imagesUrl: String
-        get() = settingsProvider.openAIEndpoint(baseUrl).endpoint(IMAGES_PATH)
 }

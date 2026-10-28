@@ -48,7 +48,14 @@ data class ImageGenerationInput(
     val size: String? = null,
     val quality: String? = null,
     val outputFormat: String? = null,
-)
+    val images: List<ImageGenerationSource> = emptyList(),
+) {
+    init {
+        require(images.size <= ImageGenerationSource.MAX_IMAGES) {
+            "At most ${ImageGenerationSource.MAX_IMAGES} source images are supported per request"
+        }
+    }
+}
 
 /**
  * Standardized image-generation result returned by provider adapters.

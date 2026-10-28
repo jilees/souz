@@ -11,6 +11,7 @@ import ru.souz.llms.ToolInvocationMeta
 import ru.souz.llms.restJsonMapper
 import ru.souz.llms.runtime.GeneratedImage
 import ru.souz.llms.runtime.ImageGenerationGateway
+import ru.souz.llms.runtime.ImageGenerationSource
 import ru.souz.runtime.files.FilesToolUtil
 import ru.souz.runtime.sandbox.SandboxScope
 import ru.souz.runtime.sandbox.local.LocalRuntimeSandbox
@@ -26,6 +27,44 @@ import kotlin.test.assertTrue
 
 class ToolGenerateImageTest {
     private val tempRoots = mutableListOf<Path>()
+
+    @Test
+    fun `editing reads ordered original sources through the invoking sandbox`() = runTest {
+        val homeDir = tempDir("home")
+        val sources = listOf(
+            java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="),
+            byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte(), 42),
+        )
+        val paths = sources.mapIndexed { i, bytes -> Files.write(homeDir.resolve("source-$i"), bytes).toString() }
+        var calls = 0
+        val gateway = ImageGenerationGateway { input ->
+            calls++
+            assertEquals("Change the background", input.prompt)
+            assertEquals(listOf("image/png", "image/jpeg"), input.images.map { it.mimeType })
+            input.images.zip(sources).forEach { (actual, expected) -> assertContentEquals(expected, actual.bytes) }
+            GeneratedImage(sources.first(), "image/png", "CODEX")
+        }
+        val tool = ToolGenerateImage(createFilesToolUtil(homeDir), gateway)
+        val result = restJsonMapper.readTree(tool.suspendInvoke(ToolGenerateImage.Input(
+            " Change the background ", imagePaths = paths,
+        ), ToolInvocationMeta.localDefault()))
+        assertContentEquals(sources.first(), Files.readAllBytes(Path.of(result["outputPath"].asText())))
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun `invalid oversized excess and inaccessible sources never call the generator`() = runTest {
+        val homeDir = tempDir("home")
+        val text = Files.writeString(homeDir.resolve("fake.png"), "not an image").toString()
+        val oversized = Files.write(homeDir.resolve("large.png"), ByteArray(ImageGenerationSource.MAX_BYTES + 1)).toString()
+        val outside = Files.writeString(tempDir("outside").resolve("image.png"), "outside").toString()
+        val tool = ToolGenerateImage(createFilesToolUtil(homeDir), ImageGenerationGateway { error("must not generate") })
+        for (paths in listOf(listOf(text), listOf(oversized), List(6) { text }, listOf(outside))) {
+            assertFailsWith<ru.souz.tool.BadInputException> {
+                tool.suspendInvoke(ToolGenerateImage.Input("Edit", imagePaths = paths), ToolInvocationMeta.localDefault())
+            }
+        }
+    }
 
     @AfterEach
     fun cleanup() {
