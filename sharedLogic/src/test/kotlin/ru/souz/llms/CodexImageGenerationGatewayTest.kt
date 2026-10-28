@@ -18,6 +18,7 @@ import ru.souz.llms.codex.CodexImageGenerationGateway
 import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.runtime.ImageGenerationInput
+import ru.souz.llms.runtime.ImageGenerationSource
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -25,6 +26,27 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class CodexImageGenerationGatewayTest {
+    @Test
+    fun `editing sends original source pixels in order and forces edit`() = runTest {
+        val settings = mockk<SettingsProvider>(relaxed = true)
+        val oauth = mockk<CodexOAuthService>()
+        coEvery { oauth.refreshTokenIfNeeded() } returns "fresh-token"
+        val sources = listOf(ImageGenerationSource(png), ImageGenerationSource(byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte(), 42)))
+        HttpClient(MockEngine { request ->
+            val body = restJsonMapper.readTree((request.body as OutgoingContent.ByteArrayContent).bytes())
+            assertEquals("edit", body["tools"][0]["action"].asText())
+            val content = body["input"][0]["content"]
+            assertEquals("input_text", content[0]["type"].asText())
+            assertEquals("Change the background", content[0]["text"].asText())
+            assertEquals(sources.map { it.dataUrl() }, content.drop(1).map { it["image_url"].asText() })
+            assertTrue(content.drop(1).all { it["type"].asText() == "input_image" })
+            respond(item() + done)
+        }).use { client ->
+            assertContentEquals(png, CodexImageGenerationGateway(settings, oauth, client)
+                .generate(ImageGenerationInput("Change the background", images = sources)).bytes)
+        }
+    }
+
     @Test
     fun `custom Responses URL also routes image generation`() = runTest {
         val endpoints = CodexEndpoints(baseUrl = "https://relay.test/souz-llm/chatgpt")

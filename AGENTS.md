@@ -64,6 +64,7 @@ Only these direct production project dependencies are allowed. Standard test-sou
 
 - [Voice memory](docs/voice-memory.md) uses per-speaker Hindsight banks and durable JEV routing alongside household memory.
 - [Channel attachments](docs/channel-attachments.md) use owner-scoped private S3 storage and explicit file selection for Telegram/VK replies.
+- Image generation tools accept optional ordered source images for editing: sandbox `imagePaths` in `GenerateImage`, owned attachment `fileIds` in `GenerateAttachmentImage`. Source pixels stay request-local; saved results use the existing file flow.
 - The Docker runtime provides a per-user browser and explicit Skill environment forwarding; see [the runtime guide](docs/backend-docker-sandbox-rollout.md).
 - [Scheduled tasks](backend/docs/scheduled-tasks.md) use the backend's PostgreSQL-backed JobService.
 - [User personality](backend/docs/personality-settings.md) is independent of the system prompt and synchronizes to Orion.

@@ -18,6 +18,7 @@ import ru.souz.llms.ToolInvocationMeta
 import ru.souz.llms.restJsonMapper
 import ru.souz.llms.runtime.ImageGenerationGateway
 import ru.souz.llms.runtime.ImageGenerationInput
+import ru.souz.llms.runtime.ImageGenerationSource
 import ru.souz.runtime.sandbox.SandboxCommandRequest
 import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import ru.souz.tool.web.internal.WebHttpSupport
@@ -109,9 +110,19 @@ class AttachmentMedia(
 
     internal suspend fun generateImage(
         meta: ToolInvocationMeta, prompt: String, model: BackendImageModel, gateway: ImageGenerationGateway,
+        fileIds: List<String> = emptyList(),
     ): FileContent = safeMedia {
         val normalizedPrompt = prompt.trim()
         if (normalizedPrompt.isEmpty() || normalizedPrompt.length > 32_000) throw AttachmentException("attachment_image_prompt_limit")
+        if (fileIds.size > ImageGenerationSource.MAX_IMAGES) throw AttachmentException("attachment_invalid_arguments")
+        // Check every source even when the result is cached: file references never bypass owner/expiry checks.
+        val sources = fileIds.map { storage.get(meta.userId, attachmentId(it)) }
+        sources.forEach {
+            if (it.mimeType != "image/png" && it.mimeType != "image/jpeg" && it.mimeType != "image/webp") {
+                throw AttachmentException("attachment_image_required")
+            }
+            if (it.sizeBytes > ImageGenerationSource.MAX_BYTES) throw AttachmentException("attachment_too_large")
+        }
         // Preserve existing built-in route claims across upgrades; named endpoints have distinct identities.
         val body = restJsonMapper.writeValueAsBytes(buildMap {
             put("model", model.modelId)
@@ -119,12 +130,20 @@ class AttachmentMedia(
             put("size", "1024x1024")
             put("output_format", "png")
             model.connection?.let { put("endpoint", it.baseUrl) }
+            if (sources.isNotEmpty()) put("sources", sources.map { mapOf("fileId" to it.id, "sha256" to it.sha256) })
         })
         val key = "image:${model.provider.name}:${requireNotNull(meta.requestId)}:${body.attachmentChecksum()}"
         storage.find(meta.userId, key)?.let { return@safeMedia it.toContent(FilePresentation.image) }
         require(meta.userId.isNotBlank())
         operations.run(meta.userId, key) {
-            val bytes = gateway.generate(ImageGenerationInput(prompt = normalizedPrompt)).bytes
+            val images = sources.map {
+                try {
+                    ImageGenerationSource(storage.read(meta.userId, it.id))
+                } catch (_: IllegalArgumentException) {
+                    throw AttachmentException("attachment_image_source_invalid")
+                }
+            }
+            val bytes = gateway.generate(ImageGenerationInput(prompt = normalizedPrompt, images = images)).bytes
             if (!attachmentMime(bytes, "image.png").startsWith("image/")) throw AttachmentException("attachment_image_invalid")
             storage.save(meta.userId, key, "image.png", bytes.inputStream()).toContent(FilePresentation.image)
         }

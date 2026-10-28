@@ -33,13 +33,17 @@ class CodexImageGenerationGateway(
         val tool = buildMap<String, Any> {
             put("type", "image_generation")
             put("output_format", "png")
+            if (input.images.isNotEmpty()) put("action", "edit")
             input.size?.let { put("size", it) }
             input.quality?.let { put("quality", it) }
         }
         val body = mapOf(
             "model" to (input.model ?: "gpt-6.1-sol"),
-            "instructions" to "Generate the requested image using the image generation tool. Do not substitute SVG or code.",
-            "input" to listOf(mapOf("role" to "user", "content" to input.prompt)),
+            "instructions" to "Generate or edit the requested image using the image generation tool. Use supplied images as sources and preserve details unless the user asks to change them. Do not substitute SVG or code.",
+            "input" to listOf(mapOf("role" to "user", "content" to if (input.images.isEmpty()) input.prompt else buildList {
+                add(mapOf("type" to "input_text", "text" to input.prompt))
+                input.images.forEach { add(mapOf("type" to "input_image", "image_url" to it.dataUrl())) }
+            })),
             "tools" to listOf(tool),
             "tool_choice" to mapOf("type" to "image_generation"),
             "store" to false,

@@ -3,11 +3,14 @@ package ru.souz.tool.files
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import java.time.Instant
 import java.nio.file.Path
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import ru.souz.llms.ToolInvocationMeta
 import ru.souz.llms.runtime.ImageFileFormats
 import ru.souz.llms.runtime.ImageGenerationGateway
 import ru.souz.llms.runtime.ImageGenerationInput
+import ru.souz.llms.runtime.ImageGenerationSource
 import ru.souz.runtime.files.FilesToolUtil
 import ru.souz.tool.BadInputException
 import ru.souz.tool.FewShotExample
@@ -26,11 +29,13 @@ class ToolGenerateImage(
         val prompt: String,
         @InputParamDescription("Optional absolute output file path. Defaults to ~/Documents/souz/generated_image_<timestamp>.png")
         val outputPath: String? = null,
+        @InputParamDescription("Optional ordered list of 1 to 5 PNG, JPEG or WebP source paths. Supply images to edit them using prompt; omit to generate from text. Use PrepareAttachment first for file IDs.")
+        val imagePaths: List<String> = emptyList(),
     )
 
     override val name: String = NAME
     override val description: String =
-        "Generate a new image with the configured image model, save it to a safe file path, and return the saved path."
+        "Generate an image or edit supplied source images with the configured image model, save it to a safe file path, and return the saved path."
 
     override val fewShotExamples: List<FewShotExample> = listOf(
         FewShotExample(
@@ -55,9 +60,20 @@ class ToolGenerateImage(
             throw BadInputException("prompt must not be empty")
         }
 
-        val generated = imageGenerationGateway.generate(
-            ImageGenerationInput(prompt = input.prompt.trim())
-        )
+        if (input.imagePaths.size > ImageGenerationSource.MAX_IMAGES) {
+            throw BadInputException("Supply at most ${ImageGenerationSource.MAX_IMAGES} source images")
+        }
+        val images = input.imagePaths.map { path ->
+            val source = filesToolUtil.resolveSafeExistingFile(path, meta)
+            withContext(Dispatchers.IO) {
+                try {
+                    filesToolUtil.openInputStream(source, meta).use { ImageGenerationSource.read(it) }
+                } catch (invalid: IllegalArgumentException) {
+                    throw BadInputException(invalid.message.orEmpty())
+                }
+            }
+        }
+        val generated = imageGenerationGateway.generate(ImageGenerationInput(prompt = input.prompt.trim(), images = images))
         val target = resolveOutputPath(
             rawOutputPath = input.outputPath,
             mimeType = generated.mimeType,
