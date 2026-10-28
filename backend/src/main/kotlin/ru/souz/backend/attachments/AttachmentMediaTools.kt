@@ -12,12 +12,14 @@ import ru.souz.llms.restJsonMapper
 import ru.souz.tool.ToolCategory
 
 class AttachmentMediaTools(private val media: AttachmentMedia) {
-    val catalog = AgentToolCatalog(mapOf(ToolCategory.FILES to listOf(
-        tool("TranscribeAttachment", "fileId", "Transcribe an audio attachment to text."),
-        tool("SynthesizeVoice", "text", "Create an Orion voice file, up to 4000 UTF-16 units. Select the returned file with AttachFileToReply to send it."),
+    val catalog = AgentToolCatalog(mapOf(
+        ToolCategory.FILES to listOf(
+            tool("TranscribeAttachment", "fileId", "Transcribe an audio attachment to text."),
+            tool("SynthesizeVoice", "text", "Create an Orion voice file, up to 4000 UTF-16 units. Select the returned file with AttachFileToReply to send it."),
+        ),
         // The process catalog declares availability; the runtime binds generation per execution.
-        imageTool(),
-    )))
+        ToolCategory.IMAGE_GENERATION to listOf(imageTool()),
+    ))
 
     internal fun imageTool(gateway: ImageGenerationGateway? = null, model: BackendImageModel? = null) = tool(
         "GenerateAttachmentImage", "prompt",

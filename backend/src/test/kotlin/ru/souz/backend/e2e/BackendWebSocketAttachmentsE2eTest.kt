@@ -1,5 +1,6 @@
 package ru.souz.backend.e2e
 
+import io.ktor.client.engine.mock.respond
 import io.ktor.client.request.get
 import io.ktor.client.request.patch
 import io.ktor.client.request.put
@@ -18,10 +19,77 @@ import ru.souz.backend.telegram.TelegramMessage
 import ru.souz.backend.telegram.TelegramUpdate
 import ru.souz.backend.telegram.TelegramUser
 import ru.souz.llms.restJsonMapper
+import ru.souz.llms.http.providerHttpClientDefaults
 import ru.souz.runtime.sandbox.DefaultRuntimeSandboxFactory
 import ru.souz.runtime.sandbox.RuntimeSandboxModeResolver
 
 class BackendWebSocketAttachmentsE2eTest {
+    @Test
+    fun `image generation discovery honors attachment-only permissions and returns a file over WebSocket`() {
+        val image = java.io.ByteArrayOutputStream().also { output ->
+            javax.imageio.stream.MemoryCacheImageOutputStream(output).use {
+                javax.imageio.ImageIO.write(java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", it)
+            }
+        }.toByteArray()
+        var generations = 0
+        val http = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { request ->
+            generations++
+            assertEquals("/v1/images/generations", request.url.encodedPath)
+            assertEquals("Bearer image-test-key", request.headers[io.ktor.http.HttpHeaders.Authorization])
+            respond(
+                """{"data":[{"b64_json":"${java.util.Base64.getEncoder().encodeToString(image)}"}]}""",
+                headers = io.ktor.http.headersOf(io.ktor.http.HttpHeaders.ContentType, "application/json"),
+            )
+        }) { providerHttpClientDefaults() }
+        var phase = 0
+        var fileId = ""
+        try {
+            backendE2eTest("ws_image_discovery", attachments = AttachmentMinio.config(),
+                settingsSource = object : ru.souz.backend.config.BackendConfigSource {
+                    override fun env(key: String): String? = if (key == "OPENAI_API_KEY") "image-test-key" else null
+                    override fun property(key: String): String? = null
+                },
+                providerClients = ru.souz.llms.http.ProviderHttpClients(http, http),
+                llm = E2eLlmApi { request ->
+                    when (phase++) {
+                        0 -> toolCallReply(request, "GetSkillsByCategory", mapOf("category" to "IMAGE_GENERATION"))
+                        1 -> {
+                            val discovery = restJsonMapper.readTree(request.messages.last().content)
+                            assertEquals(listOf("GenerateAttachmentImage"), discovery["skills"].map { it["skillId"].asText() })
+                            assertEquals(0, discovery["errors"].size())
+                            toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "GenerateAttachmentImage",
+                                "arguments" to mapOf("prompt" to "Test image")))
+                        }
+                        2 -> {
+                            fileId = restJsonMapper.readTree(request.messages.last().content)["file"]["fileId"].asText()
+                            toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "AttachFileToReply",
+                                "arguments" to mapOf("fileId" to fileId, "presentation" to "image")))
+                        }
+                        else -> reply(request, "")
+                    }
+                },
+            ) {
+                val user = UUID.randomUUID().toString()
+                val chat = createPublicChat(user)
+                client.patch(BackendHttpRoutes.SETTINGS) {
+                    trusted(user); jsonBody("""{"enabledTools":["GenerateAttachmentImage","AttachFileToReply"]}""")
+                }
+                withPublicSocket(chat) { socket ->
+                    socket.send(Frame.Text(messageFrame(chat, user, "generate", text = "Generate an image")))
+                    assertEquals("accepted", readJson(socket)["status"].asText())
+                    assertEquals("thread.status", readJson(socket)["type"].asText())
+                    val terminal = readJson(socket)
+                    assertEquals("thread.completed", terminal["type"].asText())
+                    val file = terminal["payload"]["attachments"].single()
+                    assertEquals(fileId, file["id"].asText())
+                    assertEquals("image", file["presentation"].asText())
+                }
+                assertEquals(1, generations)
+                assertEquals(4, phase)
+            }
+        } finally { http.close() }
+    }
+
     @Test
     fun `voice socket registers files directly or in a child and checks the destination at delivery`() {
         for (delegated in listOf(false, true)) {
