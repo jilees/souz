@@ -11,6 +11,42 @@ import ru.souz.backend.attachments.AttachmentException
 import ru.souz.backend.attachments.StoredAttachment
 
 class PostgresAttachmentRepository(private val dataSource: DataSource) {
+    /** Insert ready metadata only after the caller has verified the already-uploaded object. */
+    suspend fun registerUpload(file: StoredAttachment): StoredAttachment = dataSource.write { connection ->
+        connection.prepareStatement("""
+            insert into stored_attachments(id, user_id, source_key, name, mime_type, size_bytes, sha256,
+                state, created_at, stored_at, expires_at, cleanup_due_at)
+            values (?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?)
+            on conflict do nothing
+        """.trimIndent()).use {
+            it.setObject(1, file.id)
+            it.setString(2, file.userId)
+            it.setString(3, "s3:${file.id}")
+            it.setString(4, file.name)
+            it.setString(5, file.mimeType)
+            it.setLong(6, file.sizeBytes)
+            it.setString(7, file.sha256)
+            it.setInstant(8, file.createdAt)
+            it.setInstant(9, requireNotNull(file.storedAt))
+            it.setInstant(10, requireNotNull(file.expiresAt))
+            it.setInstant(11, file.cleanupDueAt)
+            it.executeUpdate()
+        }
+        connection.prepareStatement("select * from stored_attachments where id = ? and user_id = ?").use {
+            it.setObject(1, file.id)
+            it.setString(2, file.userId)
+            it.executeQuery().use { rows ->
+                if (!rows.next()) throw AttachmentException("attachment_not_found")
+                rows.attachment().also { existing ->
+                    if (existing.name != file.name || existing.mimeType != file.mimeType ||
+                        existing.sizeBytes != file.sizeBytes || existing.sha256 != file.sha256) {
+                        throw AttachmentException("attachment_idempotency_conflict")
+                    }
+                }
+            }
+        }
+    }
+
     suspend fun reserve(
         userId: String, sourceKey: String, name: String, mimeType: String, size: Long, sha256: String, now: Instant,
     ): StoredAttachment = dataSource.write { connection ->

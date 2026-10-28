@@ -9,7 +9,6 @@ import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import ru.souz.backend.attachments.AttachmentMinio
 import ru.souz.backend.config.BackendFeatureFlags
@@ -80,14 +79,12 @@ class BackendWebSocketAttachmentsE2eTest {
                                 toolCallReply(request, "RunSkillCommand", mapOf(
                                     "skillId" to "SendMessageToChannel", "arguments" to mapOf(
                                         "channelType" to "public_client", "channelId" to publicChatId,
-                                        "text" to "Must not be delivered", "fileIds" to listOf(fileId),
+                                        "text" to "Here is the document", "fileIds" to listOf(fileId),
                                     ),
                                 ))
                             }
                             else -> {
-                                val failed = restJsonMapper.readTree(last.content)
-                                assertFalse(failed["success"].asBoolean(), last.content)
-                                assertEquals("Attachments are not supported by this channel.", failed["reason"].asText())
+                                assertTrue(restJsonMapper.readTree(last.content)["success"].asBoolean(), last.content)
                                 reply(request, "Document sent to Telegram")
                             }
                         }
@@ -121,8 +118,16 @@ class BackendWebSocketAttachmentsE2eTest {
                     assertEquals(fileId, api.sentFiles.single().first.file.fileId)
                     assertContentEquals(bytes, api.sentFiles.single().second)
                     assertTrue(api.sentMessages.isEmpty())
-                    val untouched = client.get(BackendHttpRoutes.chatMessages(publicChatId)) { trusted(user) }.jsonBody()["items"]
-                    assertEquals(0, untouched.size())
+                    val forwarded = client.get(BackendHttpRoutes.chatMessages(publicChatId)) { trusted(user) }.jsonBody()["items"].single()
+                    assertEquals("Here is the document", forwarded["content"].asText())
+                    withPublicSocket(publicChatId) { session ->
+                        val push = readJson(session)
+                        assertEquals("message.created", push["type"].asText())
+                        assertTrue(push["threadId"].isNull)
+                        val file = push["payload"]["attachments"].single()
+                        assertEquals(fileId, file["id"].asText())
+                        assertEquals(setOf("id", "name", "presentation"), file.fieldNames().asSequence().toSet())
+                    }
                 }
             } finally { workspace.toFile().deleteRecursively() }
         }

@@ -38,6 +38,32 @@ class AttachmentStorage(
     suspend fun get(userId: String, id: UUID): StoredAttachment =
         available(repository.get(userId, id) ?: throw AttachmentException("attachment_not_found"))
 
+    /** External clients finish PUT first; registration never writes or copies the object. */
+    suspend fun importUpload(userId: String, id: UUID, name: String): StoredAttachment = transfers.withPermit {
+        val safeName = attachmentName(name)
+        repository.get(userId, id)?.let { existing ->
+            available(existing)
+            if (existing.name != safeName) throw AttachmentException("attachment_idempotency_conflict")
+            return@withPermit existing
+        }
+        val bytes = try {
+            objects.readUpload(userId, id, config.maxFileBytes)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (known: AttachmentException) {
+            throw known
+        } catch (error: S3Exception) {
+            throw AttachmentException(if (error.statusCode() == 404) "attachment_not_found" else "attachment_operation_failed")
+        } catch (_: Exception) {
+            throw AttachmentException("attachment_operation_failed")
+        }
+        val now = clock.instant()
+        available(repository.registerUpload(StoredAttachment(
+            id, userId, safeName, attachmentMime(bytes, safeName), bytes.size.toLong(), bytes.sha256Hex(),
+            "ready", now, now, now.plus(ATTACHMENT_RETENTION), now.plus(ATTACHMENT_RETENTION),
+        )))
+    }
+
     suspend fun find(userId: String, sourceKey: String): StoredAttachment? =
         repository.find(userId, sourceKey)?.let(::available)
 

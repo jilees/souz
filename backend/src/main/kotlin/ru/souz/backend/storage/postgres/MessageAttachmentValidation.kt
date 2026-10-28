@@ -3,6 +3,7 @@ package ru.souz.backend.storage.postgres
 import java.sql.Connection
 import ru.souz.backend.attachments.AttachmentException
 import ru.souz.backend.attachments.attachmentId
+import ru.souz.backend.attachments.validatePresentation
 import ru.souz.llms.FileContent
 
 /** Validate trusted metadata again inside the message commit transaction. */
@@ -10,10 +11,7 @@ internal fun Connection.validateAttachments(userId: String, files: List<FileCont
     require(files.size <= 10 && files.sumOf { it.sizeBytes } <= 100_000_000) { "attachment_message_too_large" }
     require(files.distinctBy { it.file }.size == files.size) { "attachment_duplicate" }
     for (file in files) {
-        if ((file.presentation == ru.souz.llms.FilePresentation.image && !file.mimeType.startsWith("image/")) ||
-            ((file.presentation == ru.souz.llms.FilePresentation.voice || file.presentation == ru.souz.llms.FilePresentation.audio) && !file.mimeType.startsWith("audio/"))) {
-            throw AttachmentException("attachment_presentation_mismatch")
-        }
+        file.validatePresentation()
         prepareStatement("""
             select name, mime_type, size_bytes from stored_attachments
             where user_id = ? and id = ? and state = 'ready' and expires_at > now()

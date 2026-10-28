@@ -27,6 +27,7 @@ import ru.souz.backend.events.model.ToolCallStartedPayload
 import ru.souz.backend.events.model.PublicErrorPayload
 import ru.souz.backend.events.model.ThreadCancelledPayload
 import ru.souz.backend.events.model.ThreadCompletedPayload
+import ru.souz.backend.client.toClientAttachment
 import ru.souz.backend.events.model.ThreadFailedPayload
 import ru.souz.backend.events.service.AgentEventService
 import ru.souz.backend.execution.model.AgentExecution
@@ -200,10 +201,13 @@ internal class BackendAgentRuntimeEventSink(
 
     private suspend fun emitExecutionFinished(execution: AgentExecution) {
         if (publicClientThread) {
+            val message = execution.assistantMessageId?.let { messageRepository.getById(userId, chatId, it) }
             appendDurableEvent(
                 type = AgentEventType.THREAD_COMPLETED,
-                payload = ThreadCompletedPayload(response = execution.assistantMessageId
-                    ?.let { messageRepository.getById(userId, chatId, it)?.content }.orEmpty()),
+                payload = ThreadCompletedPayload(
+                    response = message?.content.orEmpty(),
+                    attachments = message?.attachments.orEmpty().map { it.toClientAttachment() },
+                ),
             )
         } else {
             appendDurableEvent(

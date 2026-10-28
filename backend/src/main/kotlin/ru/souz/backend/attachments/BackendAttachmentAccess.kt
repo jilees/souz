@@ -37,11 +37,7 @@ class BackendAttachmentAccess(
             val key = "$request:output:${bytes.attachmentChecksum()}:${resolved.name.toByteArray().attachmentChecksum()}"
             storage.save(meta.userId, key, resolved.name, bytes.inputStream())
         }
-        if ((presentation == FilePresentation.image && !file.mimeType.startsWith("image/")) ||
-            ((presentation == FilePresentation.voice || presentation == FilePresentation.audio) && !file.mimeType.startsWith("audio/"))) {
-            throw AttachmentException("attachment_presentation_mismatch")
-        }
-        file.toContent(presentation)
+        file.toContent(presentation).also { it.validatePresentation() }
     }
 
     private suspend fun <T> safely(block: suspend () -> T): T = try {
@@ -63,3 +59,10 @@ internal fun attachmentId(raw: String): UUID = try {
 
 internal fun StoredAttachment.toContent(presentation: FilePresentation = FilePresentation.document) =
     FileContent(FileReference(id.toString()), name, mimeType, sizeBytes, presentation)
+
+internal fun FileContent.validatePresentation() {
+    if ((presentation == FilePresentation.image && !mimeType.startsWith("image/")) ||
+        ((presentation == FilePresentation.voice || presentation == FilePresentation.audio) && !mimeType.startsWith("audio/"))) {
+        throw AttachmentException("attachment_presentation_mismatch")
+    }
+}

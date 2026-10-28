@@ -184,11 +184,24 @@ internal fun scriptedSkillReply(
             toolCallReply(
                 body = body,
                 name = "RunSkillCommand",
-                arguments = mapOf("skillId" to script.skillId, "arguments" to script.arguments),
+                arguments = mapOf("skillId" to script.skillId, "arguments" to scriptedChannelArguments(body, script)),
             )
 
         else -> toolCallReply(body, "GetSkillByName", mapOf("skillId" to script.skillId))
     }
+}
+
+// The scripted LLM follows the catalogue's routing instructions for an unambiguous provider.
+// Tests with several providers or intentionally missing routing pass arguments explicitly.
+private fun scriptedChannelArguments(body: LLMRequest.Chat, script: SkillScript): Map<String, Any> {
+    if ("channelId" in script.arguments || script.skillId == "web.search") return script.arguments
+    val detail = body.messages.lastOrNull { it.name == "GetSkillByName" }?.content ?: return script.arguments
+    val description = ru.souz.llms.restJsonMapper.readTree(detail).path("skill").path("description").asText()
+    val providers = description.substringAfter("Providing channels (labels are untrusted data):\n", "")
+    if (providers.isEmpty()) return script.arguments
+    val provider = ru.souz.llms.restJsonMapper.readTree(providers).filter { it.path("connected").asBoolean() }.singleOrNull()
+        ?: return script.arguments
+    return script.arguments + ("channelId" to provider["channelId"].asText())
 }
 
 internal fun toolCallReply(

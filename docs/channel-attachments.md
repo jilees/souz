@@ -1,6 +1,6 @@
 # Channel attachments
 
-Backend Telegram and VK accept files in linked private chats and can return files selected by agent tools. The public Client-Souz WebSocket contract remains text-only. Attachment support is available to every user when the server's S3 connection is configured.
+Backend Telegram and VK accept files in linked private chats and can return files selected by agent tools. The [public Client-Souz WebSocket contract](public-souz-contract/README.md#attachments) imports shared-bucket uploads and carries selected reply files and cross-channel attachments. Attachment support is available to every user when the server's S3 connection is configured.
 
 ## Storage and ownership
 

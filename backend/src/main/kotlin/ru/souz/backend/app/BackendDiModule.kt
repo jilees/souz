@@ -309,6 +309,7 @@ fun backendDiModule(
     }
     bindSingleton {
         BackendClientSkills(
+            chatRepository = instance(),
             liveTools = instance(),
             registry = instance(),
             toolCallRepository = instance(),
@@ -371,7 +372,6 @@ fun backendDiModule(
             policyPrompt = appConfig.policyPrompt,
             toolCatalog = instance<AgentToolCatalog>(tag = BackendDiTags.MERGED_TOOL_CATALOG),
             clientSkills = instance(),
-            chatRepository = instance(),
             skillBundleProvider = instance<SkillRegistryRepository>(),
             commandExecutor = instance<SkillCommandExecutor>(),
             filesToolUtil = instance<FilesToolUtil>(),
@@ -524,6 +524,7 @@ fun backendDiModule(
         PublicClientChannelProvider(
             chatRepository = instance(),
             deliveryService = instance(),
+            attachmentStorage = instanceOrNull(),
             isClaimedByAnotherProvider = { chatId ->
                 // Gated on the same flags TelegramChannelProvider/VkChannelProvider's registration
                 // is gated on below — otherwise a leftover Telegram/VK binding would hide a chat

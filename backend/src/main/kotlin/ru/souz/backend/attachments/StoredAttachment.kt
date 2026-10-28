@@ -24,7 +24,9 @@ data class StoredAttachment(
     val expiresAt: Instant?,
     val cleanupDueAt: Instant,
 ) {
-    val objectKey: String get() = "files/${userId.sha256Hex()}/$id"
+    val objectKey: String get() = attachmentObjectKey(userId, id)
 }
+
+internal fun attachmentObjectKey(userId: String, id: UUID): String = "files/${userId.sha256Hex()}/$id"
 
 class AttachmentException(val code: String) : IllegalStateException(code)

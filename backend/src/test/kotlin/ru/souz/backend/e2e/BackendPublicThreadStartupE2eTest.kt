@@ -131,10 +131,10 @@ class BackendPublicThreadStartupE2eTest {
 
     @Test
     fun `unacknowledged submit can call a device and complete`() = backendE2eTest(
-        "e2e_ws_unacked_tool", llm = E2eLlmApi().apply { requestSkill("user.ask", mapOf("question" to "Continue?")) },
+        "e2e_ws_unacked_tool", llm = E2eLlmApi().apply { requestSkill("speaker.status", mapOf("question" to "Continue?")) },
     ) {
         val userId = UUID.randomUUID().toString()
-        val chatId = createPublicChat(userId, tools = clientToolsJson("user.ask"))
+        val chatId = createPublicChat(userId, tools = clientToolsJson("speaker.status"))
         submitDirectly(chatId, messageFrame(chatId, userId, "unacked"))
         withPublicSocket(chatId) { session -> withTimeout(10.seconds) {
             val started = readJson(session)

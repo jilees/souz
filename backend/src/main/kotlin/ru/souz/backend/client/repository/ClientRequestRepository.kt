@@ -21,6 +21,7 @@ data class ClientFollowUpInput(
     val latestDeviceContextJson: String,
     val messageId: UUID = UUID.randomUUID(),
     val createdAt: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS),
+    val attachments: List<ru.souz.llms.FileContent> = emptyList(),
 )
 
 data class ClientHistoryInput(

@@ -1,6 +1,6 @@
 ---
 name: device-mcp-call-tool
-description: Perform an action or read a setting on a device (its own OS/app function — e.g. set the volume, read a network setting), reachable via the user's active client device. Use for any request to control or query a specific device once you know (or have looked up with device.mcp.list_tools) which function to use and its arguments.
+description: Perform an action or read a setting on a device (its own OS/app function — e.g. set the volume, read a network setting), reachable via the selected provider's device. Use for any request to control or query a specific device once you know (or have looked up with device.mcp.list_tools) which function to use and its arguments.
 metadata:
   souz.skill-id: device.mcp.call_tool
   souz.transport: client-websocket
@@ -12,15 +12,18 @@ metadata:
 
 Invoke `RunSkillCommand` with `skillId` set to `device.mcp.call_tool`. Arguments:
 - `target`: optional device `id` from `device.mcp.list_devices`. Omit it to mean "the device
-  currently on the call".
+  connected through the selected channel".
 - `name`: required, the exact MCP tool name (from `device.mcp.list_tools`).
 - `arguments`: object matching that tool's `inputSchema` exactly.
 
 ```json
-{"skillId":"device.mcp.call_tool","arguments":{"target":"a1b2c3","name":"set_volume","arguments":{"level":7}}}
+{"skillId":"device.mcp.call_tool","arguments":{"channelId":"<provider-chat-uuid>","target":"a1b2c3","name":"set_volume","arguments":{"level":7}}}
 ```
 
-Souz sends a durable `tool.call.started` event named `device.mcp.call_tool` to the active client
+Omit routing `channelId` for the current conversation channel. For an explicitly requested other
+device, add that provider's `channelId` to `arguments`.
+
+Souz sends a `tool.call.started` event named `device.mcp.call_tool` to the selected client
 device and waits up to one minute for `tool.result`. Don't pass a timeout — there is none to give;
 the emulator applies its own internal budget for this call.
 

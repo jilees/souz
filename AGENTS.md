@@ -2,7 +2,7 @@
 
 Souz is a backend-only Kotlin/JVM AI assistant with a Ktor HTTP host, graph-based agent execution, and PostgreSQL persistence.
 
-Backend client Skills are bundled under `backend/src/main/resources/skills/client/`. Orion command tools come from chat declarations or discovery. Chat declarations override matching defaults; discovered Orion tools override both and remain bound to their supplying channel until refreshed in that conversation.
+Client Skill guidance is bundled under `backend/src/main/resources/skills/client/`. Only `orion.tools.list` is injected for every public WebSocket channel. Declarations and discovery describe that channel’s tools; executions can use all unarchived channels of their user. Discovery overrides the supplying channel’s declarations. Equal definitions share one Skill and provider list; conflicting names are excluded. `user.ask` remains supported when declared or discovered; Orion and the bot service do not declare it. Parent and child instructions identify the current channel, which defaults local calls when it provides the tool; explicit routing takes priority. A missing provider registration requires discovery only if the intended connected channel has no successful catalogue of its own; a completed catalogue, including an empty one, makes missing tools unavailable without rediscovery.
 
 Complexity routing admits only confident tool-free turns to the light model. Public-client executions emit one live waiting phrase unless routed simple; see [model routing](agent/docs/execution-lifecycle.md#model-routing).
 
@@ -63,7 +63,7 @@ Only these direct production project dependencies are allowed. Standard test-sou
 ## Optional backend capabilities
 
 - [Voice memory](docs/voice-memory.md) uses per-speaker Hindsight banks and durable JEV routing alongside household memory.
-- [Channel attachments](docs/channel-attachments.md) use owner-scoped private S3 storage and explicit file selection for Telegram/VK replies.
+- [Channel attachments](docs/channel-attachments.md) use owner-scoped private S3 storage, import shared-bucket uploads through WebSocket, and support explicit file selection for Telegram/VK and public-client replies.
 - The Docker runtime provides a per-user browser and explicit Skill environment forwarding; see [the runtime guide](docs/backend-docker-sandbox-rollout.md).
 - [Scheduled tasks](backend/docs/scheduled-tasks.md) use the backend's PostgreSQL-backed JobService.
 - [User personality](backend/docs/personality-settings.md) is independent of the system prompt and synchronizes to Orion.

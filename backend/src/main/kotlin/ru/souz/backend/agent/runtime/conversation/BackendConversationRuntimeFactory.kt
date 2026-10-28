@@ -30,20 +30,14 @@ import ru.souz.backend.agent.session.AgentStateRepository
 import ru.souz.backend.agent.session.toConversationSession
 import ru.souz.backend.app.BackendProviderRetryPolicy
 import ru.souz.backend.chat.repository.MessageRepository
-import ru.souz.backend.chat.repository.ChatRepository
 import ru.souz.backend.client.BackendClientSkills
 import ru.souz.backend.client.CLIENT_TOOL_ROUTING_INSTRUCTIONS
 import ru.souz.backend.client.CLIENT_TOOL_DISCOVERY_NAME
-import ru.souz.backend.client.ClientError
-import ru.souz.backend.client.ClientToolDiscoveryResult
-import ru.souz.backend.client.DiscoveredClientTools
-import ru.souz.backend.client.normalizeClientTools
 import ru.souz.backend.common.BackendToolCapabilityPolicy
 import ru.souz.backend.common.backendLogContext
 import ru.souz.backend.hooks.HookLlmBudget
 import ru.souz.backend.hooks.HookStore
 import ru.souz.backend.config.NamedLlmConfig
-import ru.souz.backend.http.clientFrameMapper
 import ru.souz.backend.attachments.AttachmentMediaTools
 import ru.souz.backend.llm.imageGenerationGateway
 import ru.souz.backend.llm.resolveImageModel
@@ -94,7 +88,6 @@ internal class BackendConversationRuntimeFactory(
     private val policyPrompt: String?,
     private val toolCatalog: AgentToolCatalog = AgentToolCatalog(),
     private val clientSkills: BackendClientSkills,
-    private val chatRepository: ChatRepository,
     private val skillBundleProvider: SkillBundleProvider,
     private val skillClassifier: SkillClassifier,
     private val fallbackSkillClassifier: SkillClassifier? = null,
@@ -188,36 +181,9 @@ internal class BackendConversationRuntimeFactory(
             visionGateway = visionGateway,
             imageGenerationGateway = imageGenerationGateway,
         )
-        val clientTools = chatRepository.clientTools(key.userId, key.chatId()).filter { it.name != PersonalityTool.NAME }
         val serverNames = toolCatalog.toolsByCategory.values.flatMap { it.keys }.toSet() +
             BackendToolCapabilityPolicy.executionBoundToolNames
-        lateinit var baseCatalog: AgentToolCatalog
-        lateinit var executionToolCatalog: AgentToolCatalog
-        fun withDiscovered(discovered: DiscoveredClientTools?): AgentToolCatalog {
-            if (discovered == null) return baseCatalog
-            val tools = discovered.tools.filter { it.name != PersonalityTool.NAME }
-            val names = tools.map { it.name }.toSet()
-            return AgentToolCatalog.compose(
-                baseCatalog.filter { _, tool -> tool.fn.name !in names },
-                clientSkills.catalog(tools, boundChannelId = discovered.channelId),
-            )
-        }
-        val clientToolCatalog = clientSkills.catalog(clientTools, onDiscovery = { result, channelId ->
-            val replacement = try {
-                val definitions = clientFrameMapper.treeToValue(result, ClientToolDiscoveryResult::class.java).tools
-                    .normalizeClientTools(serverNames + CLIENT_TOOL_DISCOVERY_NAME)
-                val discovered = DiscoveredClientTools(channelId, definitions)
-                discovered to withDiscovered(discovered)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                return@catalog ClientError("invalid_client_tool_catalogue", "Orion returned an invalid catalogue; the previous tools remain available.")
-            }
-            chatRepository.replaceDiscoveredClientTools(key.userId, key.chatId(), replacement.first)
-            executionToolCatalog = replacement.second
-            null
-        })
-        baseCatalog = backendExecutionToolCatalog(
+        val baseCatalog = backendExecutionToolCatalog(
             compiledToolCatalog = toolCatalog.mapTools { _, tool ->
                 if (tool.fn.name == "GenerateAttachmentImage" && attachmentMediaTools != null) {
                     attachmentMediaTools.imageTool(imageGenerationGateway, imageSelection)
@@ -229,11 +195,17 @@ internal class BackendConversationRuntimeFactory(
                 ))),
             ),
             enabledCompiledToolNames = request.enabledTools,
-            clientToolCatalog = clientToolCatalog,
+            clientToolCatalog = AgentToolCatalog(emptyMap()),
             includeFewShotExamples = settingsProvider.useFewShotExamples,
             metrics = metrics,
         )
-        executionToolCatalog = withDiscovered(chatRepository.discoveredClientTools(key.userId, key.chatId()))
+        lateinit var executionToolCatalog: AgentToolCatalog
+        lateinit var refreshClientCatalogue: suspend () -> Unit
+        refreshClientCatalogue = {
+            executionToolCatalog = AgentToolCatalog.compose(baseCatalog,
+                clientSkills.catalog(key.userId, serverNames, refreshClientCatalogue))
+        }
+        refreshClientCatalogue()
         val toolTelemetry = metrics?.toolTelemetry(executionToolCatalog.toolsByCategory.values.flatMap { it.keys }.toSet())
             ?: AgentTelemetry.NONE
         val requestToolsFilter = RuntimePassThroughToolsFilter
@@ -258,6 +230,7 @@ internal class BackendConversationRuntimeFactory(
             commandExecutor = commandExecutor,
             approvalGate = null,
         )
+        val clientRoutingContext = "Current conversation channelId: ${key.conversationId}.\n$CLIENT_TOOL_ROUTING_INSTRUCTIONS"
         val subagentTools = SubagentToolFactory(
             createAgent = { maxTurns ->
                 ToolLoopGraphBasedAgent(
@@ -274,7 +247,7 @@ internal class BackendConversationRuntimeFactory(
             commandExecutor = commandExecutor,
             configuredModels = settingsProvider.subagentModels,
             commandToolNamesProvider = { catalog -> catalog.toolsByCategory.values.flatMap { it.keys }.toSet() - serverNames },
-            commandInstructions = CLIENT_TOOL_ROUTING_INSTRUCTIONS,
+            commandInstructions = clientRoutingContext,
             additionalInstructions = narrationInstructions(request.narrateSteps, request.locale).orEmpty(),
         )
         val kernel = AgentExecutionKernelFactory(
@@ -303,7 +276,7 @@ internal class BackendConversationRuntimeFactory(
             errorMessages = BackendAgentErrorMessages,
             llmApi = executionApi,
             conversationInstructions = {
-                userSettingsRepository.personalityInstructions(key.userId,
+                clientRoutingContext + "\n\n" + userSettingsRepository.personalityInstructions(key.userId,
                     canUpdate = PersonalityTool.NAME in baseCatalog.toolsByCategory[ToolCategory.CONFIG].orEmpty())
             },
             skillClassifier = skillClassifier,

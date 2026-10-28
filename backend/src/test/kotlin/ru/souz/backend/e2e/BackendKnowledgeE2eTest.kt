@@ -22,6 +22,7 @@ class BackendKnowledgeE2eTest {
 
     private fun knowledgeScenario(progress: Boolean = false, failWrites: Boolean = false) {
         val answer = if (progress) "progress-evidence ".repeat(100) else "head:" + "🙂".repeat(270_000) + ":tail"
+        var channelId = ""
         var knowledgeId: String? = null
         var expectedMatchStart: Int? = null
         var searched = false
@@ -36,7 +37,7 @@ class BackendKnowledgeE2eTest {
                 val result = request.messages.lastOrNull { it.role == LLMMessageRole.function }
                 when {
                     request.functions.map { it.name } == listOf("RunSkillCommand") ->
-                        toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "user.ask", "arguments" to mapOf("question" to "Report progress")))
+                        toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "speaker.status", "arguments" to mapOf("question" to "Report progress", "channelId" to channelId)))
 
                     result?.name.let { it == "RunSkillCommand" || it == "SpawnSubagent" } -> {
                         val body = restJsonMapper.readTree(result!!.content)
@@ -83,17 +84,18 @@ class BackendKnowledgeE2eTest {
                     }
 
                     progress -> toolCallReply(request, "SpawnSubagent", mapOf(
-                        "task" to "Ask repeatedly and report progress", "skillIds" to listOf("user.ask"), "maxTurns" to 8,
+                        "task" to "Ask repeatedly and report progress", "skillIds" to listOf("speaker.status"), "maxTurns" to 8,
                     ))
 
                     else -> toolCallReply(request, "RunSkillCommand", mapOf(
-                        "skillId" to "user.ask", "arguments" to mapOf("question" to "Return the full report"),
+                        "skillId" to "speaker.status", "arguments" to mapOf("question" to "Return the full report", "channelId" to channelId),
                     ))
                 }
             },
         ) {
             val userId = UUID.randomUUID().toString()
-            val chatId = createPublicChat(userId, tools = clientToolsJson("user.ask"))
+            val chatId = createPublicChat(userId, tools = clientToolsJson("speaker.status"))
+            channelId = chatId
             if (failWrites) backend.sql { connection ->
                 connection.createStatement().use {
                     it.execute("alter table conversation_knowledge add constraint reject_knowledge_writes check (false)")
@@ -107,7 +109,7 @@ class BackendKnowledgeE2eTest {
                     val frame = readJson(session)
                     when (frame["type"]?.asText()) {
                         "tool.call.started" -> {
-                            assertEquals("user.ask", frame["payload"]["name"].asText())
+                            assertEquals("speaker.status", frame["payload"]["name"].asText())
                             clientCalls++
                             session.send(Frame.Text(json.writeValueAsString(mapOf(
                                 "kind" to "tool.result", "chatId" to chatId, "threadId" to frame["threadId"].asText(),

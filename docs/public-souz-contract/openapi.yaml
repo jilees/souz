@@ -112,8 +112,10 @@ components:
       maxItems: 256
       default: []
       description: >-
-        Immutable creation declarations, at most 1 MiB. Bundled client Skills are always
-        available; declarations override matching defaults. Omission and [] are equivalent.
+        Immutable declarations of tools supplied by this channel, at most 1 MiB. Only canonical
+        orion.tools.list is injected for every public WebSocket channel. Other tools require declarations
+        or discovery. Catalogues are shared across the owner's conversations; conflicting definitions
+        are unavailable. user.ask requires declarations or discovery like other client tools. Omission and [] are equivalent.
         Definitions are normalized for shared HTTP/WS creation idempotency; changed definitions conflict.
       items:
         $ref: "#/components/schemas/ClientToolDefinition"
@@ -122,10 +124,10 @@ components:
       additionalProperties: false
       required: [tools]
       description: >-
-        Successful orion.tools.list result. Replaces the source conversation's remembered
-        discovered tools, bound to the supplying channel, without changing creation declarations.
-        Discovered definitions override matching declarations and defaults; an empty list restores
-        that baseline. The discovery tool itself is excluded. The deadline is 30 seconds.
+        Successful orion.tools.list result. Replaces only the supplying channel's remembered
+        discovered tools, shared across its owner's conversations without changing creation declarations.
+        Discovered definitions override that channel's matching declarations; an empty list restores
+        its declarations and canonical discovery tool. The discovery tool itself is excluded. The deadline is 30 seconds.
       properties:
         tools:
           type: array
@@ -386,7 +388,7 @@ components:
         requestId:
           $ref: "#/components/schemas/NonEmptyString"
     MessageSubmit:
-      description: Submits user input and selects, continues, or creates an execution thread. A newly accepted submit establishes or replaces the chat's retained destination device context for forwarded messages and cross-channel user.ask; rejected submits and idempotent retries do not replace it. An accepted submit (including a retry) automatically restores live-only delivery if unsubscribed; a rejection does not subscribe.
+      description: Submits user input and selects, continues, or creates an execution thread. A newly accepted submit establishes or replaces the chat's retained destination device context for forwarded messages; rejected submits and idempotent retries do not replace it. An accepted submit (including a retry) automatically restores live-only delivery if unsubscribed; a rejection does not subscribe.
       type: object
       additionalProperties: false
       required: [kind, chatId, requestId, payload]
@@ -423,12 +425,20 @@ components:
     MessageSubmitPayload:
       type: object
       additionalProperties: false
-      required: [device, content]
+      required: [device]
+      anyOf:
+        - required: [content]
+        - required: [attachments]
+          properties:
+            attachments:
+              minItems: 1
       properties:
         device:
           $ref: "#/components/schemas/Device"
         content:
           $ref: "#/components/schemas/RecognizedTextContent"
+        attachments:
+          $ref: "#/components/schemas/Attachments"
         meta:
           $ref: "#/components/schemas/RequestMeta"
         voice:
@@ -436,6 +446,28 @@ components:
           anyOf:
             - $ref: "#/components/schemas/Voice"
             - type: "null"
+    Attachment:
+      description: Immutable object already uploaded into the shared private bucket at files/<lowercase SHA-256 of UTF-8 userId>/<id>. Souz imports metadata on first use; the UUID and object are never reused or overwritten.
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        name:
+          $ref: "#/components/schemas/NonEmptyString"
+        presentation:
+          type: string
+          enum: [document, image, voice, audio]
+          default: document
+    Attachments:
+      description: Ordered file references with distinct IDs. At most 100 MB total; the configured per-file limit also applies on first import. Empty attachments are omitted from server events. MIME and size are not sent over WebSocket.
+      type: array
+      maxItems: 10
+      items:
+        $ref: "#/components/schemas/Attachment"
     Voice:
       type: object
       additionalProperties: false
@@ -1117,13 +1149,10 @@ components:
           maximum: 9007199254740991
     ToolCallStartedPayload:
       description: >-
-        For user.ask, deviceId is required and identifies the destination device;
-        deviceType is optional and non-null when present.
-        Cross-channel user.ask captures the device from the target chat's most recently accepted
-        new message.submit; this context survives thread completion and reconnects. Creation and
-        subscription alone do not establish it. If unavailable, return client_context_missing to
-        the calling tool without creating a pending question or target event.
-        Other calls have only an optional, nullable deviceId and retain their existing eligibility rules.
+        Client tool invocation. Echo correlation identifiers in tool.result.
+        Cross-channel calls are live-only and require an owned, connected provider of this tool.
+        user.ask uses a five-minute result deadline and requires a declaration or discovery.
+        Its events retain destination device fields for replay. Other calls have an optional, nullable deviceId.
       type: object
       additionalProperties: false
       required: [toolCallId, name, arguments]
@@ -1193,6 +1222,8 @@ components:
       properties:
         response:
           type: string
+        attachments:
+          $ref: "#/components/schemas/Attachments"
         deviceId:
           $ref: "#/components/schemas/NonEmptyString"
         deviceType:
@@ -1298,6 +1329,8 @@ components:
           type: string
         content:
           type: string
+        attachments:
+          $ref: "#/components/schemas/Attachments"
         deviceId:
           $ref: "#/components/schemas/NonEmptyString"
         deviceType:

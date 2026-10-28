@@ -5,6 +5,7 @@ import java.util.UUID
 import ru.souz.backend.chat.model.Chat
 import ru.souz.backend.client.ClientToolDefinition
 import ru.souz.backend.client.DiscoveredClientTools
+import ru.souz.backend.client.ClientToolChannel
 
 class ChatRequestConflictException(
     val userId: String,
@@ -17,8 +18,8 @@ interface ChatRepository {
     suspend fun getOrCreate(chat: Chat): Chat
     /** Deletes a scheduled-task chat with no execution or message, after a concurrent admission commits. */
     suspend fun deleteEmptyScheduledChat(userId: String, chatId: UUID): Boolean
-    suspend fun clientTools(userId: String, chatId: UUID): List<ClientToolDefinition>
-    suspend fun discoveredClientTools(userId: String, chatId: UUID): DiscoveredClientTools?
+    /** All unarchived public channels, without the UI's chat-list pagination limit. */
+    suspend fun clientToolChannels(userId: String): List<ClientToolChannel>
     suspend fun replaceDiscoveredClientTools(userId: String, chatId: UUID, tools: DiscoveredClientTools)
     suspend fun get(userId: String, chatId: UUID): Chat?
     suspend fun getById(chatId: UUID): Chat?

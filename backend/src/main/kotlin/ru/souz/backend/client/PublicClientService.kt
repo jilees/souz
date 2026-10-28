@@ -17,6 +17,7 @@ import kotlinx.coroutines.slf4j.MDCContext
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
+import ru.souz.backend.attachments.AttachmentException
 import ru.souz.backend.chat.model.Chat
 import ru.souz.backend.chat.model.ChatRole
 import ru.souz.backend.chat.repository.ChatRepository
@@ -37,6 +38,7 @@ import ru.souz.backend.toolcall.model.ToolCallStatus
 import ru.souz.backend.toolcall.repository.ToolCallContext
 import ru.souz.backend.toolcall.repository.ToolCallRepository
 import ru.souz.backend.http.parseModel
+import ru.souz.llms.FileContent
 import kotlin.time.Duration.Companion.milliseconds
 
 internal data class HandledClientFrame(
@@ -80,7 +82,11 @@ internal class PublicClientService(
         val now = Instant.now()
         val requestId = frame.requestId.required("requestId")
         validateDevice(chat, frame.payload.device)
-        frame.payload.content.validatedText()
+        frame.payload.content?.validatedText()
+        frame.payload.attachments.validateReferences()
+        if (frame.payload.content == null && frame.payload.attachments.isEmpty()) {
+            throw ClientContractException("invalid_request", "content or non-empty attachments is required.")
+        }
         frame.payload.voice?.let { voice ->
             if (voice.embeddingId.length != 36 || voice.embeddingId.uuid("payload.voice.embeddingId").toString() != voice.embeddingId.lowercase()) {
                 throw ClientContractException("invalid_request", "payload.voice.embeddingId must be a canonical UUID.")
@@ -98,7 +104,10 @@ internal class PublicClientService(
                     "device" to frame.payload.device.copy(capabilities = frame.payload.device.capabilities.toSortedSet()),
                     "content" to frame.payload.content,
                     "meta" to frame.payload.meta,
-                ).apply { frame.payload.voice?.let { put("voice", it.copy(embeddingId = it.embeddingId.lowercase())) } }
+                ).apply {
+                    frame.payload.voice?.let { put("voice", it.copy(embeddingId = it.embeddingId.lowercase())) }
+                    if (frame.payload.attachments.isNotEmpty()) put("attachments", frame.payload.attachments)
+                }
             ),
         )
         val result = clientRequestRepository.resolveMessage(
@@ -107,10 +116,16 @@ internal class PublicClientService(
             requestedThreadId = requestedThreadId,
             rejectedRequest = rejectedMessageRequest(key, now),
         )
-        return when (result) {
-            is ClientRequestResult.Continue -> continueThread(chat, frame, key, result.execution, now)
-            ClientRequestResult.CreateThread -> startThread(chat, frame, key, now)
-            else -> handledReceipt(result, key, now)
+        // Receipts win over storage: an accepted retry must survive expiry or an S3 outage.
+        if (result !is ClientRequestResult.Continue && result != ClientRequestResult.CreateThread) {
+            return handledReceipt(result, key, now)
+        }
+        return try {
+            val files = frame.payload.attachments.importFiles(chat.userId, attachmentStorage)
+            if (result is ClientRequestResult.Continue) continueThread(chat, frame, key, result.execution, now, files)
+            else startThread(chat, frame, key, now, files)
+        } catch (error: AttachmentException) {
+            throw ClientContractException("invalid_request", "Attachment rejected: ${error.code}.")
         }
     }
 
@@ -278,18 +293,20 @@ internal class PublicClientService(
         frame: MessageSubmitFrame,
         key: ClientRequestKey,
         now: Instant,
+        attachments: List<FileContent>,
     ): HandledClientFrame {
         val deviceJson = mapper.writeValueAsString(frame.payload.device)
         val metadata = inputMetadata(frame)
         val prepared = executionService.prepareChatTurn(
             userId = chat.userId,
             chatId = chat.id,
-            content = frame.payload.content.text,
+            content = frame.payload.content?.text.orEmpty(),
             clientMessageId = key.requestId,
             requestOverrides = requestOverrides(frame.payload.meta),
             latestDeviceContextJson = deviceJson,
             userMessageMetadata = metadata,
             clientToolsEnabled = true,
+            attachments = attachments,
         )
         val threadId = prepared.execution.id
         val ack = acceptedMessage(chat.id, key.requestId, threadId, created = true, now = now)
@@ -326,7 +343,7 @@ internal class PublicClientService(
             }
         }.await()
         return if (result is ClientRequestResult.Continue) {
-            continueThread(chat, frame, key, result.execution, now)
+            continueThread(chat, frame, key, result.execution, now, attachments)
         } else {
             handledReceipt(result, key, now)
         }
@@ -338,12 +355,14 @@ internal class PublicClientService(
         key: ClientRequestKey,
         execution: AgentExecution,
         now: Instant,
+        attachments: List<FileContent>,
     ): HandledClientFrame {
         val threadId = execution.id
         val input = ClientFollowUpInput(
-            content = frame.payload.content.text,
+            content = frame.payload.content?.text.orEmpty(),
             metadata = inputMetadata(frame),
             latestDeviceContextJson = mapper.writeValueAsString(frame.payload.device),
+            attachments = attachments,
         )
         suspend fun commit(afterSeq: Long, input: ClientFollowUpInput?) = clientRequestRepository.commitFollowUp(
             userId = chat.userId,
@@ -389,7 +408,7 @@ internal class PublicClientService(
     )
 
     private fun inputMetadata(frame: MessageSubmitFrame): Map<String, String> = buildMap {
-        put("source", frame.payload.content.source)
+        frame.payload.content?.let { put("source", it.source) }
         put("device", mapper.writeValueAsString(frame.payload.device))
         put("requestId", frame.requestId)
         frame.payload.voice?.let { put("voiceEmbeddingId", it.embeddingId.lowercase()) }

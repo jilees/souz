@@ -6,6 +6,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import ru.souz.backend.attachments.toContent
+import ru.souz.backend.client.toClientAttachment
 import ru.souz.backend.crypto.sha256Hex
 import ru.souz.backend.chat.model.Chat
 import ru.souz.backend.chat.model.ChatRole
@@ -132,7 +133,8 @@ class ChannelDeliveryService(
             chatId = chatId,
             executionId = null,
             type = AgentEventType.MESSAGE_CREATED,
-            payload = MessageCreatedPayload(message.id, message.seq, message.role.value, message.content),
+            payload = MessageCreatedPayload(message.id, message.seq, message.role.value, message.content,
+                attachments = message.attachments.map { it.toClientAttachment() }),
         )
     }
 }

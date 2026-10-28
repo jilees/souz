@@ -35,13 +35,14 @@ class BackendClientImagesE2eTest {
         val url = "https://screens.example.test/tv/screenshot.webp?token=private-download-token"
         val bytes = Base64.getDecoder().decode("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA")
         val api = FakeTelegramBotApi()
+        var sourceChannel = ""
         var telegramChat = ""
         var fileId = ""
         var step = 0
         val llm = E2eLlmApi { request ->
             when (step++) {
                 0 -> toolCallReply(request, "GetSkillByName", mapOf("skillId" to "device.mcp.call_tool"))
-                1 -> toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "device.mcp.call_tool", "arguments" to mapOf("name" to "get_screenshot")))
+                1 -> toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "device.mcp.call_tool", "arguments" to mapOf("name" to "get_screenshot", "channelId" to sourceChannel)))
                 2 -> {
                     val result = restJsonMapper.readTree(request.messages.last { it.role == LLMMessageRole.function }.content)
                     fileId = result["content"][0]["fileId"].asText()
@@ -63,7 +64,8 @@ class BackendClientImagesE2eTest {
                 telegramApi = api, attachments = AttachmentMinio.config(), llm = llm,
             ) {
                 val owner = UUID.randomUUID().toString()
-                val source = createPublicChat(owner, "source")
+                val source = createPublicChat(owner, "source", tools = clientToolsJson("device.mcp.call_tool"))
+                sourceChannel = source
                 telegramChat = createPublicChat(owner, "telegram")
                 val link = client.put(BackendHttpRoutes.chatTelegramBot(telegramChat)) {
                     trusted(owner); jsonBody("""{"token":"123456:resource-image-test"}""")
@@ -98,7 +100,7 @@ class BackendClientImagesE2eTest {
         backendE2eTest("e2e_channel_image", attachments = AttachmentMinio.config()) {
             val owner = UUID.randomUUID().toString()
             val source = createPublicChat(owner, "source")
-            val target = createPublicChat(owner, "target")
+            val target = createPublicChat(owner, "target", tools = clientToolsJson("device.mcp.call_tool"))
             val data = pngBase64()
             llm.requestSkillForPrompt("remote screen", "device.mcp.call_tool", mapOf("channelId" to target, "name" to "captureScreen"))
             withPublicSocket(target) { targetSocket ->
@@ -120,7 +122,7 @@ class BackendClientImagesE2eTest {
     fun `inline MCP images reach the model while persisted results and retries retain only file references`() =
         backendE2eTest("e2e_client_images", attachments = AttachmentMinio.config()) {
             val owner = UUID.randomUUID().toString()
-            val chat = createPublicChat(owner)
+            val chat = createPublicChat(owner, tools = clientToolsJson("device.mcp.call_tool"))
             val data = pngBase64()
             llm.requestSkillForPrompt("screen", "device.mcp.call_tool", mapOf("name" to "captureScreen"))
             withMultiChatSocket { socket ->
@@ -175,7 +177,7 @@ class BackendClientImagesE2eTest {
     fun `inline image without configured storage reports unavailability without retaining base64`() =
         backendE2eTest("e2e_client_image_disabled") {
             val owner = UUID.randomUUID().toString()
-            val chat = createPublicChat(owner)
+            val chat = createPublicChat(owner, tools = clientToolsJson("device.mcp.call_tool"))
             val data = pngBase64()
             llm.requestSkillForPrompt("screen", "device.mcp.call_tool", mapOf("name" to "captureScreen"))
             withMultiChatSocket { socket ->
