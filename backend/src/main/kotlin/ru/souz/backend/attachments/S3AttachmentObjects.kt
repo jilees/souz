@@ -2,7 +2,6 @@ package ru.souz.backend.attachments
 
 import java.net.URI
 import java.time.Duration
-import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import ru.souz.backend.crypto.sha256Hex
@@ -47,8 +46,8 @@ class S3AttachmentObjects(config: AttachmentStorageConfig) : AutoCloseable {
     }
 
     /** Read a completed external upload before any metadata exists in PostgreSQL. */
-    internal suspend fun readUpload(userId: String, id: UUID, limit: Int): ByteArray = runInterruptible(Dispatchers.IO) {
-        client.getObject { it.bucket(bucket).key(attachmentObjectKey(userId, id)) }.use { response ->
+    internal suspend fun readUpload(objectKey: String, limit: Int): ByteArray = runInterruptible(Dispatchers.IO) {
+        client.getObject { it.bucket(bucket).key(objectKey) }.use { response ->
             if (response.response().contentLength() > limit) throw AttachmentException("attachment_too_large")
             response.readAttachmentBytes(limit).also {
                 if (it.size.toLong() != response.response().contentLength()) throw AttachmentException("attachment_corrupt")

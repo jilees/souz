@@ -447,15 +447,16 @@ components:
             - $ref: "#/components/schemas/Voice"
             - type: "null"
     Attachment:
-      description: Immutable object already uploaded into the shared private bucket at files/<lowercase SHA-256 of UTF-8 userId>/<id>. Souz imports metadata on first use; the UUID and object are never reused or overwritten.
+      description: Immutable object uploaded into the configured private bucket. objectKey is opaque; naming is unrestricted. Souz assigns an independent internal UUID. Keys and object contents must never be reused or overwritten.
       type: object
       additionalProperties: false
-      required: [id, name]
+      required: [objectKey, name]
       properties:
-        id:
+        objectKey:
           type: string
-          format: uuid
-          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          minLength: 1
+          maxLength: 1024
+          description: Nonblank raw bucket key, at most 1024 UTF-8 bytes, without control characters; not a URL.
         name:
           $ref: "#/components/schemas/NonEmptyString"
         presentation:
@@ -463,7 +464,7 @@ components:
           enum: [document, image, voice, audio]
           default: document
     Attachments:
-      description: Ordered file references with distinct IDs. At most 100 MB total; the configured per-file limit also applies on first import. Empty attachments are omitted from server events. MIME and size are not sent over WebSocket.
+      description: Ordered file references with distinct object keys. At most 100 MB total; the configured per-file limit also applies on first import. Empty attachments are omitted from server events. MIME and size are not sent over WebSocket.
       type: array
       maxItems: 10
       items:

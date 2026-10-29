@@ -56,6 +56,7 @@ class AgentExecutionService internal constructor(
     private val optionsEnabled: Boolean,
     private val hookStore: HookStore,
     private val hookConfig: HookConfig,
+    private val attachmentRepository: ru.souz.backend.storage.postgres.PostgresAttachmentRepository? = null,
 ) {
     private val logger = LoggerFactory.getLogger(AgentExecutionService::class.java)
     private val hookSlots = Semaphore(hookConfig.concurrentExecutions)
@@ -383,6 +384,7 @@ class AgentExecutionService internal constructor(
             assistantMessageId = execution.assistantMessageId,
             publicClientThread = execution.runtimeOwner != null,
             narrateSteps = execution.metadata[METADATA_NARRATE_STEPS] == "true",
+            attachmentRepository = attachmentRepository,
         )
 
     private suspend fun cancelExecutionInternal(execution: AgentExecution): AgentExecution = withContext(NonCancellable) {

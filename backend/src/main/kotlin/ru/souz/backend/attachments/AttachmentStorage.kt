@@ -39,15 +39,17 @@ class AttachmentStorage(
         available(repository.get(userId, id) ?: throw AttachmentException("attachment_not_found"))
 
     /** External clients finish PUT first; registration never writes or copies the object. */
-    suspend fun importUpload(userId: String, id: UUID, name: String): StoredAttachment = transfers.withPermit {
+    suspend fun importUpload(userId: String, objectKey: String, name: String): StoredAttachment = transfers.withPermit {
+        validateAttachmentObjectKey(objectKey)
         val safeName = attachmentName(name)
-        repository.get(userId, id)?.let { existing ->
+        repository.getByObjectKey(userId, objectKey)?.let { existing ->
             available(existing)
             if (existing.name != safeName) throw AttachmentException("attachment_idempotency_conflict")
             return@withPermit existing
         }
+        if (repository.objectKeyExists(objectKey)) throw AttachmentException("attachment_not_found")
         val bytes = try {
-            objects.readUpload(userId, id, config.maxFileBytes)
+            objects.readUpload(objectKey, config.maxFileBytes)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (known: AttachmentException) {
@@ -59,8 +61,8 @@ class AttachmentStorage(
         }
         val now = clock.instant()
         available(repository.registerUpload(StoredAttachment(
-            id, userId, safeName, attachmentMime(bytes, safeName), bytes.size.toLong(), bytes.sha256Hex(),
-            "ready", now, now, now.plus(ATTACHMENT_RETENTION), now.plus(ATTACHMENT_RETENTION),
+            UUID.randomUUID(), userId, safeName, attachmentMime(bytes, safeName), bytes.size.toLong(), bytes.sha256Hex(),
+            "ready", now, now, now.plus(ATTACHMENT_RETENTION), now.plus(ATTACHMENT_RETENTION), objectKey,
         )))
     }
 

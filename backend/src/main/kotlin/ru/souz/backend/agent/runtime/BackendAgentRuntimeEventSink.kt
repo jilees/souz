@@ -28,6 +28,7 @@ import ru.souz.backend.events.model.PublicErrorPayload
 import ru.souz.backend.events.model.ThreadCancelledPayload
 import ru.souz.backend.events.model.ThreadCompletedPayload
 import ru.souz.backend.client.toClientAttachment
+import ru.souz.backend.storage.postgres.PostgresAttachmentRepository
 import ru.souz.backend.events.model.ThreadFailedPayload
 import ru.souz.backend.events.service.AgentEventService
 import ru.souz.backend.execution.model.AgentExecution
@@ -62,6 +63,7 @@ internal class BackendAgentRuntimeEventSink(
     private val toolCallPreviewer: ToolCallPreviewer = ToolCallPreviewer(),
     private val publicClientThread: Boolean = false,
     private val narrateSteps: Boolean = false,
+    private val attachmentRepository: PostgresAttachmentRepository? = null,
 ) : AgentRuntimeEventSink {
     private val emitMutex = Mutex()
     val finalAssistantMessageId = assistantMessageId ?: UUID.randomUUID()
@@ -206,7 +208,7 @@ internal class BackendAgentRuntimeEventSink(
                 type = AgentEventType.THREAD_COMPLETED,
                 payload = ThreadCompletedPayload(
                     response = message?.content.orEmpty(),
-                    attachments = message?.attachments.orEmpty().map { it.toClientAttachment() },
+                    attachments = message?.attachments.orEmpty().map { it.toClientAttachment(userId, attachmentRepository) },
                 ),
             )
         } else {

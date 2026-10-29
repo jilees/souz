@@ -7,6 +7,7 @@ import io.ktor.client.request.put
 import io.ktor.websocket.Frame
 import java.nio.file.Files
 import java.util.UUID
+import ru.souz.backend.attachments.attachmentObjectKey
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -81,7 +82,7 @@ class BackendWebSocketAttachmentsE2eTest {
                     val terminal = readJson(socket)
                     assertEquals("thread.completed", terminal["type"].asText())
                     val file = terminal["payload"]["attachments"].single()
-                    assertEquals(fileId, file["id"].asText())
+                    assertEquals(attachmentObjectKey(user, UUID.fromString(fileId)), file["objectKey"].asText())
                     assertEquals("image", file["presentation"].asText())
                 }
                 assertEquals(1, generations)
@@ -193,8 +194,8 @@ class BackendWebSocketAttachmentsE2eTest {
                         assertEquals("message.created", push["type"].asText())
                         assertTrue(push["threadId"].isNull)
                         val file = push["payload"]["attachments"].single()
-                        assertEquals(fileId, file["id"].asText())
-                        assertEquals(setOf("id", "name", "presentation"), file.fieldNames().asSequence().toSet())
+                        assertEquals(attachmentObjectKey(user, UUID.fromString(fileId)), file["objectKey"].asText())
+                        assertEquals(setOf("objectKey", "name", "presentation"), file.fieldNames().asSequence().toSet())
                     }
                 }
             } finally { workspace.toFile().deleteRecursively() }

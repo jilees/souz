@@ -7,6 +7,7 @@ import io.ktor.client.request.patch
 import io.ktor.websocket.Frame
 import java.time.Instant
 import java.util.UUID
+import ru.souz.backend.attachments.attachmentObjectKey
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -21,6 +22,48 @@ import ru.souz.llms.restJsonMapper
 
 class BackendPublicAttachmentsE2eTest {
     @Test
+    fun `opaque object keys roundtrip through independent PG IDs and replay survives cleanup`() {
+        val config = AttachmentMinio.config()
+        val key = "external/rendered screen/финал-v2.png"
+        var selectedId = ""
+        backendE2eTest("ws_object_key", attachments = config, llm = E2eLlmApi { request ->
+            if (request.messages.last().role == LLMMessageRole.function) reply(request, "") else {
+                val metadata = request.messages.last { it.role == LLMMessageRole.user }.content.lineSequence()
+                    .first { it.startsWith("{") && it.contains("fileId") }
+                selectedId = restJsonMapper.readTree(metadata)["file"]["fileId"].asText()
+                toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "AttachFileToReply",
+                    "arguments" to mapOf("fileId" to selectedId)))
+            }
+        }) {
+            val user = UUID.randomUUID().toString()
+            val chat = createPublicChat(user)
+            val upload = AttachmentMinio.upload(config, user, "report.md", "# Opaque key".toByteArray(), objectKey = key)
+            client.patch(BackendHttpRoutes.SETTINGS) {
+                trusted(user); jsonBody("""{"enabledTools":["AttachFileToReply"]}""")
+            }
+            val frame = restJsonMapper.readTree(attachmentFrame(chat, user, "opaque", listOf(upload.id.toString()))) as ObjectNode
+            (frame["payload"]["attachments"][0] as ObjectNode).put("objectKey", key)
+            lateinit var terminal: JsonNode
+            withPublicSocket(chat) { session ->
+                session.send(Frame.Text(frame.toString()))
+                assertEquals("accepted", readJson(session)["status"].asText())
+                readJson(session)
+                terminal = readJson(session)
+                assertEquals("thread.completed", terminal["type"].asText())
+                assertEquals(key, terminal["payload"]["attachments"][0]["objectKey"].asText())
+                assertFalse(terminal["payload"]["attachments"][0].has("id"))
+            }
+            assertTrue(selectedId != upload.id.toString())
+            backend.sql { connection -> connection.prepareStatement("delete from stored_attachments where id=?").use {
+                it.setObject(1, UUID.fromString(selectedId)); it.executeUpdate()
+            } }
+            S3AttachmentObjects(config).use { it.delete(upload) }
+            withPublicSocket(chat) { session -> assertEquals(terminal, readJson(session)) }
+
+        }
+    }
+
+    @Test
     fun `media presentations enter the ordinary model input path and survive reply selection`() {
         val config = AttachmentMinio.config()
         val presentations = listOf("image", "voice", "audio")
@@ -28,13 +71,14 @@ class BackendPublicAttachmentsE2eTest {
         var selected = 0
         backendE2eTest("ws_media", attachments = config, llm = E2eLlmApi { request ->
             val input = request.messages.last { it.role == LLMMessageRole.user }.content
-            assertTrue(ids.all(input::contains))
+            val inputIds = fileIdsIn(input)
+            assertEquals(ids.size, inputIds.size)
             assertTrue(input.contains("vision_unavailable"))
             assertTrue(input.contains("attachment_stt_unconfigured"))
             if (selected == ids.size) reply(request, "Media received") else {
                 val index = selected++
                 toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "AttachFileToReply",
-                    "arguments" to mapOf("fileId" to ids[index], "presentation" to presentations[index])))
+                    "arguments" to mapOf("fileId" to inputIds[index], "presentation" to presentations[index])))
             }
         }) {
             val user = UUID.randomUUID().toString()
@@ -58,7 +102,7 @@ class BackendPublicAttachmentsE2eTest {
                 readJson(session)
                 val terminal = readJson(session)
                 assertEquals("thread.completed", terminal["type"].asText(), terminal.toString())
-                assertEquals(ids, terminal["payload"]["attachments"].map { it["id"].asText() })
+                assertEquals(ids.map { attachmentObjectKey(user, UUID.fromString(it)) }, terminal["payload"]["attachments"].map { it["objectKey"].asText() })
                 assertEquals(presentations, terminal["payload"]["attachments"].map { it["presentation"].asText() })
             }
         }
@@ -85,7 +129,7 @@ class BackendPublicAttachmentsE2eTest {
         backendE2eTest("ws_file_roundtrip", attachments = config, clock = clock, llm = E2eLlmApi { request ->
             if (request.messages.last().role == LLMMessageRole.function) reply(request, "")
             else {
-                assertTrue(request.messages.last().content.contains(fileId))
+                fileId = fileIdsIn(request.messages.last().content).single()
                 toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "AttachFileToReply",
                     "arguments" to mapOf("fileId" to fileId)))
             }
@@ -108,8 +152,8 @@ class BackendPublicAttachmentsE2eTest {
                 assertEquals("thread.completed", terminal["type"].asText(), terminal.toString())
                 assertEquals("", terminal["payload"]["response"].asText())
                 val file = terminal["payload"]["attachments"].single()
-                assertEquals(setOf("id", "name", "presentation"), file.fieldNames().asSequence().toSet())
-                assertEquals(fileId, file["id"].asText())
+                assertEquals(setOf("objectKey", "name", "presentation"), file.fieldNames().asSequence().toSet())
+                assertEquals(upload.objectKey, file["objectKey"].asText())
                 assertEquals("report.md", file["name"].asText())
                 assertEquals("document", file["presentation"].asText())
                 // A stored receipt must not depend on a still-available S3 object or live metadata.
@@ -166,10 +210,9 @@ class BackendPublicAttachmentsE2eTest {
             val messages = client.get(BackendHttpRoutes.chatMessages(chat)) { trusted(user) }.jsonBody()["items"]
                 .filter { it["role"].asText() == "user" }
             assertEquals(listOf("wait for files", "", "review both"), messages.map { it["content"].asText() })
-            val inputs = llm.requests.last().messages.filter { it.role == LLMMessageRole.user && ids.all(it.content::contains) }
+            val inputs = llm.requests.last().messages.filter { it.role == LLMMessageRole.user && fileIdsIn(it.content).size == 2 }
             assertEquals(2, inputs.size)
-            assertTrue(inputs[0].content.indexOf(ids[0]) < inputs[0].content.indexOf(ids[1]))
-            assertTrue(inputs[1].content.indexOf(ids[1]) < inputs[1].content.indexOf(ids[0]))
+            assertEquals(fileIdsIn(inputs[0].content).reversed(), fileIdsIn(inputs[1].content))
         }
     }
 
@@ -180,7 +223,15 @@ class BackendPublicAttachmentsE2eTest {
             val user = UUID.randomUUID().toString()
             val chat = createPublicChat(user)
             val file = AttachmentMinio.upload(config, user, "report.md", "text".toByteArray())
-            val foreign = AttachmentMinio.upload(config, UUID.randomUUID().toString(), "report.md", "private".toByteArray())
+            val foreignOwner = UUID.randomUUID().toString()
+            val foreign = AttachmentMinio.upload(config, foreignOwner, "report.md", "private".toByteArray())
+            val foreignChat = createPublicChat(foreignOwner)
+            withPublicSocket(foreignChat) { socket ->
+                socket.send(Frame.Text(attachmentFrame(foreignChat, foreignOwner, "foreign", listOf(foreign.id.toString()))))
+                assertEquals("accepted", readJson(socket)["status"].asText())
+                readJson(socket)
+                assertEquals("thread.completed", readJson(socket)["type"].asText())
+            }
             val valid = restJsonMapper.readTree(attachmentFrame(chat, user, "invalid", listOf(file.id.toString()))) as ObjectNode
             val mutations: List<(ObjectNode) -> Unit> = listOf(
                 { it.remove("attachments") },
@@ -189,19 +240,19 @@ class BackendPublicAttachmentsE2eTest {
                 { it.set<JsonNode>("content", restJsonMapper.readTree("""{"type":"text","source":"text","text":" "}""")) },
                 { it.putNull("attachments") },
                 { it.putArray("attachments").addNull() },
-                { (it["attachments"][0] as ObjectNode).put("id", "1-1-1-1-1") },
-                { (it["attachments"][0] as ObjectNode).put("id", file.id.toString().uppercase()) },
+                { (it["attachments"][0] as ObjectNode).put("objectKey", "") },
+                { (it["attachments"][0] as ObjectNode).put("objectKey", "я".repeat(513)) },
                 { (it["attachments"][0] as ObjectNode).put("name", " ") },
                 { (it["attachments"][0] as ObjectNode).put("presentation", "video") },
                 { (it["attachments"][0] as ObjectNode).put("presentation", 0) },
                 { (it["attachments"][0] as ObjectNode).putNull("presentation") },
                 { (it["attachments"][0] as ObjectNode).put("presentation", "image") },
                 { (it["attachments"][0] as ObjectNode).put("mimeType", "text/plain") },
-                { (it["attachments"][0] as ObjectNode).put("id", UUID.randomUUID().toString()) },
-                { (it["attachments"][0] as ObjectNode).put("id", foreign.id.toString()) },
+                { (it["attachments"][0] as ObjectNode).put("objectKey", "missing/" + UUID.randomUUID()) },
+                { (it["attachments"][0] as ObjectNode).put("objectKey", foreign.objectKey) },
                 { payload -> val item = payload["attachments"][0]; payload.putArray("attachments").add(item).add(item) },
                 { payload -> payload.putArray("attachments").also { array -> repeat(11) {
-                    array.addObject().put("id", UUID.randomUUID().toString()).put("name", "report.md")
+                    array.addObject().put("objectKey", "missing/" + UUID.randomUUID()).put("name", "report.md")
                 } } },
             )
             withPublicSocket(chat) { session ->
@@ -231,6 +282,11 @@ private fun attachmentFrame(chat: String, user: String, request: String, ids: Li
     val frame = restJsonMapper.readTree(messageFrame(chat, user, request, thread)) as ObjectNode
     val payload = frame["payload"] as ObjectNode
     if (text == null) payload.remove("content") else (payload["content"] as ObjectNode).put("text", text)
-    payload.putArray("attachments").also { files -> ids.forEach { files.addObject().put("id", it).put("name", "report.md") } }
+    payload.putArray("attachments").also { files -> ids.forEach { files.addObject().put("objectKey", attachmentObjectKey(user, UUID.fromString(it))).put("name", "report.md") } }
     return frame.toString()
 }
+
+private fun fileIdsIn(content: String): List<String> = content.lineSequence()
+    .filter { it.startsWith("{") && it.contains("fileId") }
+    .mapNotNull { restJsonMapper.readTree(it).path("file").path("fileId").takeIf { id -> id.isTextual }?.asText() }
+    .toList()

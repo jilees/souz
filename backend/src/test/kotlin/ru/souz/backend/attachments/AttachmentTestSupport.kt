@@ -23,10 +23,10 @@ import ru.souz.backend.storage.postgres.write
 
 internal object AttachmentMinio {
     suspend fun upload(config: AttachmentStorageConfig, userId: String, name: String, bytes: ByteArray,
-        id: UUID = UUID.randomUUID()): StoredAttachment {
+        id: UUID = UUID.randomUUID(), objectKey: String = attachmentObjectKey(userId, id)): StoredAttachment {
         val now = Instant.now()
         val file = StoredAttachment(id, userId, name, attachmentMime(bytes, name), bytes.size.toLong(),
-            bytes.attachmentChecksum(), "ready", now, now, now.plus(ATTACHMENT_RETENTION), now.plus(ATTACHMENT_RETENTION))
+            bytes.attachmentChecksum(), "ready", now, now, now.plus(ATTACHMENT_RETENTION), now.plus(ATTACHMENT_RETENTION), objectKey)
         S3AttachmentObjects(config).use { it.put(file, bytes) }
         return file
     }

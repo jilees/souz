@@ -174,9 +174,9 @@ fun backendDiModule(
 
     bindSingleton { BackendApplicationScope() }
     bindSingleton<Clock> { Clock.systemUTC() }
+    bindSingleton { PostgresAttachmentRepository(instance<HikariDataSource>()) }
     appConfig.attachments?.let { config ->
         bindSingleton { S3AttachmentObjects(config) }
-        bindSingleton { PostgresAttachmentRepository(instance<HikariDataSource>()) }
         bindSingleton { AttachmentStorage(config, instance(), instance(), instance()) }
         bindSingleton { AttachmentCleanupWorker(instance()) }
         bindSingleton { AttachmentDelivery(instance(), instance<HikariDataSource>()) }
@@ -428,6 +428,7 @@ fun backendDiModule(
             optionsEnabled = appConfig.featureFlags.options,
             hookStore = instance(),
             hookConfig = appConfig.hooks,
+            attachmentRepository = instance(),
         )
     }
     if (appConfig.featureFlags.telegramBot) {
@@ -517,6 +518,7 @@ fun backendDiModule(
             chatRepository = instance(),
             messageRepository = instance(),
             eventService = instance(),
+            attachmentRepository = instance(),
         )
     }
     bindSingleton {

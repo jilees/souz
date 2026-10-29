@@ -26,6 +26,7 @@ class ChannelDeliveryService(
     private val chatRepository: ChatRepository,
     private val messageRepository: MessageRepository,
     private val eventService: AgentEventService,
+    private val attachmentRepository: ru.souz.backend.storage.postgres.PostgresAttachmentRepository? = null,
 ) {
     private val logger = LoggerFactory.getLogger(ChannelDeliveryService::class.java)
 
@@ -134,7 +135,7 @@ class ChannelDeliveryService(
             executionId = null,
             type = AgentEventType.MESSAGE_CREATED,
             payload = MessageCreatedPayload(message.id, message.seq, message.role.value, message.content,
-                attachments = message.attachments.map { it.toClientAttachment() }),
+                attachments = message.attachments.map { it.toClientAttachment(userId, attachmentRepository) }),
         )
     }
 }

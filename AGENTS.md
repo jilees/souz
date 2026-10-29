@@ -65,7 +65,7 @@ Only these direct production project dependencies are allowed. Standard test-sou
 ## Optional backend capabilities
 
 - [Voice memory](docs/voice-memory.md) uses per-speaker Hindsight banks and durable JEV routing alongside household memory.
-- [Channel attachments](docs/channel-attachments.md) use owner-scoped private S3 storage, import shared-bucket uploads through WebSocket, and support explicit file selection for Telegram/VK and public-client replies.
+- [Channel attachments](docs/channel-attachments.md) use owner-scoped metadata and persisted S3 `object_key` addresses, import opaque bucket keys through WebSocket with independent internal UUIDs, and support explicit file selection for Telegram/VK and public-client replies.
 - Image generation tools accept optional ordered source images for editing: sandbox `imagePaths` in `GenerateImage`, owned attachment `fileIds` in `GenerateAttachmentImage`. Source pixels stay request-local; saved results use the existing file flow.
 - The Docker runtime provides a per-user browser and explicit Skill environment forwarding; see [the runtime guide](docs/backend-docker-sandbox-rollout.md).
 - [Scheduled tasks](backend/docs/scheduled-tasks.md) use the backend's PostgreSQL-backed JobService.
