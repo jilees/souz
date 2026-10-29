@@ -237,7 +237,7 @@ class OpenAICompatibleChatAPIRequestTest {
     }
 
     @Test
-    fun `chat request moves regular assistant text after pending tool result`() = runTest {
+    fun `chat request keeps split assistant text with pending tool calls`() = runTest {
         val request = captureChatRequest(
             body = LLMRequest.Chat(
                 model = LLMModel.OpenAIGpt5Mini.alias,
@@ -265,13 +265,12 @@ class OpenAICompatibleChatAPIRequestTest {
 
         @Suppress("UNCHECKED_CAST")
         val messages = request["messages"] as List<Map<String, Any?>>
-        assertEquals(3, messages.size)
+        assertEquals(2, messages.size)
         assertEquals("assistant", messages[0]["role"])
         assertNotNull(messages[0]["tool_calls"])
+        assertEquals("Plan: running the tool now", messages[0]["content"])
         assertEquals("tool", messages[1]["role"])
         assertEquals("call_123", messages[1]["tool_call_id"])
-        assertEquals("assistant", messages[2]["role"])
-        assertEquals("Plan: running the tool now", messages[2]["content"])
     }
 
     @Test

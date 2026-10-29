@@ -275,6 +275,11 @@ class OpenAICompatibleChatAPI(
             delayed.clear()
         }
 
+        fun appendAssistantContent(message: MutableMap<String, Any?>, content: String) {
+            val previous = message["content"] as? String
+            message["content"] = if (previous.isNullOrEmpty()) content else "$previous\n$content"
+        }
+
         fun parseAssistantToolCall(msg: LLMRequest.Message): Map<String, Any?>? {
             val functionsStateId = msg.functionsStateId ?: return null
             return try {
@@ -368,9 +373,21 @@ class OpenAICompatibleChatAPI(
                         val toolCalls = assistantMessage["tool_calls"] as MutableList<Map<String, Any?>>
                         toolCalls.add(toolCall)
                         pendingToolCallIds.add(toolCall["id"].toString())
+                        // Legacy content can contain the call envelope instead of assistant text.
+                        if (msg.functionCall != null) {
+                            msg.content.toNormalizedAssistantContent()?.let { appendAssistantContent(assistantMessage, it) }
+                        }
                     } else {
                         val normalizedContent = msg.content.toNormalizedAssistantContent()
                         if (normalizedContent == null && msg.name == null) {
+                            return@forEach
+                        }
+                        // A provider response can be split into tool choices followed by text.
+                        // Keep that text in the same assistant turn, before its tool results.
+                        val pendingAssistant = currentToolCallAssistant
+                        if (pendingAssistant != null && pendingToolCallIds.isNotEmpty() &&
+                            delayed.isEmpty() && msg.name == null && normalizedContent != null) {
+                            appendAssistantContent(pendingAssistant, normalizedContent)
                             return@forEach
                         }
                         emit(

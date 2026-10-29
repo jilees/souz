@@ -3,6 +3,7 @@
 ## Invariants
 
 - Provider adapters populate `LLMResponse.Message.functionCall` and its call ID without copying the serialized function-call envelope into `content`. Non-empty content is assistant text in the streaming runtime.
+- OpenAI-compatible requests keep text split after pending tool calls in the same assistant message as `tool_calls`, before the matching tool results. Real assistant replies after completed tools and later user messages retain their order. This normalization also accepts previously saved split responses.
 - OpenAI-compatible requests include an `items` schema for every array-valued tool property. The shared property contract does not describe element types, so adapters use an unconstrained item schema.
 - Token accounting happens at the `LLMChatAPI` boundary, where usage is normalized. A logging failure must not turn a successful provider response into a failed execution.
 
