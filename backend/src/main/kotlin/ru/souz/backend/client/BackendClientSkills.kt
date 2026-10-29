@@ -18,7 +18,6 @@ import ru.souz.backend.chat.repository.ChatRepository
 import ru.souz.backend.events.model.AgentEventType
 import ru.souz.backend.events.model.PublicToolCallStartedPayload
 import ru.souz.backend.events.service.AgentEventService
-import ru.souz.backend.http.clientFrameMapper
 import ru.souz.backend.metrics.BackendMetrics
 import ru.souz.backend.metrics.metricOutcome
 import ru.souz.backend.toolcall.model.ToolCallStatus
@@ -60,8 +59,7 @@ internal class BackendClientSkills(
                         liveTools = liveTools,
                         onDiscovery = if (tool.definition.name != CLIENT_TOOL_DISCOVERY_NAME) null else discovery@ { result, channelId ->
                             val definitions = try {
-                                clientFrameMapper.treeToValue(result, ClientToolDiscoveryResult::class.java).tools
-                                    .normalizeClientTools(serverNames + CLIENT_TOOL_DISCOVERY_NAME)
+                                discoveredClientTools(result, serverNames)
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (_: Exception) {

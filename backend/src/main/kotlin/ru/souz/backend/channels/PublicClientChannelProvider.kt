@@ -27,7 +27,7 @@ class PublicClientChannelProvider(
     override val channelType: String = CHANNEL_TYPE
 
     override suspend fun listChannels(userId: String): List<ChannelDescriptor> =
-        chatRepository.list(userId, includeArchived = false)
+        chatRepository.clientToolChannels(userId).map { it.chat }
             .filter { it.clientType in supportedClientTypes && !isClaimedByAnotherProvider(it.id) }
             .map { chat -> ChannelDescriptor(channelType, chat.id.toString(), chat.title ?: chat.clientType) }
 

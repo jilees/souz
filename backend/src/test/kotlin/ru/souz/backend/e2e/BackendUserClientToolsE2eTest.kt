@@ -108,7 +108,7 @@ class BackendUserClientToolsE2eTest {
                 }
                 val local = mapOf("name" to "get_status")
                 val remote = local + ("channelId" to target)
-                when (step++ + if (restarted) 4 else 0) {
+                when (step++) {
                     0 -> call("device.mcp.call_tool", local)
                     1 -> {
                         assertError("client_tool_discovery_required")
@@ -156,7 +156,7 @@ class BackendUserClientToolsE2eTest {
                     socket.send(Frame.Text(messageFrame(source, owner, "absent-$restarted", text = "Read status on this speaker and the target")))
                     assertEquals("accepted", readJson(socket)["status"].asText())
                     assertEquals("thread.status", readJson(socket)["type"].asText())
-                    if (!restarted) for (channel in listOf(source, target)) {
+                    for (channel in listOf(source, target)) {
                         val call = readJson(socket)
                         assertEquals("tool.call.started", call["type"].asText())
                         assertEquals("orion.tools.list", call["payload"]["name"].asText())

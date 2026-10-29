@@ -18,6 +18,10 @@ internal data class ClientToolDiscoveryResult(val tools: List<ClientToolDefiniti
 
 internal const val CLIENT_TOOL_DISCOVERY_NAME = "orion.tools.list"
 
+internal fun discoveredClientTools(result: JsonNode, serverNames: Set<String>): List<ClientToolDefinition> =
+    ru.souz.backend.http.clientFrameMapper.treeToValue(result, ClientToolDiscoveryResult::class.java).tools
+        .normalizeClientTools(serverNames + CLIENT_TOOL_DISCOVERY_NAME)
+
 internal fun List<ClientToolDefinition>.normalizeClientTools(
     serverNames: Set<String>
 ): List<ClientToolDefinition> {

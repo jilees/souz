@@ -248,7 +248,7 @@ class BackendClientToolRegistrationE2eTest {
         }
 
     @Test
-    fun `discovery survives restart and is shared without changing creation receipts`() {
+    fun `discovery refreshes lazily after restart without changing creation receipts`() {
         val schema = newPostgresSchema("e2e_catalogue_restart")
         val owner = UUID.randomUUID().toString()
         lateinit var provider: String
@@ -282,6 +282,9 @@ class BackendClientToolRegistrationE2eTest {
             val source = createPublicChat(owner, "empty")
             withMultiChatSocket { socket ->
                 subscribe(socket, provider)
+                llm.requestSkillForPrompt("refresh after restart", "orion.tools.list", mapOf("channelId" to provider))
+                assertEquals("thread.completed", answer(socket, submit(socket, source, owner, "refresh after restart"),
+                    """{"tools":[${definition.replace("Speak text", "Remembered speaker")}]}""")["type"].asText())
                 for ((index, args) in listOf(
                     mapOf("text" to "missing volume"), mapOf("text" to "wrong", "volume" to "loud"),
                     mapOf("text" to "extra", "volume" to 1, "extra" to true),

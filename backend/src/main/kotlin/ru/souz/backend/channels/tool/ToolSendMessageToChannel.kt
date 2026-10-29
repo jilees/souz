@@ -31,7 +31,9 @@ class ToolSendMessageToChannel(
     override val name: String = SEND_MESSAGE_TO_CHANNEL_TOOL_NAME
     override val description: String =
         "Delivers a message into another of the user's configured communication channels " +
-            "(from $LIST_ACTIVE_CHANNELS_TOOL_NAME) and reports whether delivery succeeded."
+            "(from $LIST_ACTIVE_CHANNELS_TOOL_NAME) and reports whether delivery succeeded. " +
+            "The backend caches routes and resolves the current provider for the same channelId after restart. " +
+            "Refresh $LIST_ACTIVE_CHANNELS_TOOL_NAME if the destination is unavailable. Never automatically resend an uncertain or partial delivery."
 
     override val fewShotExamples: List<FewShotExample> = listOf(
         FewShotExample(

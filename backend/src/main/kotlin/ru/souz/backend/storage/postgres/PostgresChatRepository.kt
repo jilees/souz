@@ -16,6 +16,9 @@ import ru.souz.backend.chat.repository.ChatRepository
 class PostgresChatRepository(
     private val dataSource: DataSource,
 ) : ChatRepository {
+    // JDBC's non-suspending after-commit callback publishes freshness to this host's readers.
+    // Keep persisted definitions rollback-compatible; another instance must rediscover them.
+    private val freshDiscoveryChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<UUID>()
     override suspend fun create(chat: Chat, tools: List<ClientToolDefinition>): Chat =
         checkNotNull(insert(chat, tools, ignoreDuplicate = false))
 
@@ -90,7 +93,7 @@ class PostgresChatRepository(
                         val declared = restJsonMapper.readValue<List<ClientToolDefinition>>(rows.getString("client_tools"))
                         val discovered = rows.getString("discovered_client_tools")?.let { value ->
                             restJsonMapper.readValue<DiscoveredClientTools>(value)
-                        }?.takeIf { catalogue -> catalogue.channelId == chat.id }
+                        }?.takeIf { catalogue -> catalogue.channelId == chat.id && chat.id in freshDiscoveryChannels }
                         add(ClientToolChannel(chat, (discovered?.tools.orEmpty() + declared).distinctBy { tool -> tool.name },
                             discoveryComplete = discovered != null))
                     }
@@ -101,7 +104,7 @@ class PostgresChatRepository(
 
     override suspend fun replaceDiscoveredClientTools(userId: String, chatId: UUID, tools: DiscoveredClientTools) {
         require(tools.channelId == chatId) { "Discovery belongs to the supplying channel." }
-        dataSource.write { connection ->
+        dataSource.write(afterCommit = { freshDiscoveryChannels.add(chatId) }) { connection ->
             connection.prepareStatement("update chats set discovered_client_tools = ?::jsonb where user_id = ? and id = ? and not archived").use { statement ->
                 statement.setString(1, restJsonMapper.writeValueAsString(tools))
                 statement.setString(2, userId)

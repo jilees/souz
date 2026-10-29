@@ -19,7 +19,8 @@ class ToolSendMessageToChannelTest {
         var lastCall: Triple<String, String, String>? = null
             private set
 
-        override suspend fun listChannels(userId: String): List<ChannelDescriptor> = emptyList()
+        override suspend fun listChannels(userId: String): List<ChannelDescriptor> =
+            listOf(ChannelDescriptor(channelType, "chat-1", "Destination"))
         override suspend fun sendMessage(userId: String, channelId: String, text: String): ChannelSendResult {
             lastCall = Triple(userId, channelId, text)
             return result
