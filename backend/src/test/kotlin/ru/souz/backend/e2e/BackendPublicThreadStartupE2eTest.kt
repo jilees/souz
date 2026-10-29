@@ -51,8 +51,10 @@ class BackendPublicThreadStartupE2eTest {
                     every { this@mockk.incoming } returns incoming
                     coEvery { send(any()) } coAnswers {
                         val frame = firstArg<Frame.Text>()
-                        if (json.readTree(frame.readText()).path("payload").path("name").asText() !=
-                            ru.souz.backend.personality.PERSONALITY_SYNC_COMMAND) {
+                        val decoded = json.readTree(frame.readText())
+                        val name = decoded.path("payload").path("name").asText()
+                        if (decoded.path("type").asText() != "assistant.message" &&
+                            name != ru.souz.backend.personality.PERSONALITY_SYNC_COMMAND) {
                             writing.complete(Unit)
                             outgoing.send(frame)
                         }

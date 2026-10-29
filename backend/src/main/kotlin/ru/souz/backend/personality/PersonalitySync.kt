@@ -5,9 +5,11 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import org.slf4j.LoggerFactory
-import ru.souz.backend.channels.ChannelDeliveryService
+import ru.souz.backend.chat.repository.ChatRepository
 import ru.souz.backend.chat.model.Chat
+import ru.souz.backend.client.ClientError
 import ru.souz.backend.client.LiveClientToolDispatcher
+import ru.souz.backend.client.clientToolDiscoveryRequired
 import ru.souz.backend.events.service.AgentEventService
 import ru.souz.backend.settings.model.PersonalitySnapshot
 import ru.souz.backend.settings.repository.UserSettingsRepository
@@ -16,12 +18,26 @@ internal const val PERSONALITY_SYNC_COMMAND = "prompt.personality.set"
 
 internal class PersonalitySync(
     private val settings: UserSettingsRepository,
-    private val channels: ChannelDeliveryService,
+    private val channels: ChatRepository,
     private val events: AgentEventService,
     private val dispatcher: LiveClientToolDispatcher,
 ) {
+    /** Resolve unknown providers before mutation, so the parent can discover and retry safely. */
+    suspend fun discoveryRequired(userId: String, preferred: UUID?): ClientError? {
+        val connected = channels.clientToolChannels(userId)
+            .filter { events.hasLiveSubscriber(it.chat.userId, it.chat.id) }
+        if (connected.any { channel -> channel.tools.any { it.name == PERSONALITY_SYNC_COMMAND } }) return null
+        val unknown = connected.filter { !it.discoveryComplete }
+            .sortedWith(compareBy({ it.chat.id != preferred }, { it.chat.id.toString() }))
+            .firstOrNull() ?: return null
+        return clientToolDiscoveryRequired(unknown.chat.id,
+            "then retry personality.update with the same arguments. Nothing has been saved. " +
+                "The server-only prompt.personality.set command is hidden from discovery output; " +
+                "retry personality.update even when that command is absent from the returned tools.")
+    }
+
     suspend fun connected(chat: Chat) {
-        if (chat.clientType != "backend") return
+        if (eligibleChannels(chat.userId).none { it.id == chat.id }) return
         try {
             deliver(chat.userId, settings.personality(chat.userId), chat.id)
         } catch (cancelled: CancellationException) {
@@ -36,7 +52,7 @@ internal class PersonalitySync(
         repeat(3) { attempt ->
             if (attempt > 0) delay(attempt * 1_000L)
             try {
-                val chat = channel(userId, preferred, busyChannels) ?: return "pending"
+                val chat = channel(userId, preferred, busyChannels) ?: return "skipped"
                 val reply = dispatcher.call(chat, PERSONALITY_SYNC_COMMAND,
                     mapOf("prompt" to snapshot.prompt.orEmpty(), "revision" to snapshot.revision),
                     Duration.ofSeconds(10), execution, threadId = execution ?: UUID.randomUUID())
@@ -62,13 +78,15 @@ internal class PersonalitySync(
     }
 
     private suspend fun channel(userId: String, preferred: UUID?, busyChannels: Set<UUID>): Chat? {
-        val available = channels.resolveTargets(userId, events.liveChatIds(userId)).values
-            .filter(::available).sortedBy { it.id != preferred }
+        val available = eligibleChannels(userId).sortedBy { it.id != preferred }
         // Try another channel after rejected publication; a lone busy channel can recover on retry.
         return available.firstOrNull { it.id !in busyChannels } ?: available.firstOrNull()
     }
 
-    private fun available(chat: Chat) = chat.clientType == "backend" && events.hasLiveSubscriber(chat.userId, chat.id)
+    private suspend fun eligibleChannels(userId: String): List<Chat> =
+        channels.clientToolChannels(userId)
+            .filter { channel -> channel.tools.any { it.name == PERSONALITY_SYNC_COMMAND } }
+            .map { it.chat }.filter { events.hasLiveSubscriber(it.userId, it.id) }
 
     private val permanentErrors = setOf("personality_context_missing", "personality_invalid_arguments",
         "personality_revision_conflict", "personality_not_configured")

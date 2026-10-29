@@ -15,9 +15,57 @@ import ru.souz.backend.http.BackendHttpRoutes
 import ru.souz.backend.storage.postgres.newPostgresSchema
 import ru.souz.backend.client.ClientToolDefinition
 import ru.souz.llms.LLMRequest
+import ru.souz.llms.LLMMessageRole
+import ru.souz.backend.personality.PERSONALITY_SYNC_COMMAND
 
 class BackendClientToolRegistrationE2eTest {
     private val definition = """{"name":"speaker.say","description":"Speak text","parameters":{"type":"object","properties":{"text":{"type":"string"},"volume":{"type":"integer"}},"required":["text","volume"],"additionalProperties":false}}"""
+
+    @Test
+    fun `server controls stay hidden after declaration and discovery without hiding ordinary client commands`() {
+        var provider = ""
+        val ordinary = "prompt.personality.preview"
+        val llm = E2eLlmApi { request ->
+            val turn = request.messages.drop(request.messages.indexOfLast { it.role == LLMMessageRole.user })
+            if (turn.any { it.role == LLMMessageRole.function }) reply(request, "Done")
+            else when (request.conversationPrompt().substringBefore(':')) {
+                "lookup" -> toolCallReply(request, "GetSkillByName", mapOf("skillId" to PERSONALITY_SYNC_COMMAND))
+                "invoke" -> toolCallReply(request, "RunSkillCommand", mapOf("skillId" to PERSONALITY_SYNC_COMMAND,
+                    "arguments" to mapOf("channelId" to provider, "prompt" to "bad", "revision" to 1)))
+                "delegate" -> toolCallReply(request, "SpawnSubagent", mapOf("task" to "Change personality",
+                    "skillIds" to listOf(PERSONALITY_SYNC_COMMAND)))
+                else -> toolCallReply(request, "RunSkillCommand", mapOf(
+                    "skillId" to if (request.conversationPrompt() == "discover") "orion.tools.list" else ordinary,
+                    "arguments" to mapOf("channelId" to provider)))
+            }
+        }
+        backendE2eTest("e2e_control_visibility", llm = llm) {
+            val owner = UUID.randomUUID().toString()
+            val source = createPublicChat(owner)
+            val tools = clientToolsJson(PERSONALITY_SYNC_COMMAND, ordinary)
+            provider = createPublicChat(owner, "provider", tools)
+            withMultiChatSocket { socket ->
+                subscribe(socket, provider)
+                for (state in listOf("declared", "discovered")) {
+                    if (state == "discovered") {
+                        assertEquals("thread.completed", answer(socket, submit(socket, source, owner, "discover"),
+                            """{"tools":$tools}""")["type"].asText())
+                        assertEquals(listOf(ordinary), output()["tools"].map { it["name"].asText() })
+                    }
+                    for (operation in listOf("lookup", "invoke", "delegate")) {
+                        assertEquals("thread.completed", submit(socket, source, owner, "$operation:$state")["type"].asText())
+                        val request = llm.requests.last()
+                        assertFalse(PERSONALITY_SYNC_COMMAND in request.messages.first().content)
+                        val result = request.messages.last { it.role == LLMMessageRole.function }
+                        assertEquals("skill_not_found", json.readTree(result.content)["error"]["code"].asText())
+                    }
+                    val call = submit(socket, source, owner, "ordinary:$state")
+                    assertEquals(ordinary, call["payload"]["name"].asText())
+                    assertEquals("thread.completed", answer(socket, call)["type"].asText())
+                }
+            }
+        }
+    }
 
     @Test
     fun `only discovery is injected and declared tools retain their schemas guidance and deadlines`() =

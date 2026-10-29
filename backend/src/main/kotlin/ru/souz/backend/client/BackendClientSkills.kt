@@ -37,6 +37,7 @@ internal class BackendClientSkills(
     private val eventService: AgentEventService,
     private val channelDeliveryService: ChannelDeliveryService,
     private val chatRepository: ChatRepository,
+    private val controlCommandNames: Set<String>,
     private val now: () -> Instant = Instant::now,
     private val metrics: BackendMetrics? = null,
     private val liveTools: LiveClientToolDispatcher = LiveClientToolDispatcher(registry, eventService, metrics, now),
@@ -48,13 +49,14 @@ internal class BackendClientSkills(
         serverNames: Set<String>,
         onCatalogueChanged: suspend () -> Unit,
     ): AgentToolCatalog {
-        val selected = chatRepository.clientToolChannels(userId).userClientTools(serverNames)
+        val excludedNames = serverNames + controlCommandNames
+        val selected = chatRepository.clientToolChannels(userId).userClientTools(excludedNames)
         return AgentToolCatalog(
             selected.groupBy { bundledGuidance[it.definition.name]?.category ?: ToolCategory.APPLICATIONS }
                 .mapValues { (category, tools) -> tools.map { tool ->
                     ClientWebSocketSkill(
                         describe(tool), category, registry, toolCallRepository, eventService, channelDeliveryService,
-                        chatRepository, tool, serverNames, now, metrics,
+                        chatRepository, tool, excludedNames, now, metrics,
                         timeout = bundledGuidance[tool.definition.name]?.timeout ?: Duration.ofMinutes(1),
                         liveTools = liveTools,
                         onDiscovery = if (tool.definition.name != CLIENT_TOOL_DISCOVERY_NAME) null else discovery@ { result, channelId ->
@@ -69,7 +71,7 @@ internal class BackendClientSkills(
                             chatRepository.replaceDiscoveredClientTools(userId, channelId, DiscoveredClientTools(channelId, definitions))
                             onCatalogueChanged()
                             val names = definitions.map { it.name }.toSet()
-                            val visible = chatRepository.clientToolChannels(userId).userClientTools(serverNames)
+                            val visible = chatRepository.clientToolChannels(userId).userClientTools(excludedNames)
                                 .filter { it.definition.name in names }.map(::describe)
                             ClientToolOutcome("succeeded", restJsonMapper.valueToTree(ClientToolDiscoveryResult(visible)), null)
                         },
@@ -138,7 +140,7 @@ private class ClientWebSocketSkill(
     private val channelDeliveryService: ChannelDeliveryService,
     private val chatRepository: ChatRepository,
     private val registered: UserClientTool,
-    private val serverNames: Set<String>,
+    private val excludedNames: Set<String>,
     private val now: () -> Instant,
     private val metrics: BackendMetrics?,
     private val timeout: Duration,
@@ -199,7 +201,7 @@ private class ClientWebSocketSkill(
 
     private suspend fun invokeClient(functionCall: LLMResponse.FunctionCall, meta: ToolInvocationMeta): ClientToolOutcome {
         val channels = chatRepository.clientToolChannels(meta.userId)
-        val current = channels.userClientTools(serverNames)
+        val current = channels.userClientTools(excludedNames)
             .find { it.definition.name == fn.name && it.fingerprint == registered.fingerprint }
             ?: return failed("client_tool_unavailable", "This tool is unavailable or its definition has changed. Do not rediscover solely because a tool is absent from a completed channel catalogue.")
         val candidates = current.channels.filter { channel -> registered.channels.any { it.chat.id == channel.chat.id } }.map { it.chat }
@@ -296,13 +298,8 @@ private class ClientWebSocketSkill(
                 "Do not rediscover solely because a tool is absent from a completed catalogue or silently switch devices.")
     }
 
-    private fun discoveryRequired(channelId: UUID): ClientToolOutcome = failed(
-        "client_tool_discovery_required",
-        "Channel $channelId has no completed discovery catalogue and has not declared this tool. " +
-            "The parent must invoke RunSkillCommand with skillId=orion.tools.list and arguments={\"channelId\":\"$channelId\"}, " +
-            "then retry on this same channel if discovery returns the tool. Do not ask which device for a local request " +
-            "or silently switch devices. If discovery confirms absence, report that capability as unavailable.",
-    )
+    private fun discoveryRequired(channelId: UUID): ClientToolOutcome =
+        ClientToolOutcome("failed", null, clientToolDiscoveryRequired(channelId))
 
     private suspend fun invokeOnChannel(
         chat: Chat,

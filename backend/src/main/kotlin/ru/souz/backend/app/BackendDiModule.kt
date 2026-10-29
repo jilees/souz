@@ -310,6 +310,7 @@ fun backendDiModule(
     bindSingleton {
         BackendClientSkills(
             chatRepository = instance(),
+            controlCommandNames = setOf(ru.souz.backend.personality.PERSONALITY_SYNC_COMMAND),
             liveTools = instance(),
             registry = instance(),
             toolCallRepository = instance(),

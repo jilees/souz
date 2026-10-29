@@ -198,7 +198,7 @@ class BackendUserClientToolsE2eTest {
                 coroutineScope {
                     val botTurn = async { backend.pollTelegramOnce() }
                     for ((name, result) in listOf(
-                        "orion.tools.list" to """{"tools":${clientToolsJson("orion.call", "web.search")}}""",
+                        "orion.tools.list" to """{"tools":${clientToolsJson("orion.call", "web.search", "prompt.personality.set")}}""",
                         "orion.call" to """{"reply":"Playing"}""",
                         "web.search" to """{"documents":[]}""",
                     )) {

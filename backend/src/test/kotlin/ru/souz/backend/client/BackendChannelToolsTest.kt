@@ -56,12 +56,15 @@ class BackendChannelToolsTest {
                 assertTrue(skill().invoke(call, meta).content.contains("client_tool_busy"))
                 assertTrue(registry.isEmpty())
 
-                val sync = PersonalitySync(mockk(), ChannelDeliveryService(chats, mockk(), events), events,
+                val sync = PersonalitySync(mockk(), chats, events,
                     LiveClientToolDispatcher(registry, events))
                 for (hasFallback in listOf(true, false)) {
                     val receivingChat = if (hasFallback) target.copy(id = UUID.randomUUID()) else target
                     val receiver = if (hasFallback) bus.subscribe(target.userId, receivingChat.id) else subscription
-                    coEvery { chats.getByIds(any()) } returns listOf(target, receivingChat).distinct()
+                    coEvery { chats.clientToolChannels(target.userId) } returns listOf(target, receivingChat).distinct().map {
+                        ClientToolChannel(it, listOf(ClientToolDefinition(PERSONALITY_SYNC_COMMAND, "Settings",
+                            ru.souz.llms.LLMRequest.Parameters("object"))), discoveryComplete = true)
+                    }
                     try {
                         val started = testScheduler.currentTime
                         val syncing = async(start = CoroutineStart.UNDISPATCHED) {
@@ -69,13 +72,14 @@ class BackendChannelToolsTest {
                         }
                         // A lone channel can accept the retry after its stalled queue drains.
                         if (!hasFallback) repeat(AgentEventLimits.LIVE_BUFFER_SIZE) { subscription.commands.receive() }
-                        val snapshot = assertIs<PublicToolCallStartedPayload>(receiver.commands.receive().payload)
+                        val snapshotEvent = receiver.commands.receive()
+                        val snapshot = assertIs<PublicToolCallStartedPayload>(snapshotEvent.payload)
                         assertTrue(testScheduler.currentTime > started, "The full source queue must trigger a retry.")
                         assertEquals(PERSONALITY_SYNC_COMMAND, snapshot.name)
                         assertEquals("brief", snapshot.arguments["prompt"].asText())
                         assertEquals(2L, snapshot.arguments["revision"].asLong())
                         service.handleToolResult(receivingChat, ToolResultFrame("tool.result", receivingChat.id.toString(),
-                            source.toString(), snapshot.toolCallId, "succeeded",
+                            snapshotEvent.executionId.toString(), snapshot.toolCallId, "succeeded",
                             restJsonMapper.readTree("""{"outcome":"applied","revision":2}"""))).afterSend()
                         assertEquals("synced", syncing.await())
                         assertTrue(registry.isEmpty())
@@ -165,6 +169,7 @@ class BackendChannelToolsTest {
         val registry = ClientThreadRuntimeRegistry()
         val startedAt = Instant.now()
         suspend fun skill() = BackendClientSkills(registry, tools, events, ChannelDeliveryService(chats, mockk(), events), chats,
+            controlCommandNames = emptySet(),
             liveTools = LiveClientToolDispatcher(registry, events, now = { startedAt }, metrics = metrics),
             now = { startedAt }, metrics = metrics)
             .catalog(target.userId, emptySet()) {}

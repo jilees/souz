@@ -24,10 +24,10 @@ internal data class UserClientTool(
     val fingerprint: String = PublicPayloadHash.ofValue(definition)
 }
 
-internal fun List<ClientToolChannel>.userClientTools(serverNames: Set<String>): List<UserClientTool> =
+internal fun List<ClientToolChannel>.userClientTools(excludedNames: Set<String>): List<UserClientTool> =
     flatMap { channel ->
         (channel.tools.filter { it.name != CLIENT_TOOL_DISCOVERY_NAME } + discoveryTool)
-            .filter { it.name !in serverNames }
+            .filter { it.name !in excludedNames }
             .map { listOf(it).normalizeClientTools(emptySet()).single() to channel }
     }.groupBy { it.first.name }.toSortedMap().values.mapNotNull { providers ->
         // TODO: support different definitions of one tool on different channels. Until then,

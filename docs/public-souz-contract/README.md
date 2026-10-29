@@ -3,8 +3,8 @@
 Draft contract for Souz Cloud. Exact fields are in [OpenAPI](openapi.yaml); [happy-path.jsonl](examples/happy-path.jsonl) shows two users' chats, a creation retry, history before and during execution, continued and new threads, client tools, a forwarded message, unsubscribe and resubscribe with replay per chat. Each line is a complete WebSocket frame: Souz sends `ack`, `status` and `event`; the client sends the other kinds. Local setup: [Postman](postman/) / [Bruno](bruno/).
 
 Orion handles server-driven [`prompt.personality.set`](../../backend/docs/personality-settings.md) snapshots
-on subscription/reconnection and after a user style change. These live commands use `seq:null` and the
-normal `tool.result` acknowledgement, independently of the tool catalogue.
+on subscription/reconnection and after a user style change. Channels announce support through the existing tool catalogue.
+The command is server-driven and excluded from model inventory and execution. It uses `seq:null` and the normal `tool.result` acknowledgement.
 
 ## Connection
 
@@ -48,7 +48,7 @@ A trusted client uploads each object completely into the shared private bucket b
 
 ## Client tool catalogue
 
-HTTP `POST /v1/chats` and WS `chat.create.payload` accept optional `tools`, an array of `{name, description, parameters}` definitions supplied by that channel. Executions can use tools of all unarchived public WebSocket channels owned by the same user, independently of the source conversation. Only the canonical `orion.tools.list` is injected for every such channel; it overrides any declaration of that name at runtime. Other tools require declarations or discovery. Missing `tools` and `[]` are equivalent; explicit `null` is invalid. Server tools keep their existing policy. `user.ask` is supported when declared or discovered, with a five-minute result deadline; Orion and the bot service do not declare it and use ordinary assistant replies for clarification.
+HTTP `POST /v1/chats` and WS `chat.create.payload` accept optional `tools`, an array of `{name, description, parameters}` definitions supplied by that channel. Executions can use tools of all unarchived public WebSocket channels owned by the same user, independently of the source conversation. Only the canonical `orion.tools.list` is injected for every such channel; it overrides any declaration of that name at runtime. Other tools require declarations or discovery. Missing `tools` and `[]` are equivalent; explicit `null` is invalid. Server tools keep their existing policy. `prompt.personality.set` is consumed only by server synchronization and is hidden from model inventory, discovery output and direct or delegated execution. `user.ask` is supported when declared or discovered, with a five-minute result deadline; Orion and the bot service do not declare it and use ordinary assistant replies for clarification.
 
 Delegated client Skills also use `RunSkillCommand`; their exact names and full schemas are included in the child's instructions. Only explicitly selected Skills are callable. Local discovery preserves schemas in full; the selected model's context window must still fit them.
 
