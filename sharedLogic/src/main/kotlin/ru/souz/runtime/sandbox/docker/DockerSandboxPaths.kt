@@ -152,8 +152,11 @@ internal fun normalizeContainerPath(path: String): String? {
 internal fun isUnderContainerRoot(path: String, root: String = DockerSandboxLayout.CONTAINER_ROOT): Boolean =
     path == root || path.startsWith("$root/")
 
-internal fun normalizeHostPath(path: Path): Path = runCatching {
-    path.toRealPath()
-}.getOrElse {
-    path.toAbsolutePath().normalize()
+internal fun normalizeHostPath(path: Path): Path {
+    val absolute = path.toAbsolutePath().normalize()
+    val existingAncestor = generateSequence(absolute) { it.parent }
+        .firstOrNull { Files.exists(it, LinkOption.NOFOLLOW_LINKS) }
+        ?: return absolute
+    val canonicalAncestor = runCatching { existingAncestor.toRealPath() }.getOrElse { return absolute }
+    return canonicalAncestor.resolve(existingAncestor.relativize(absolute)).normalize()
 }
