@@ -25,7 +25,7 @@ Before changing this module, read the relevant pain-point topics below.
 - Hook intake capacity is isolated per configured owner and survives reload. Verifier commands use the trusted owner's configured LOCAL/DOCKER sandbox through `SandboxCommandExecutor`, before Skill discovery or LLM use. They share that sandbox's permissions and do not create a separate verification container.
 - Give each ordinary HTTP route explicit OpenAPI metadata. Keep the WebSocket routes out of the generated document and maintain its schema in `docs/public-souz-contract`.
 - Backend owns execution, capacity, LLM, and tool metrics; `:job-impl` owns queue metrics and binds them to the shared registry at composition. Restrict `/metrics` at ingress; its [metric reference](docs/metrics.md) defines accounting and replica semantics.
-- Keep [personality](docs/personality-settings.md) independent of system prompts and ordinary settings writes. Before mutation, require parent discovery of an unknown connected channel when no connected channel declares synchronization support. Return `client_tool_discovery_required` without saving; known absence and offline channels do not require discovery.
+- Keep [personality](docs/personality-settings.md) independent of system prompts and ordinary settings writes. Before mutation, require parent discovery of an unknown connected source even with a known fallback; otherwise discover an unknown connected channel when no provider declares synchronization support. Return `client_tool_discovery_required` without saving; known absence and offline channels do not require discovery.
 
 ## Pain points
 

@@ -14,7 +14,7 @@ Backend uses one startup-validated `CONTEXT_SIZE` (minimum 24,000 tokens) for al
 
 Summary output uses the startup-validated `SUMMARIZATION_MAX_OUTPUT_TOKENS` server setting (positive integer, default 2,048), independent of the context window.
 
-Backend [personality settings](backend/docs/personality-settings.md) are separate from system prompts and synchronize revisioned snapshots to Orion. Before mutation, an unknown connected provider returns `client_tool_discovery_required` when no connected channel declares synchronization support; parent discovery precedes retry without incrementing the revision.
+Backend [personality settings](backend/docs/personality-settings.md) are separate from system prompts and synchronize revisioned snapshots to Orion. Before mutation, an unknown connected source requires `client_tool_discovery_required` even when another channel declares synchronization support; otherwise discovery is required when no connected provider is known. Parent discovery precedes retry without incrementing the revision.
 
 Backend [attachment contracts](backend/docs/attachments.md) carry owner-scoped flat `fileId` references through messages, tools and sessions; V29 converts stored nested metadata while public WebSocket attachment contracts remain stable. Trusted HTTP message reads expose flat attachment metadata.
 

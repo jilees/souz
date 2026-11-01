@@ -25,7 +25,9 @@ three attempts. After commit, delivery belongs to the application scope and surv
 Orion receives `prompt.personality.set` through live `tool.call.started` / `tool.result` transport, with
 `seq:null` and exactly `{"prompt":"...","revision":2}` as arguments. Empty prompt clears the style.
 Before validation or mutation, `personality.update` checks connected channels for synchronization
-support. If none declares the command and an owned connected channel has an unknown catalogue,
+support. An unknown connected source requires discovery even when another channel declares the
+command, so user-scoped storage synchronization does not bypass the originating speaker. Otherwise,
+if none declares the command and an owned connected channel has an unknown catalogue,
 it returns `saved:false` with `client_tool_discovery_required`, identifying the source channel when
 available, otherwise another unknown connected channel. The parent discovers that channel through
 `orion.tools.list` and retries the original operation; no revision or prompt was changed by the

@@ -26,8 +26,12 @@ internal class PersonalitySync(
     suspend fun discoveryRequired(userId: String, preferred: UUID?): ClientError? {
         val connected = channels.clientToolChannels(userId)
             .filter { events.hasLiveSubscriber(it.chat.userId, it.chat.id) }
-        if (connected.any { channel -> channel.tools.any { it.name == PERSONALITY_SYNC_COMMAND } }) return null
-        val unknown = connected.filter { !it.discoveryComplete }
+        val source = connected.find { it.chat.id == preferred }
+        val sourceUnknown = source?.takeIf { channel ->
+            !channel.discoveryComplete && channel.tools.none { it.name == PERSONALITY_SYNC_COMMAND }
+        }
+        if (sourceUnknown == null && connected.any { channel -> channel.tools.any { it.name == PERSONALITY_SYNC_COMMAND } }) return null
+        val unknown = sourceUnknown ?: connected.filter { !it.discoveryComplete }
             .sortedWith(compareBy({ it.chat.id != preferred }, { it.chat.id.toString() }))
             .firstOrNull() ?: return null
         return clientToolDiscoveryRequired(unknown.chat.id,
