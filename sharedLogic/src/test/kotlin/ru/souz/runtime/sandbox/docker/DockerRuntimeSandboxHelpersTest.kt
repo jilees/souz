@@ -1,12 +1,19 @@
 package ru.souz.runtime.sandbox.docker
 
 import ru.souz.runtime.sandbox.SandboxScope
+import ru.souz.test.createSymbolicLinkOrSkip
+import java.nio.file.Files
 import java.nio.file.Path
+import org.junit.jupiter.api.io.TempDir
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DockerRuntimeSandboxHelpersTest {
+    @TempDir
+    lateinit var tempRoot: Path
+
     @Test
     fun `formats GNU timeout durations from milliseconds`() {
         assertEquals("1.5s", formatDockerTimeoutDuration(1_500))
@@ -33,7 +40,7 @@ class DockerRuntimeSandboxHelpersTest {
 
     @Test
     fun `container and host layout paths stay scoped under sandbox root`() {
-        val hostRoot = Path.of("/tmp/souz-docker-test").toAbsolutePath()
+        val hostRoot = tempRoot.toRealPath().resolve("new-sandbox")
         val layout = DockerSandboxLayout(hostRoot)
 
         assertEquals("/souz/home", layout.runtimePaths.homePath)
@@ -43,5 +50,26 @@ class DockerRuntimeSandboxHelpersTest {
         assertEquals(hostRoot.resolve("home"), layout.hostHomeRoot)
         assertEquals(hostRoot.resolve("trash"), layout.hostTrashRoot)
         assertTrue(layout.hostManagedRoots.all { it.startsWith(hostRoot) })
+    }
+
+    @Test
+    fun `new sandbox beneath a symlinked ancestor remains accessible after creation`() {
+        val realParent = Files.createDirectory(tempRoot.resolve("real")).toRealPath()
+        val alias = createSymbolicLinkOrSkip(tempRoot.resolve("alias"), realParent)
+        val requestedRoot = alias.resolve("users/new-user")
+
+        val layout = DockerSandboxLayout(requestedRoot)
+
+        assertFalse(Files.exists(requestedRoot))
+        assertEquals(realParent.resolve("users/new-user"), layout.hostRoot)
+        layout.ensureHostDirectories()
+        val fileSystem = DockerSandboxFileSystem(layout)
+        val skills = fileSystem.resolveExistingDirectory("/souz/state/skills")
+        assertTrue(fileSystem.isPathSafe(skills))
+        assertEquals(emptyList(), fileSystem.listDescendants(skills, maxDepth = 1, includeHidden = true))
+
+        val outside = Files.createDirectory(tempRoot.resolve("outside"))
+        createSymbolicLinkOrSkip(layout.hostHomeRoot.resolve("escape"), outside)
+        assertFalse(fileSystem.isPathSafe(fileSystem.resolvePath("/souz/home/escape")))
     }
 }
