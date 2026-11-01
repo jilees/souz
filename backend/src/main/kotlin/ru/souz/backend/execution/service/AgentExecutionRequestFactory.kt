@@ -12,6 +12,7 @@ import ru.souz.backend.options.model.Option
 import ru.souz.backend.settings.model.EffectiveUserSettings
 import ru.souz.backend.settings.service.EffectiveSettingsResolver
 import ru.souz.backend.settings.service.UserSettingsOverrides
+import ru.souz.llms.FileContent
 import ru.souz.llms.findLLMModel
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.restJsonMapper
@@ -51,7 +52,7 @@ internal class AgentExecutionRequestFactory(
         latestDeviceContextJson: String = "{}",
         userMessageMetadataExtras: Map<String, String> = emptyMap(),
         clientToolsEnabled: Boolean = false,
-        attachments: List<ru.souz.llms.FileContent> = emptyList(),
+        attachments: List<FileContent> = emptyList(),
     ): PreparedChatTurn {
         val effectiveSettings = effectiveSettingsResolver.resolve(userId, requestOverrides)
         val provider = findLLMModel(effectiveSettings.defaultModel)?.provider ?: LlmProvider.OPENAI
@@ -65,6 +66,8 @@ internal class AgentExecutionRequestFactory(
                 effectiveSettings.defaultModel == effectiveSettingsResolver.defaultModel() &&
                 listOf(routing.simple, routing.complex).all { effectiveSettingsResolver.isSelectableDefaultModel(userId, it.model) }
         }
+        // Turning intermediate messages off also drops the narration prompt instruction.
+        val narrateSteps = effectiveSettings.narrateSteps && effectiveSettings.intermediateMessages
         val execution = AgentExecution(
             id = executionId,
             userId = userId,
@@ -89,7 +92,8 @@ internal class AgentExecutionRequestFactory(
                 timeZone = effectiveSettings.timeZone.id,
                 systemPrompt = effectiveSettings.systemPrompt,
                 streamingMessages = effectiveSettings.streamingMessages,
-                narrateSteps = effectiveSettings.narrateSteps,
+                narrateSteps = narrateSteps,
+                intermediateMessages = effectiveSettings.intermediateMessages,
                 showToolEvents = effectiveSettings.showToolEvents,
                 requestTimeoutMillis = effectiveSettings.requestTimeoutMillis,
                 useFewShotExamples = effectiveSettings.useFewShotExamples,
@@ -116,7 +120,7 @@ internal class AgentExecutionRequestFactory(
                 temperature = effectiveSettings.temperature,
                 systemPrompt = effectiveSettings.systemPrompt,
                 streamingMessages = effectiveSettings.streamingMessages,
-                narrateSteps = effectiveSettings.narrateSteps,
+                narrateSteps = narrateSteps,
                 requestTimeoutMillis = effectiveSettings.requestTimeoutMillis,
                 useFewShotExamples = effectiveSettings.useFewShotExamples,
                 enabledTools = effectiveSettings.enabledTools.toSet(),
@@ -182,6 +186,7 @@ internal class AgentExecutionRequestFactory(
         systemPrompt: String?,
         streamingMessages: Boolean,
         narrateSteps: Boolean,
+        intermediateMessages: Boolean,
         showToolEvents: Boolean,
         requestTimeoutMillis: Long,
         useFewShotExamples: Boolean,
@@ -192,6 +197,7 @@ internal class AgentExecutionRequestFactory(
         put(METADATA_TIME_ZONE, timeZone)
         put(METADATA_STREAMING_MESSAGES, streamingMessages.toString())
         put(METADATA_NARRATE_STEPS, narrateSteps.toString())
+        put(METADATA_INTERMEDIATE_MESSAGES, intermediateMessages.toString())
         put(METADATA_SHOW_TOOL_EVENTS, showToolEvents.toString())
         put(METADATA_REQUEST_TIMEOUT_MILLIS, requestTimeoutMillis.toString())
         put(METADATA_USE_FEW_SHOT_EXAMPLES, useFewShotExamples.toString())
@@ -264,6 +270,7 @@ private const val METADATA_LOCALE = "locale"
 private const val METADATA_TIME_ZONE = "timeZone"
 private const val METADATA_SYSTEM_PROMPT = "systemPrompt"
 internal const val METADATA_NARRATE_STEPS = "narrateSteps"
+internal const val METADATA_INTERMEDIATE_MESSAGES = "intermediateMessages"
 /** Marks a scheduled-task execution: it runs in a hidden chat, so it never waits for an option answer. */
 internal const val METADATA_SCHEDULED_TASK = "scheduledTask"
 private const val METADATA_STREAMING_MESSAGES = "streamingMessages"

@@ -1,6 +1,7 @@
 package ru.souz.backend.storage.postgres
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import java.sql.Connection
@@ -41,6 +42,7 @@ import ru.souz.backend.toolcall.model.ToolCall
 import ru.souz.backend.toolcall.model.ToolCallStatus
 import ru.souz.backend.user.model.UserRecord
 import ru.souz.backend.vk.VkBotBinding
+import ru.souz.llms.FileContent
 import ru.souz.llms.LLMRequest
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.findLLMModel
@@ -159,6 +161,7 @@ internal data class StoredSettingsPayload(
     val showToolEvents: Boolean? = null,
     val streamingMessages: Boolean? = null,
     val narrateSteps: Boolean? = null,
+    val intermediateMessages: Boolean? = null,
     val interfaceLanguage: String? = null,
     val requestTimeoutMillis: Long? = null,
     val useFewShotExamples: Boolean? = null,
@@ -175,6 +178,11 @@ internal data class StoredConversationContext(
     val temperature: Float,
     val locale: String,
     val timeZone: String,
+    // Omitted without a selection, so text-only sessions stay readable by releases without attachments.
+    @field:JsonInclude(JsonInclude.Include.NON_NULL)
+    val attachmentExecutionId: String? = null,
+    @field:JsonInclude(JsonInclude.Include.NON_EMPTY)
+    val replyAttachments: List<FileContent> = emptyList(),
 )
 
 internal data class StoredOptionAnswer(
@@ -277,6 +285,8 @@ internal fun ResultSet.toState(): AgentConversationState {
         userId = getString("user_id"),
         chatId = getObject("chat_id", java.util.UUID::class.java),
         schemaVersion = context.schemaVersion,
+        attachmentExecutionId = context.attachmentExecutionId,
+        replyAttachments = context.replyAttachments,
         history = context.history,
         temperature = context.temperature,
         locale = context.locale.toLocaleOrDefault(),
@@ -400,6 +410,7 @@ internal fun ResultSet.toUserSettings(): UserSettings {
         showToolEvents = payload.showToolEvents,
         streamingMessages = payload.streamingMessages,
         narrateSteps = payload.narrateSteps,
+        intermediateMessages = payload.intermediateMessages,
         interfaceLanguage = payload.interfaceLanguage,
         requestTimeoutMillis = payload.requestTimeoutMillis,
         useFewShotExamples = payload.useFewShotExamples,
@@ -437,6 +448,7 @@ internal fun UserSettings.toSettingsJson(): String =
             showToolEvents = showToolEvents,
             streamingMessages = streamingMessages,
             narrateSteps = narrateSteps,
+            intermediateMessages = intermediateMessages,
             interfaceLanguage = interfaceLanguage,
             requestTimeoutMillis = requestTimeoutMillis,
             useFewShotExamples = useFewShotExamples,
@@ -452,6 +464,8 @@ internal fun AgentConversationState.toContextJson(): String =
         StoredConversationContext(
             schemaVersion = schemaVersion,
             history = history,
+            attachmentExecutionId = attachmentExecutionId,
+            replyAttachments = replyAttachments,
             temperature = temperature,
             locale = locale.toLanguageTag(),
             timeZone = timeZone.id,

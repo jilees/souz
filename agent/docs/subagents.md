@@ -6,6 +6,8 @@ The parent receives `SubagentTool` as an ordinary `LLMToolSetup` and awaits each
 
 The host supplies the same LLM API and complete invocation metadata. `AgentToolExecutor` passes the invoking runtime event sink to `SubagentTool`, which forwards it to the child context except for `InitialWait`. Initial waiting belongs only to the parent execution. Direct invocation without an executor defaults to `AgentRuntimeEventSink.NONE`. Child tool calls, assembled tool-response progress, and streaming deltas use the parent sink and its host settings. Child `sideEffects` remain uncollected. The parent records the enclosing spawn tool call and its result and owns final conversation output.
 
+Completed child output carries its selected files as structured `files`, also included in the result JSON for subsequent tool arguments. It does not set the parent's `replyFiles`: the parent explicitly selects any file it wants to include in its reply. Child and parent file tools share the invocation's ownership.
+
 ## Why this is fragile
 
 Reusing a parent agent cancels its active job. Sharing its LLM nodes or tool executor also shares observable flows; only the runtime event sink is inherited. Altering backend invocation identifiers breaks client tools. Graph retries around a child could replay completed side effects.

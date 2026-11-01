@@ -30,7 +30,7 @@ class BackendPublicAttachmentsE2eTest {
             if (request.messages.last().role == LLMMessageRole.function) reply(request, "") else {
                 val metadata = request.messages.last { it.role == LLMMessageRole.user }.content.lineSequence()
                     .first { it.startsWith("{") && it.contains("fileId") }
-                selectedId = restJsonMapper.readTree(metadata)["file"]["fileId"].asText()
+                selectedId = restJsonMapper.readTree(metadata)["fileId"].asText()
                 toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "AttachFileToReply",
                     "arguments" to mapOf("fileId" to selectedId)))
             }
@@ -288,5 +288,7 @@ private fun attachmentFrame(chat: String, user: String, request: String, ids: Li
 
 private fun fileIdsIn(content: String): List<String> = content.lineSequence()
     .filter { it.startsWith("{") && it.contains("fileId") }
-    .mapNotNull { restJsonMapper.readTree(it).path("file").path("fileId").takeIf { id -> id.isTextual }?.asText() }
+    .map { restJsonMapper.readTree(it) }
+    .filter { it.has("name") && it.has("mimeType") }
+    .mapNotNull { it.path("fileId").takeIf { id -> id.isTextual }?.asText() }
     .toList()

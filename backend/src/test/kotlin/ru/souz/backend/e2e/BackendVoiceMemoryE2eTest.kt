@@ -206,12 +206,11 @@ class BackendVoiceMemoryE2eTest {
             withPublicSocket(chat) { socket ->
                 for ((index, voice) in listOf(alice, bob, null, bob).withIndex()) {
                     socket.send(Frame.Text(voiceFrame(chat, owner, voice, "input-$index", "My name is Bob $index")))
-                    assertEquals("accepted", readJson(socket, includeProgress = true)["status"].asText())
-                    assertEquals("thread.status", readJson(socket, includeProgress = true)["type"].asText())
-                    if (index == 0) assertEquals("assistant.message", readJson(socket, includeProgress = true)["type"].asText())
+                    assertEquals("accepted", readJson(socket)["status"].asText())
+                    assertEquals("thread.status", readJson(socket)["type"].asText())
                     if (index < started.size) withTimeout(5_000) { started[index].await() }
                 }
-                assertEquals("thread.completed", readJson(socket, includeProgress = true)["type"].asText())
+                assertEquals("thread.completed", readJson(socket)["type"].asText())
             }
             val injections = llm.requests.map { it.messages.filter { message -> (message.name == "souz_injected_memory" || message.name == "souz_current_speaker") }.joinToString("\n") { it.content } }
             assertEquals("", injections[0])
@@ -267,12 +266,11 @@ private suspend fun BackendE2eScope.submitVoice(chat: String, owner: String, voi
     withPublicSocket(chat) { socket ->
         socket.send(Frame.Text(voiceFrame(chat, owner, voice, request, text)))
         // Reconnecting to this chat may replay completed events before the new request ACK.
-        var ack = readJson(socket, includeProgress = true)
-        while (ack.path("kind").asText() != "ack" || ack.path("requestId").asText() != request) ack = readJson(socket, includeProgress = true)
+        var ack = readJson(socket)
+        while (ack.path("kind").asText() != "ack" || ack.path("requestId").asText() != request) ack = readJson(socket)
         assertEquals("accepted", ack["status"].asText())
-        assertEquals("thread.status", readJson(socket, includeProgress = true)["type"].asText())
-        assertEquals("assistant.message", readJson(socket, includeProgress = true)["type"].asText())
-        assertEquals("thread.completed", readJson(socket, includeProgress = true)["type"].asText())
+        assertEquals("thread.status", readJson(socket)["type"].asText())
+        assertEquals("thread.completed", readJson(socket)["type"].asText())
     }
 }
 

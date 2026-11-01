@@ -265,7 +265,7 @@ class BackendAttachmentsE2eTest {
                     val sent = api.sentFiles.single()
                     assertEquals(if (voice) ru.souz.llms.FilePresentation.voice else ru.souz.llms.FilePresentation.image, sent.first.presentation)
                     assertContentEquals(asset, sent.second)
-                    assertEquals(fileId, sent.first.file.fileId)
+                    assertEquals(fileId, sent.first.fileId)
                     if (!voice) assertContentEquals(asset, java.nio.file.Files.readAllBytes(output))
                 }
             } finally { http.close(); workspace.toFile().deleteRecursively() }
@@ -310,7 +310,7 @@ class BackendAttachmentsE2eTest {
             backend.pollTelegramOnce()
             assertEquals(1, api.sentFiles.size)
             assertContentEquals(bytes, api.sentFiles.single().second)
-            assertEquals(selectedId, api.sentFiles.single().first.file.fileId)
+            assertEquals(selectedId, api.sentFiles.single().first.fileId)
             assertEquals(listOf("**Готово** — документ прикреплён."), api.fileTexts.toList())
             assertTrue(api.sentMessages.isEmpty(), api.sentMessages.toString())
             val callCount = llm.requests.size

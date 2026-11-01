@@ -5,7 +5,7 @@ import ru.souz.backend.attachments.AttachmentStorage
 import ru.souz.backend.attachments.attachmentId
 import ru.souz.backend.attachments.toContent
 import ru.souz.backend.attachments.validateAttachmentObjectKey
-import ru.souz.backend.attachments.validatePresentation
+import ru.souz.backend.attachments.requireMatchingPresentation
 import ru.souz.backend.storage.postgres.PostgresAttachmentRepository
 import ru.souz.llms.FileContent
 import ru.souz.llms.FilePresentation
@@ -18,7 +18,7 @@ data class ClientAttachment(
 )
 
 internal suspend fun FileContent.toClientAttachment(userId: String, repository: PostgresAttachmentRepository?): ClientAttachment {
-    val stored = repository?.get(userId, attachmentId(file.fileId)) ?: throw AttachmentException("attachment_not_found")
+    val stored = repository?.get(userId, attachmentId(fileId)) ?: throw AttachmentException("attachment_not_found")
     return ClientAttachment(stored.objectKey, name, presentation)
 }
 
@@ -39,7 +39,7 @@ internal suspend fun List<ClientAttachment>.importFiles(userId: String, storage:
     if (storage == null) throw ClientContractException("feature_disabled", "Attachment storage is not configured.")
     val files = map { reference ->
         storage.importUpload(userId, reference.objectKey, reference.name)
-            .toContent(reference.presentation).also { it.validatePresentation() }
+            .toContent(reference.presentation).also { it.requireMatchingPresentation() }
     }
     if (files.sumOf { it.sizeBytes } > 100_000_000) throw AttachmentException("attachment_message_too_large")
     return files

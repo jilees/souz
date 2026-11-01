@@ -11,7 +11,6 @@ import javax.imageio.stream.MemoryCacheImageOutputStream
 import kotlinx.coroutines.runBlocking
 import ru.souz.llms.FileContent
 import ru.souz.llms.FilePresentation
-import ru.souz.llms.FileReference
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -38,7 +37,7 @@ class TelegramPhotoTest {
         try {
             val api = HttpTelegramBotApi("http://127.0.0.1:${server.address.port}")
             for ((format, original) in originals) {
-                val file = FileContent(FileReference("original"), "cat.$format", "image/$format", original.size.toLong(), FilePresentation.image)
+                val file = FileContent("original", "cat.$format", "image/$format", original.size.toLong(), FilePresentation.image)
                 api.sendFile("test", 42, file, original)
                 val (path, payload) = requests.remove()
                 assertEquals("/bottest/sendPhoto", path)

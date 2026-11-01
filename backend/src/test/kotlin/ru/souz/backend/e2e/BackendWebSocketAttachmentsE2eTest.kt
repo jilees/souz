@@ -62,7 +62,7 @@ class BackendWebSocketAttachmentsE2eTest {
                                 "arguments" to mapOf("prompt" to "Test image")))
                         }
                         2 -> {
-                            fileId = restJsonMapper.readTree(request.messages.last().content)["file"]["fileId"].asText()
+                            fileId = restJsonMapper.readTree(request.messages.last().content)["fileId"].asText()
                             toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "AttachFileToReply",
                                 "arguments" to mapOf("fileId" to fileId, "presentation" to "image")))
                         }
@@ -115,7 +115,7 @@ class BackendWebSocketAttachmentsE2eTest {
                         if (request.functions.map { it.name } == listOf("AttachFileToReply")) {
                             childCalls++
                             if (last.name == "AttachFileToReply") {
-                                assertTrue(restJsonMapper.readTree(last.content)["file"]["fileId"].asText().isNotBlank())
+                                assertTrue(restJsonMapper.readTree(last.content)["fileId"].asText().isNotBlank())
                                 reply(request, "File registered")
                             } else {
                                 toolCallReply(request, "AttachFileToReply", mapOf("path" to output.toString()))
@@ -134,7 +134,7 @@ class BackendWebSocketAttachmentsE2eTest {
                             2 -> {
                                 val result = restJsonMapper.readTree(last.content)
                                 val file = if (delegated) result["files"].single() else result
-                                fileId = file["file"]["fileId"].asText()
+                                fileId = file["fileId"].asText()
                                 assertTrue(fileId.isNotBlank())
                                 toolCallReply(request, "RunSkillCommand", mapOf(
                                     "skillId" to "SendMessageToChannel", "arguments" to mapOf(
@@ -184,7 +184,7 @@ class BackendWebSocketAttachmentsE2eTest {
                     }
                     assertEquals(if (delegated) 2 else 0, childCalls)
                     assertEquals(1, api.sentFiles.size)
-                    assertEquals(fileId, api.sentFiles.single().first.file.fileId)
+                    assertEquals(fileId, api.sentFiles.single().first.fileId)
                     assertContentEquals(bytes, api.sentFiles.single().second)
                     assertTrue(api.sentMessages.isEmpty())
                     val forwarded = client.get(BackendHttpRoutes.chatMessages(publicChatId)) { trusted(user) }.jsonBody()["items"].single()

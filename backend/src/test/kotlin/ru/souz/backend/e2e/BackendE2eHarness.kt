@@ -4,9 +4,18 @@ import ru.souz.agent.spi.TaskComplexityClassifier
 import ru.souz.backend.config.loadImageModel
 import ru.souz.agent.skills.SkillClassifier
 
+import ru.souz.backend.agent.runtime.conversation.BackendConversationRuntimeFactory
+import ru.souz.backend.agent.session.AgentStateRepository
+import ru.souz.backend.attachments.AttachmentStorage
+import ru.souz.backend.attachments.AttachmentStorageConfig
+import ru.souz.backend.attachments.BackendAttachmentAccess
+import ru.souz.backend.chat.repository.MessageRepository
 import ru.souz.backend.execution.service.AgentExecutionLauncher
 import ru.souz.backend.hooks.HookConfig
+import ru.souz.llms.ToolInvocationMeta
 import ru.souz.runtime.sandbox.RuntimeSandboxFactory
+import ru.souz.runtime.sandbox.SandboxFileSystem
+import ru.souz.runtime.sandbox.ToolInvocationRuntimeSandboxResolver
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.zaxxer.hikari.HikariDataSource
@@ -53,6 +62,7 @@ import ru.souz.backend.memory.hindsight.HindsightConversationMemoryRuntime
 import ru.souz.backend.options.repository.OptionRepository
 import ru.souz.backend.scheduler.ScheduledTaskConfig
 import ru.souz.backend.scheduler.ScheduledTaskRunner
+import ru.souz.backend.metrics.BackendMetrics
 import ru.souz.jobs.JobService
 import ru.souz.jobs.JobRun
 import ru.souz.jobs.impl.PostgresJobService
@@ -154,7 +164,7 @@ internal fun backendE2eTest(
     llmLimits: BackendLlmLimits = BackendLlmLimits(),
     sandboxFactory: ((SettingsProvider) -> RuntimeSandboxFactory)? = null,
     skillOAuth: Boolean = false,
-    attachments: ru.souz.backend.attachments.AttachmentStorageConfig? = null,
+    attachments: AttachmentStorageConfig? = null,
     complexityClassifier: TaskComplexityClassifier? = null,
     block: suspend BackendE2eScope.() -> Unit,
 ) = testApplication {
@@ -367,7 +377,7 @@ internal class BackendE2eBackend(
     private val scheduledTasks: ScheduledTaskConfig = ScheduledTaskConfig(),
     private val llmLimits: BackendLlmLimits = BackendLlmLimits(),
     private val sandboxFactory: ((SettingsProvider) -> RuntimeSandboxFactory)? = null,
-    attachments: ru.souz.backend.attachments.AttachmentStorageConfig? = null,
+    private val attachments: AttachmentStorageConfig? = null,
     private val complexityClassifier: TaskComplexityClassifier? = null,
 ) : AutoCloseable {
     private val appConfig: BackendAppConfig = postgresAppConfig(
@@ -408,6 +418,7 @@ internal class BackendE2eBackend(
         bindSingleton<Clock>(overrides = true) { clock }
         bindSingleton<PostgresJobService>(overrides = true) {
             PostgresJobService(instance<HikariDataSource>(), pollIntervalMillis = 50)
+                .also { it.bindMetrics(instance<BackendMetrics>().registry) }
         }
         if (appConfig.hindsightApiUrl != null) {
             bindSingleton<HistoryMemoryWorker>(overrides = true) {
@@ -451,7 +462,7 @@ internal class BackendE2eBackend(
     }
 
     val dependencies: BackendHttpDependencies = di.direct.instance()
-    private val dataSource: HikariDataSource = di.direct.instance()
+    val dataSource: HikariDataSource = di.direct.instance()
     private val resources: BackendRuntimeResources = di.direct.instance()
 
     init {
@@ -497,8 +508,18 @@ internal class BackendE2eBackend(
 
     val jobService: JobService get() = di.direct.instance()
 
+    val attachmentStorage: AttachmentStorage get() = di.direct.instance()
+    val attachmentAccess: BackendAttachmentAccess get() = di.direct.instance()
+    fun sandboxFileSystem(userId: String): SandboxFileSystem =
+        di.direct.instance<ToolInvocationRuntimeSandboxResolver>().resolve(ToolInvocationMeta(userId)).fileSystem
+    val messageRepository: MessageRepository get() = di.direct.instance()
+    val agentStateRepository: AgentStateRepository get() = di.direct.instance()
+    val turnRunner: BackendConversationTurnRunner get() = di.direct.instance()
+    val conversationRuntimeFactory: BackendConversationRuntimeFactory get() = di.direct.instance()
+
     suspend fun startScheduledTaskWorker() {
-        di.direct.instance<PostgresJobService>().startWorker(applicationScope, di.direct.instance<ScheduledTaskRunner>()::run)
+        val runner = di.direct.instance<ScheduledTaskRunner>()
+        di.direct.instance<PostgresJobService>().startWorker(applicationScope, runner::awaitCapacity, runner::run)
     }
 
     suspend fun runScheduledTask(job: JobRun) = di.direct.instance<ScheduledTaskRunner>().run(job)
@@ -545,6 +566,7 @@ internal class BackendE2eBackend(
             scheduledTasks = scheduledTasks,
             llmLimits = llmLimits,
             sandboxFactory = sandboxFactory,
+            attachments = attachments,
         )
 
     override fun close() {

@@ -32,7 +32,7 @@ class BackendExecutionToolCatalogTest {
     fun `client and bot executions expose enabled attachment tools`() {
         for (clientSearch in listOf(true, false)) {
             val catalog = backendExecutionToolCatalog(
-                compiledToolCatalog = TestToolCatalog(ToolCategory.FILES to listOf("PrepareAttachment", "AttachFileToReply")),
+                compiledToolCatalog = TestToolCatalog(ToolCategory.FILES to listOf("PrepareAttachment", "AttachFileToReply", "DetachFileFromReply")),
                 executionLlmToolCatalog = TestToolCatalog(),
                 enabledCompiledToolNames = null,
                 clientToolCatalog = if (clientSearch) TestToolCatalog(ToolCategory.WEB_SEARCH to listOf("web.search")) else TestToolCatalog(),
@@ -40,6 +40,7 @@ class BackendExecutionToolCatalogTest {
             )
             assertTrue("PrepareAttachment" in toolNames(catalog))
             assertTrue("AttachFileToReply" in toolNames(catalog))
+            assertTrue("DetachFileFromReply" in toolNames(catalog))
         }
     }
 

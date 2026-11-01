@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory
 import ru.souz.backend.agent.model.AgentConversationKey
 import ru.souz.backend.agent.model.BackendConversationTurnRequest
 import ru.souz.backend.agent.runtime.BackendAgentRuntimeEventSink
+import ru.souz.backend.agent.runtime.WaitingPhrases
 import ru.souz.backend.chat.model.Chat
 import ru.souz.backend.chat.model.ChatRole
 import ru.souz.backend.chat.repository.ChatRepository
@@ -38,6 +39,7 @@ import ru.souz.backend.options.model.Option
 import ru.souz.backend.options.repository.OptionRepository
 import ru.souz.backend.settings.service.UserSettingsOverrides
 import ru.souz.backend.toolcall.repository.ToolCallRepository
+import ru.souz.llms.FileContent
 
 data class CancelExecutionResult(
     val execution: AgentExecution,
@@ -57,6 +59,7 @@ class AgentExecutionService internal constructor(
     private val hookStore: HookStore,
     private val hookConfig: HookConfig,
     private val attachmentRepository: ru.souz.backend.storage.postgres.PostgresAttachmentRepository? = null,
+    private val waitingPhrases: WaitingPhrases,
 ) {
     private val logger = LoggerFactory.getLogger(AgentExecutionService::class.java)
     private val hookSlots = Semaphore(hookConfig.concurrentExecutions)
@@ -71,7 +74,7 @@ class AgentExecutionService internal constructor(
         latestDeviceContextJson: String = "{}",
         userMessageMetadata: Map<String, String> = emptyMap(),
         clientToolsEnabled: Boolean = false,
-        attachments: List<ru.souz.llms.FileContent> = emptyList(),
+        attachments: List<FileContent> = emptyList(),
     ): SendMessageResult {
         val prepared = prepareChatTurn(
             userId = userId,
@@ -176,7 +179,7 @@ class AgentExecutionService internal constructor(
         latestDeviceContextJson: String = "{}",
         userMessageMetadata: Map<String, String> = emptyMap(),
         clientToolsEnabled: Boolean = false,
-        attachments: List<ru.souz.llms.FileContent> = emptyList(),
+        attachments: List<FileContent> = emptyList(),
     ): PreparedChatTurn {
         requireOwnedChat(userId, chatId)
         return requestFactory.prepareChatTurn(
@@ -238,7 +241,7 @@ class AgentExecutionService internal constructor(
         clientMessageId: String? = null,
         requestOverrides: UserSettingsOverrides = UserSettingsOverrides(),
         onProgress: suspend (String) -> Unit,
-        attachments: List<ru.souz.llms.FileContent> = emptyList(),
+        attachments: List<FileContent> = emptyList(),
     ): SendMessageResult = coroutineScope {
         // Subscribe before execution can publish its first block; no replay or device commands.
         val subscription = eventService.observeLive(userId, chatId)
@@ -385,6 +388,8 @@ class AgentExecutionService internal constructor(
             publicClientThread = execution.runtimeOwner != null,
             narrateSteps = execution.metadata[METADATA_NARRATE_STEPS] == "true",
             attachmentRepository = attachmentRepository,
+            intermediateMessages = execution.metadata[METADATA_INTERMEDIATE_MESSAGES] != "false",
+            waitingPhrases = waitingPhrases,
         )
 
     private suspend fun cancelExecutionInternal(execution: AgentExecution): AgentExecution = withContext(NonCancellable) {

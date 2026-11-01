@@ -17,6 +17,77 @@ import ru.souz.backend.storage.postgres.postgresAppConfig
 
 class AttachmentMigrationTest {
     @Test
+    fun `flat metadata upgrade preserves stored messages sessions images and public descriptors`() = runBlocking {
+        val config = postgresAppConfig(newPostgresSchema("flat_files_upgrade")).postgres
+        Flyway.configure().dataSource(config.jdbcUrl(), config.user, config.password)
+            .locations("classpath:db/migration").schemas(config.schema).defaultSchema(config.schema)
+            .target("28").load().migrate()
+        val chat = UUID.randomUUID()
+        val message = UUID.randomUUID()
+        val file = """{"file":{"fileId":"owned-file"},"name":"report.txt","mimeType":"text/plain","sizeBytes":4,"presentation":"document"}"""
+        val image = """{"file":{"fileId":"image-file"},"detail":"high"}"""
+        val arguments = ru.souz.llms.restJsonMapper.writeValueAsString("""{"descriptor":$file}""")
+        val context = """{"schemaVersion":1,"history":[{"role":"user","content":"kept","name":"souz_speaker_alice",
+            "files":[$file],"replyFiles":[$file],"images":[$image],
+            "function_call":{"name":"ExternalTool","arguments":$arguments}}],
+            "replyAttachments":[$file],"attachmentExecutionId":"execution","temperature":0.4,"locale":"ru-RU","timeZone":"Europe/Moscow"}"""
+        DriverManager.getConnection(config.jdbcUrl(), config.user, config.password).use { connection ->
+            connection.schema = config.schema
+            connection.createStatement().use { it.execute("insert into users(id) values ('alice')") }
+            connection.prepareStatement("insert into chats(id,user_id,client_type,request_id,payload_hash) values (?,'alice','backend','create','hash')").use {
+                it.setObject(1, chat); it.executeUpdate()
+            }
+            connection.prepareStatement("insert into messages(id,user_id,chat_id,seq,role,content,attachments) values (?,'alice',?,1,'user','kept',?::jsonb)").use {
+                it.setObject(1, message); it.setObject(2, chat); it.setString(3, "[$file]"); it.executeUpdate()
+            }
+            connection.prepareStatement("insert into agent_conversation_state(user_id,chat_id,context_json,based_on_message_seq,row_version) values ('alice',?,?::jsonb,1,7)").use {
+                it.setObject(1, chat); it.setString(2, context); it.executeUpdate()
+            }
+            connection.prepareStatement("insert into agent_events(id,user_id,chat_id,seq,type,payload) values (?,'alice',?,1,'thread.completed',?::jsonb)").use {
+                it.setObject(1, UUID.randomUUID()); it.setObject(2, chat)
+                it.setString(3, """{"response":"kept","attachments":[{"objectKey":"opaque/key","name":"report.txt","presentation":"document"}]}""")
+                it.executeUpdate()
+            }
+        }
+        repeat(2) {
+            PostgresDataSourceFactory.create(config).use { dataSource ->
+                val stored = ru.souz.backend.storage.postgres.PostgresMessageRepository(dataSource).get("alice", chat, 1)!!
+                assertEquals("owned-file", stored.attachments.single().fileId)
+                assertEquals("kept", stored.content)
+                val state = ru.souz.backend.storage.postgres.PostgresAgentStateRepository(dataSource).get("alice", chat)!!
+                assertEquals(7L, state.rowVersion)
+                assertEquals(1L, state.basedOnMessageSeq)
+                val history = state.history.single()
+                assertEquals(stored.attachments, history.files)
+                assertEquals(stored.attachments, history.replyFiles)
+                assertEquals(stored.attachments, state.replyAttachments)
+                assertEquals("souz_speaker_alice", history.name)
+                assertEquals("image-file", history.images.single().file.fileId)
+                assertEquals("high", history.images.single().detail)
+                dataSource.connection.use { connection ->
+                    connection.createStatement().use { statement ->
+                        statement.executeQuery("select context_json from agent_conversation_state").use { rows ->
+                            assertTrue(rows.next())
+                            val json = ru.souz.llms.restJsonMapper.readTree(rows.getString(1))
+                            assertNull(json["history"][0]["files"][0]["file"])
+                            assertEquals("owned-file", json["history"][0]["files"][0]["fileId"].asText())
+                            val argument = ru.souz.llms.restJsonMapper.readTree(
+                                json["history"][0]["function_call"]["arguments"].asText())["descriptor"]
+                            assertEquals("owned-file", argument["file"]["fileId"].asText())
+                            assertNull(argument["fileId"])
+                        }
+                        statement.executeQuery("select payload from agent_events").use { rows ->
+                            assertTrue(rows.next())
+                            val json = ru.souz.llms.restJsonMapper.readTree(rows.getString(1))
+                            assertEquals("opaque/key", json["attachments"][0]["objectKey"].asText())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     fun `event migration replaces historical UUID descriptors once including removed files and UTF8 owners`() = runBlocking {
         val config = postgresAppConfig(newPostgresSchema("object_keys_upgrade")).postgres
         fun migrate(target: String? = null) {
@@ -131,7 +202,7 @@ class AttachmentMigrationTest {
                         statement.executeQuery("select discovered_client_tools from chats limit 0").close()
                         statement.executeQuery("select count(*) from flyway_schema_history where success and version is not null").use { rows ->
                             assertTrue(rows.next())
-                            assertEquals(28, rows.getInt(1))
+                            assertEquals(29, rows.getInt(1))
                         }
                     }
                 }

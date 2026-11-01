@@ -87,6 +87,21 @@ class BackendAppConfigTest {
     }
 
     @Test
+    fun `waiting category threshold defaults to half and rejects invalid probabilities`() {
+        fun load(value: String? = null) = BackendAppConfig.load(MapBackendConfigSource(
+            env = mapOf("SOUZ_MASTER_KEY" to "test-key") +
+                listOfNotNull(value?.let { "JEV_WAIT_CATEGORY_THRESHOLD" to it }).toMap(),
+        )).validate()
+        assertEquals(0.5, load().jevWaitCategoryThreshold)
+        for (value in listOf("0", "0.5", "0.75", "1")) {
+            assertEquals(value.toDouble(), load(value).jevWaitCategoryThreshold)
+        }
+        for (value in listOf("", "invalid", "NaN", "Infinity", "-0.1", "1.1")) {
+            assertFailsWith<BackendConfigurationException>(value) { load(value) }
+        }
+    }
+
+    @Test
     fun `server config reads defaults and explicit settings`() {
         val defaultConfig = BackendAppConfig.load(
             MapBackendConfigSource(
@@ -98,6 +113,7 @@ class BackendAppConfigTest {
                 env = mapOf(
                     "SOUZ_BACKEND_HOST" to " 0.0.0.0 ",
                     "SOUZ_BACKEND_PORT" to "9090",
+                    "SOUZ_ATTACHMENTS_HISTORY_LIMIT" to "7",
                     "SOUZ_BACKEND_PROXY_TOKEN" to " proxy-secret ",
                     "SOUZ_MASTER_KEY" to "test-master-key",
                 ),
@@ -108,6 +124,7 @@ class BackendAppConfigTest {
                 properties = mapOf(
                     "souz.backend.host" to "backend.internal",
                     "souz.backend.port" to "8181",
+                    "souz.attachments.historyLimit" to "3",
                     "souz.backend.proxyToken" to " property-secret ",
                     "souz.masterKey" to "test-master-key",
                 ),
@@ -135,6 +152,16 @@ class BackendAppConfigTest {
             propertyConfig.server,
         )
         assertNull(blankTokenConfig.server.proxyToken)
+        assertEquals(20, defaultConfig.attachmentHistoryLimit)
+        assertEquals(7, envConfig.attachmentHistoryLimit)
+        assertEquals(3, propertyConfig.attachmentHistoryLimit)
+        for (invalid in listOf("0", "-1", "invalid")) {
+            assertFailsWith<BackendConfigurationException> {
+                BackendAppConfig.load(MapBackendConfigSource(env = mapOf(
+                    "SOUZ_MASTER_KEY" to "test-master-key", "SOUZ_ATTACHMENTS_HISTORY_LIMIT" to invalid,
+                ))).validate()
+            }
+        }
     }
 
     @Test
