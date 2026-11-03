@@ -166,7 +166,7 @@ fun backendDiModule(
             scopeResolver = BackendSandboxScopeResolver,
         )
     )
-    import(runtimeProviderHttpDiModule(appConfig.codexEndpoints))
+    import(runtimeProviderHttpDiModule())
     import(fileSystemSkillRegistryDiModule())
     import(skillRuntimeToolsDiModule())
     val skillOAuthConfig = SkillOAuthBackendConfig.from(appConfig)
@@ -365,7 +365,6 @@ fun backendDiModule(
             providerHttpClients = instance(),
             providerApiOverride = instanceOrNull(),
             codexOAuthService = instance<CodexOAuthService>(),
-            codexEndpoints = instance(),
             agentStateRepository = instance(),
             messageRepository = instance(),
             logObjectMapper = instance(BackendDiTags.LOG_OBJECT_MAPPER),

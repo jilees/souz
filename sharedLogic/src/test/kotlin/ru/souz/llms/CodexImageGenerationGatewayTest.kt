@@ -15,7 +15,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.codex.CodexImageGenerationGateway
-import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.runtime.ImageGenerationInput
 import ru.souz.llms.runtime.ImageGenerationSource
@@ -44,22 +43,6 @@ class CodexImageGenerationGatewayTest {
         }).use { client ->
             assertContentEquals(png, CodexImageGenerationGateway(settings, oauth, client)
                 .generate(ImageGenerationInput("Change the background", images = sources)).bytes)
-        }
-    }
-
-    @Test
-    fun `custom Responses URL also routes image generation`() = runTest {
-        val endpoints = CodexEndpoints(baseUrl = "https://relay.test/souz-llm/chatgpt")
-        val settings = mockk<SettingsProvider>(relaxed = true)
-        val oauth = mockk<CodexOAuthService>()
-        coEvery { oauth.refreshTokenIfNeeded() } returns "fresh-token"
-        HttpClient(MockEngine { request ->
-            assertEquals(endpoints.responsesUrl, request.url.toString())
-            assertEquals("Bearer fresh-token", request.headers[HttpHeaders.Authorization])
-            respond(item() + done)
-        }).use { client ->
-            assertContentEquals(png, CodexImageGenerationGateway(settings, oauth, client, endpoints = endpoints)
-                .generate(ImageGenerationInput("cat")).bytes)
         }
     }
 

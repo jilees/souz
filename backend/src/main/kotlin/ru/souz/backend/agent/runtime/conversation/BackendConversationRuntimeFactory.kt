@@ -55,7 +55,6 @@ import ru.souz.llms.LLMToolSetup
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.anthropic.AnthropicVisionGateway
 import ru.souz.llms.codex.CodexOAuthService
-import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.http.ProviderHttpClients
 import ru.souz.llms.openai.OpenAIVisionGateway
 import ru.souz.llms.runtime.LLMCapabilityResolver
@@ -111,7 +110,6 @@ internal class BackendConversationRuntimeFactory(
     imageModel: String = "gpt-image-1",
     private val attachmentMediaTools: AttachmentMediaTools? = null,
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
-    private val codexEndpoints: CodexEndpoints = CodexEndpoints(),
 ) {
     private val modelFailures = ModelFailureMemory()
     private val imageSelection = resolveImageModel(imageModel, llmConfig.models)
@@ -154,7 +152,6 @@ internal class BackendConversationRuntimeFactory(
             retryPolicy = retryPolicy,
             httpClients = providerHttpClients,
             codexOAuthService = codexOAuthService,
-            codexEndpoints = codexEndpoints,
             initialUsage = initialUsage,
             providerApiOverride = providerApiOverride,
             hookBudget = hookBudget,
@@ -171,7 +168,7 @@ internal class BackendConversationRuntimeFactory(
         val imageGenerationGateway = imageGenerationGateway(
             model = imageSelection, settings = settingsProvider, clients = providerHttpClients,
             oauth = codexOAuthService, openAiCredential = { executionApi.credentialFor(LlmProvider.OPENAI) },
-            hookBudget = hookBudget, codexEndpoints = codexEndpoints,
+            hookBudget = hookBudget,
         )
         val executionLlmToolCatalog = LlmBackedToolCatalog(
             llmApi = executionApi,

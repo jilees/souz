@@ -384,7 +384,6 @@ internal class BackendE2eBackend(
         llmLimits = llmLimits,
         policyPrompt = E2E_POLICY_PROMPT,
         imageModel = settingsSource?.let(::loadImageModel) ?: "gpt-image-1",
-        codexEndpoints = ru.souz.llms.codex.CodexEndpoints.load { settingsSource?.value(it, it) },
         attachments = attachments,
     )
     private val source = object : BackendConfigSource {

@@ -5,7 +5,6 @@ import ru.souz.backend.hooks.HookLlmBudget
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.ModelResolution
-import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.codex.CodexImageGenerationGateway
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.http.ProviderHttpClients
@@ -40,10 +39,9 @@ internal fun imageGenerationGateway(
     oauth: CodexOAuthService,
     openAiCredential: suspend () -> String,
     hookBudget: HookLlmBudget?,
-    codexEndpoints: CodexEndpoints,
 ): ImageGenerationGateway {
     val delegate = when (model.provider) {
-        LlmProvider.CODEX -> CodexImageGenerationGateway(settings, oauth, clients.openAi, endpoints = codexEndpoints)
+        LlmProvider.CODEX -> CodexImageGenerationGateway(settings, oauth, clients.openAi)
         LlmProvider.OPENAI -> OpenAIImageGenerationGateway(
             settings, clients.openAi,
             apiKeyProvider = { model.connection?.apiKey ?: openAiCredential() },

@@ -36,7 +36,6 @@ sealed interface CodexOAuthState {
 class CodexOAuthService(
     private val settingsProvider: SettingsProvider,
     private val client: HttpClient,
-    private val endpoints: CodexEndpoints = CodexEndpoints(),
 ) {
 
     private val l = LoggerFactory.getLogger(CodexOAuthService::class.java)
@@ -51,7 +50,7 @@ class CodexOAuthService(
         _oauthState.value = CodexOAuthState.Idle
         try {
             // Step 1: request user code
-            val userCodeResponse = client.post(endpoints.deviceUserCodeUrl) {
+            val userCodeResponse = client.post(USERCODE_URL) {
                 timeout { requestTimeoutMillis = OAUTH_REQUEST_TIMEOUT_MILLIS }
                 contentType(ContentType.Application.Json)
                 setBody(mapOf("client_id" to CLIENT_ID))
@@ -80,7 +79,7 @@ class CodexOAuthService(
             var attempts = 0
             while (attempts < MAX_POLL_ATTEMPTS) {
                 attempts++
-                val pollResponse = client.post(endpoints.deviceTokenUrl) {
+                val pollResponse = client.post(TOKEN_POLL_URL) {
                     timeout { requestTimeoutMillis = OAUTH_REQUEST_TIMEOUT_MILLIS }
                     contentType(ContentType.Application.Json)
                     setBody(mapOf("device_auth_id" to deviceAuthId, "user_code" to userCode))
@@ -135,7 +134,7 @@ class CodexOAuthService(
         val body = "grant_type=refresh_token&refresh_token=${refreshToken.urlEncode()}" +
             "&client_id=${CLIENT_ID.urlEncode()}&scope=openid%20profile%20email"
         val response = try {
-            client.post(endpoints.oauthTokenUrl) {
+            client.post(OAUTH_TOKEN_URL) {
                 timeout { requestTimeoutMillis = OAUTH_REQUEST_TIMEOUT_MILLIS }
                 contentType(ContentType.Application.FormUrlEncoded)
                 setBody(body)
@@ -170,7 +169,7 @@ class CodexOAuthService(
             append("&client_id=${CLIENT_ID.urlEncode()}")
             append("&code_verifier=${codeVerifier.urlEncode()}")
         }
-        val response = client.post(endpoints.oauthTokenUrl) {
+        val response = client.post(OAUTH_TOKEN_URL) {
             timeout { requestTimeoutMillis = OAUTH_REQUEST_TIMEOUT_MILLIS }
             contentType(ContentType.Application.FormUrlEncoded)
             setBody(body)
@@ -245,6 +244,9 @@ class CodexOAuthService(
     companion object {
         const val CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
         private const val ISSUER = "https://auth.openai.com"
+        private const val USERCODE_URL = "$ISSUER/api/accounts/deviceauth/usercode"
+        private const val TOKEN_POLL_URL = "$ISSUER/api/accounts/deviceauth/token"
+        private const val OAUTH_TOKEN_URL = "$ISSUER/oauth/token"
         private const val REDIRECT_URI = "$ISSUER/deviceauth/callback"
         private const val VERIFY_URL = "https://auth.openai.com/codex/device"
         private const val MAX_POLL_ATTEMPTS = 60
