@@ -1,6 +1,7 @@
 package ru.souz.backend.app
 
 import java.net.URI
+import ru.souz.agent.DEFAULT_ATTACHMENT_HISTORY_LIMIT
 import ru.souz.backend.attachments.AttachmentStorageConfig
 import ru.souz.backend.common.BackendConfigurationException
 import ru.souz.backend.config.BackendConfigSource
@@ -150,10 +151,12 @@ data class BackendAppConfig(
     val hindsightApiUrl: String? = null,
     val hindsightApiToken: String? = null,
     val hindsightRetainAsync: Boolean = true,
+    val jevWaitCategoryThreshold: Double = 0.5,
     val llmLimits: BackendLlmLimits = BackendLlmLimits(),
     val providerRetryPolicy: BackendProviderRetryPolicy = BackendProviderRetryPolicy(),
     val hooks: HookConfig = HookConfig(),
     val scheduledTasks: ScheduledTaskConfig = ScheduledTaskConfig(),
+    val attachmentHistoryLimit: Int = DEFAULT_ATTACHMENT_HISTORY_LIMIT,
     val policyPrompt: String? = null,
     val attachments: AttachmentStorageConfig? = null,
     val codexEndpoints: CodexEndpoints = CodexEndpoints(),
@@ -163,6 +166,9 @@ data class BackendAppConfig(
     fun validate(): BackendAppConfig {
         server.validate()
         postgres.validate()
+        if (attachmentHistoryLimit <= 0) {
+            throw BackendConfigurationException("SOUZ_ATTACHMENTS_HISTORY_LIMIT / souz.attachments.historyLimit must be positive.")
+        }
         if (masterKey.isNullOrBlank()) {
             throw BackendConfigurationException("SOUZ_MASTER_KEY / souz.masterKey must not be blank.")
         }
@@ -200,6 +206,9 @@ data class BackendAppConfig(
         // provider credentials.
         llmLimits.validate()
         providerRetryPolicy.validate()
+        if (jevWaitCategoryThreshold !in 0.0..1.0) {
+            throw BackendConfigurationException("JEV_WAIT_CATEGORY_THRESHOLD must be a finite number within [0, 1].")
+        }
         return this
     }
 
@@ -208,9 +217,14 @@ data class BackendAppConfig(
             BackendAppConfig(
                 llmGateway = ru.souz.backend.llmgateway.LlmGatewayConfig.load(source),
                 codexEndpoints = CodexEndpoints.load { source.value(it, it) },
-                attachments = AttachmentStorageConfig.load(source),
                 imageModel = ru.souz.backend.config.loadImageModel(source),
                 featureFlags = BackendFeatureFlags.load(source),
+                jevWaitCategoryThreshold = source.env("JEV_WAIT_CATEGORY_THRESHOLD")?.let {
+                    it.trim().toDoubleOrNull()
+                        ?: throw BackendConfigurationException("JEV_WAIT_CATEGORY_THRESHOLD must be a number within [0, 1].")
+                } ?: 0.5,
+                attachments = AttachmentStorageConfig.load(source),
+                attachmentHistoryLimit = source.intValue("SOUZ_ATTACHMENTS_HISTORY_LIMIT", "souz.attachments.historyLimit", DEFAULT_ATTACHMENT_HISTORY_LIMIT),
                 hooks = HookConfig(
                     owners = source.value("SOUZ_HOOK_OWNERS", "souz.hooks.owners")
                         ?.split(',')?.map(String::trim)?.filter(String::isNotEmpty)?.toSet().orEmpty(),

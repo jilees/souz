@@ -42,7 +42,7 @@ class HttpTelegramBotApiTest {
             val rejected = jacksonObjectMapper().writeValueAsString(mapOf(
                 "ok" to false, "error_code" to 400, "description" to description,
             ))
-            val file = ru.souz.llms.FileContent(ru.souz.llms.FileReference("saved"), "screen.webp", "image/webp", 7)
+            val file = ru.souz.llms.FileContent("saved", "screen.webp", "image/webp", 7)
             for ((status, body) in listOf(400 to rejected, 502 to "private-response-body", 200 to "{\"ok\":true,\"result\":{}}")) {
                 responses.add(status to body)
                 val error = assertFailsWith<Exception> { api.sendFile(token, 42, file, "payload".toByteArray(), "private-caption") }
@@ -97,7 +97,7 @@ class HttpTelegramBotApiTest {
                 ru.souz.llms.FilePresentation.voice to "Voice",
                 ru.souz.llms.FilePresentation.audio to "Audio",
             )) {
-                val file = ru.souz.llms.FileContent(ru.souz.llms.FileReference("saved"), "отчёт.txt", "text/plain", 7, presentation)
+                val file = ru.souz.llms.FileContent("saved", "отчёт.txt", "text/plain", 7, presentation)
                 assertEquals(17L, api.sendFile("test", 42, file, "payload".toByteArray()))
                 val (path, type, body) = uploads.remove()
                 assertEquals("/bottest/send$part", path)
@@ -106,7 +106,7 @@ class HttpTelegramBotApiTest {
                 kotlin.test.assertTrue(body.contains("name=\"chat_id\"\r\n\r\n42"))
                 kotlin.test.assertTrue(body.endsWith("--\r\n"))
             }
-            val document = ru.souz.llms.FileContent(ru.souz.llms.FileReference("html"), "page.html", "text/html", 7)
+            val document = ru.souz.llms.FileContent("html", "page.html", "text/html", 7)
             val text = "**Готово** — [страница](https://example.com). 😀" + "я".repeat(2000)
             assertEquals(17L, api.sendFile("test", 42, document, "payload".toByteArray(), text))
             val (path, _, body) = uploads.remove()

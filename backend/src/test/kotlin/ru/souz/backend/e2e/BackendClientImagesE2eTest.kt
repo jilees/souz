@@ -84,7 +84,7 @@ class BackendClientImagesE2eTest {
                     socket.send(Frame.Text(frame))
                     assertEquals("accepted", readJson(socket)["status"].asText())
                     assertEquals("thread.completed", readJson(socket)["type"].asText())
-                    assertEquals(fileId, api.sentFiles.single().first.file.fileId)
+                    assertEquals(fileId, api.sentFiles.single().first.fileId)
                     assertEquals(ru.souz.llms.FilePresentation.image, api.sentFiles.single().first.presentation)
                     assertContentEquals(bytes, api.sentFiles.single().second)
                     socket.send(Frame.Text(frame))

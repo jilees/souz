@@ -4,7 +4,7 @@ Souz is a backend-only Kotlin/JVM AI assistant with a Ktor HTTP host, graph-base
 
 Client Skill guidance is bundled under `backend/src/main/resources/skills/client/`. Only `orion.tools.list` is injected for every public WebSocket channel. Declarations and discovery describe that channel’s tools; executions can use all unarchived channels of their user. Discovery overrides the supplying channel’s declarations. Equal definitions share one Skill and provider list; conflicting names and server-driven `prompt.personality.set` are excluded from the model catalogue. `user.ask` remains supported when declared or discovered; Orion and the bot service do not declare it. Parent and child instructions identify the current channel, which defaults local calls when it provides the tool; explicit routing takes priority. Client discovery is lazy: backend restart expires discovered catalogues, and the parent requests them only when needed; connection and runtime creation do not trigger discovery. A missing provider registration requires discovery only if the intended connected channel has no successful catalogue of its own; a completed catalogue, including an empty one, makes missing tools unavailable without rediscovery.
 
-Complexity routing admits only confident tool-free turns to the light model. Public-client executions emit one live waiting phrase unless routed simple; see [model routing](agent/docs/execution-lifecycle.md#model-routing).
+Complexity routing admits only confident tool-free turns to the light model. Public-client executions attempt one best-effort live waiting phrase unless routed simple or `intermediateMessages` is off; progress or completion can overtake it. See [model routing](agent/docs/execution-lifecycle.md#model-routing).
 
 Channel routes are cached per user in process memory. `ListActiveChannels` explicitly refreshes the cache; sending loads an empty cache lazily and reuses it across turns. The backend resolves the current provider for the same channel ID, independent of historical provider types. Restart or failed delivery expires the cache; uncertain deliveries are never automatically repeated.
 
@@ -14,7 +14,9 @@ Backend uses one startup-validated `CONTEXT_SIZE` (minimum 24,000 tokens) for al
 
 Summary output uses the startup-validated `SUMMARIZATION_MAX_OUTPUT_TOKENS` server setting (positive integer, default 2,048), independent of the context window.
 
-Backend [personality settings](backend/docs/personality-settings.md) are separate from system prompts and synchronize revisioned snapshots to Orion. Before mutation, an unknown connected provider returns `client_tool_discovery_required` when no connected channel declares synchronization support; parent discovery precedes retry without incrementing the revision.
+Backend [personality settings](backend/docs/personality-settings.md) are separate from system prompts and synchronize revisioned snapshots to Orion. Before mutation, an unknown connected source requires `client_tool_discovery_required` even when another channel declares synchronization support; otherwise discovery is required when no connected provider is known. Parent discovery precedes retry without incrementing the revision.
+
+Backend [attachment contracts](backend/docs/attachments.md) carry owner-scoped flat `fileId` references through messages, tools and sessions; V29 converts stored nested metadata while public WebSocket attachment contracts remain stable. Trusted HTTP message reads expose flat attachment metadata.
 
 - Read and maintain this file before changing the repository. Before editing a module, read its linked `AGENTS.md`, any applicable nested instructions, and relevant topics linked in its `Pain points` section.
 - Keep runtime documentation and `docs/public-souz-contract/` concise and current-state only. Do not write change-history phrases such as “now we do”.
@@ -44,7 +46,7 @@ Backend [personality settings](backend/docs/personality-settings.md) are separat
 - [`:skill-oauth-api`](skill-oauth-api/AGENTS.md) — provider-neutral Skill OAuth contracts (`SkillOAuthGateway`) with no host or persistence dependencies.
 - [`:skill-oauth-impl`](skill-oauth-impl/AGENTS.md) — Postgres-backed `SkillOAuthGateway` implementation, provider token exchange, and the OAuth callback route, consumed only by `:backend`.
 - [`:job-api`](job-api/AGENTS.md) — owner-scoped job management and execution contracts.
-- [`:job-impl`](job-impl/AGENTS.md) — PostgreSQL job persistence, scheduling, leased workers, and retries, composed by `:backend`.
+- [`:job-impl`](job-impl/AGENTS.md) — PostgreSQL job persistence, scheduling, leased workers, retries, and queue metrics, composed by `:backend`.
 - [`:backend`](backend/AGENTS.md) — trusted-proxy HTTP host and PostgreSQL-backed conversation runtime.
 - [`build-logic`](build-logic/AGENTS.md) — included build for repository quality checks, outside the production module graph.
 

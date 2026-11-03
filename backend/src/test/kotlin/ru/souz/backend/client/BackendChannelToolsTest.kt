@@ -38,6 +38,40 @@ import ru.souz.llms.restJsonMapper
 @OptIn(ExperimentalCoroutinesApi::class)
 class BackendChannelToolsTest {
     @Test
+    fun `unknown connected personality source requires discovery even with a known fallback`() = runTest {
+        with(Fixture(backgroundScope)) {
+            val fallback = target.copy(id = UUID.randomUUID())
+            val sourceSubscription = bus.subscribe(target.userId, target.id)
+            val fallbackSubscription = bus.subscribe(fallback.userId, fallback.id)
+            val control = ClientToolDefinition(PERSONALITY_SYNC_COMMAND, "Settings",
+                ru.souz.llms.LLMRequest.Parameters("object"))
+            val sync = PersonalitySync(mockk(), chats, events, LiveClientToolDispatcher(registry, events))
+            try {
+                for ((complete, declared) in listOf(false to false, true to false, false to true)) {
+                    coEvery { chats.clientToolChannels(target.userId) } returns listOf(
+                        ClientToolChannel(fallback, listOf(control), discoveryComplete = true),
+                        ClientToolChannel(target, if (declared) listOf(control) else emptyList(), discoveryComplete = complete),
+                    )
+                    val error = sync.discoveryRequired(target.userId, target.id)
+                    if (!complete && !declared) {
+                        assertEquals("client_tool_discovery_required", error?.code)
+                        assertTrue(target.id.toString() in requireNotNull(error).message)
+                    } else assertNull(error)
+                }
+                sourceSubscription.close()
+                coEvery { chats.clientToolChannels(target.userId) } returns listOf(
+                    ClientToolChannel(fallback, listOf(control), discoveryComplete = true),
+                    ClientToolChannel(target, emptyList(), discoveryComplete = false),
+                )
+                assertNull(sync.discoveryRequired(target.userId, target.id), "Offline source must not block saving")
+            } finally {
+                sourceSubscription.close()
+                fallbackSubscription.close()
+            }
+        }
+    }
+
+    @Test
     fun `channel publication is independent of source delivery and personality sync recovers from full queues`() = runTest {
         with(Fixture(backgroundScope)) {
             val subscription = bus.subscribe(target.userId, target.id)

@@ -22,6 +22,11 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class VoiceMemoryTest {
+    private val metrics = ru.souz.backend.metrics.BackendMetrics()
+
+    @kotlin.test.AfterTest
+    fun closeMetrics() { metrics.close() }
+
     @Test
     fun `personal recall takes precedence regardless of scores with a shared total budget`() = runTest {
         val bodies = mutableListOf<Pair<String, com.fasterxml.jackson.databind.JsonNode>>()
@@ -37,7 +42,7 @@ class VoiceMemoryTest {
                 "scores" to mapOf("final" to if (personal) 0.1 else 0.99),
             )))), headers = headersOf(HttpHeaders.ContentType, "application/json"))
         }) { providerHttpClientDefaults() }.use { client ->
-            val memory = HindsightConversationMemoryRuntime(client, "http://memory.test")
+            val memory = HindsightConversationMemoryRuntime(client, "http://memory.test", metrics)
             val context = MemoryContext(MemoryOwnerId(owner), ConversationId("chat"), null, null, voice)
             val result = memory.retrieveMemory(MemoryRetrievalRequest(context, "my name", maxFacts = 2, maxPromptTokens = 200))
             assertEquals(listOf("personal", "household"), result.facts.map { it.scope })
@@ -60,7 +65,7 @@ class VoiceMemoryTest {
                 else respond("""{"results":[{"id":"home","text":"The speaker is in the kitchen"}]}""",
                     headers = headersOf(HttpHeaders.ContentType, "application/json"))
             }) { providerHttpClientDefaults() }.use { client ->
-                val memory = HindsightConversationMemoryRuntime(client, "http://memory.test")
+                val memory = HindsightConversationMemoryRuntime(client, "http://memory.test", metrics)
                 val context = MemoryContext(MemoryOwnerId("owner"), null, null, null, "voice")
                 val result = memory.retrieveMemory(MemoryRetrievalRequest(context, "hi"))
                 assertEquals(listOf("household"), result.facts.map { it.scope })

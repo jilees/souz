@@ -231,6 +231,20 @@ internal fun Application.configureBackendHttpServer(dependencies: BackendHttpDep
             }
         }
 
+        get(BackendHttpRoutes.READY) {
+            call.respond(if (dependencies.readinessProbe.isWritable()) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable)
+        }.describePublic(
+            operationId = "getReadiness",
+            tag = BackendOpenApiTags.SYSTEM,
+            summary = "Get backend readiness",
+            description = "Readiness probe: 200 only when PostgreSQL confirms writes within 2 seconds; liveness uses health.",
+        ) {
+            responses {
+                response(200) { description = "PostgreSQL is reachable and writable." }
+                response(503) { description = "PostgreSQL is unavailable, read-only, or did not answer in time." }
+            }
+        }
+
         v1Routes(dependencies)
         dependencies.llmGateway?.let { llmGatewayRoutes(it) }
         hookRoutes(dependencies.hookService)
@@ -256,6 +270,7 @@ internal fun Application.configureBackendHttpServer(dependencies: BackendHttpDep
 private fun rootEndpoints(featureFlags: BackendFeatureFlags): List<String> =
     buildList {
         add("GET ${BackendHttpRoutes.HEALTH}")
+        add("GET ${BackendHttpRoutes.READY}")
         add("GET ${BackendHttpRoutes.METRICS}")
         add("GET ${BackendHttpRoutes.DOCS}")
         add("GET ${BackendHttpRoutes.BOOTSTRAP}")

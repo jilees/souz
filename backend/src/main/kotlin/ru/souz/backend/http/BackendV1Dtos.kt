@@ -33,6 +33,7 @@ import ru.souz.backend.execution.service.CancelExecutionResult
 import ru.souz.backend.settings.model.EffectiveUserSettings
 import ru.souz.backend.telegram.TelegramBotBinding
 import ru.souz.backend.vk.VkBotBinding
+import ru.souz.llms.FileContent
 import ru.souz.llms.restJsonMapper
 
 internal data class BackendV1SettingsResponse(
@@ -49,6 +50,7 @@ internal data class BackendV1SettingsPatchRequest(
     val showToolEvents: Boolean? = null,
     val streamingMessages: Boolean? = null,
     val narrateSteps: Boolean? = null,
+    val intermediateMessages: Boolean? = null,
     val interfaceLanguage: String? = null,
     val requestTimeoutMillis: Long? = null,
     val useFewShotExamples: Boolean? = null,
@@ -79,6 +81,7 @@ data class BackendV1SettingsDto(
     val showToolEvents: Boolean,
     val streamingMessages: Boolean,
     val narrateSteps: Boolean,
+    val intermediateMessages: Boolean,
     val interfaceLanguage: String,
     val requestTimeoutMillis: Long,
     val useFewShotExamples: Boolean,
@@ -196,6 +199,7 @@ internal data class BackendV1MessageDto(
     val content: String,
     val metadata: Map<String, String>,
     val createdAt: String,
+    val attachments: List<FileContent> = emptyList(),
 )
 
 internal data class BackendV1TelegramBotBindingDto(
@@ -291,6 +295,7 @@ internal fun EffectiveUserSettings.toDto(): BackendV1SettingsDto =
         showToolEvents = showToolEvents,
         streamingMessages = streamingMessages,
         narrateSteps = narrateSteps,
+        intermediateMessages = intermediateMessages,
         interfaceLanguage = interfaceLanguage,
         requestTimeoutMillis = requestTimeoutMillis,
         useFewShotExamples = useFewShotExamples,
@@ -375,6 +380,7 @@ internal fun ChatMessage.toDto(): BackendV1MessageDto =
         content = content,
         metadata = metadata,
         createdAt = createdAt.toString(),
+        attachments = attachments,
     )
 
 internal fun AgentExecution.toDto(): BackendV1ExecutionDto =

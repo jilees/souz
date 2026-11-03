@@ -29,7 +29,9 @@ internal class NodesToolUseWithKnowledge(
         alwaysInlineToolNames: Set<String>,
         name: String = "toolUse",
     ): Node<LLMResponse.Chat.Ok, String> = Node(name) { ctx ->
-        val fnCallMessages = NodesPlain.executeFunctionCalls(ctx, agentToolExecutor).map { (functionCall, message) ->
+        val executed = NodesPlain.executeFunctionCalls(ctx, agentToolExecutor)
+        val selection = ctx.replyAttachments.applyReplyFileSelection(executed.map { it.message })
+        val fnCallMessages = executed.map { it.functionCall }.zip(selection.messages).map { (functionCall, message) ->
             if (
                 functionCall.name in alwaysInlineToolNames ||
                 message.content.toByteArray(Charsets.UTF_8).size <= KNOWLEDGE_OFFLOAD_THRESHOLD_BYTES
@@ -43,9 +45,8 @@ internal class NodesToolUseWithKnowledge(
                 )
             }
         }
-        val history = ArrayList(ctx.history).apply { addAll(fnCallMessages) }
-        ctx.map(history = history) { ctx.history.last().content }
-            .copy(replyAttachments = (ctx.replyAttachments + fnCallMessages.flatMap { it.replyFiles }).distinctBy { it.file })
+        ctx.map(history = ctx.history + fnCallMessages) { ctx.history.last().content }
+            .copy(replyAttachments = selection.files)
     }
 
     private suspend fun offloadToolResult(

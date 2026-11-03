@@ -8,7 +8,7 @@ import ru.souz.backend.attachments.BackendAttachmentAccess
 import ru.souz.backend.attachments.AttachmentDelivery
 import ru.souz.backend.attachments.BackendAttachmentInput
 import ru.souz.backend.telegram.TelegramAttachments
-import ru.souz.tool.files.AttachmentTools
+import ru.souz.backend.attachments.attachmentToolCatalog
 
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -34,6 +34,7 @@ import ru.souz.agent.spi.AgentToolCatalog
 import ru.souz.backend.agent.runtime.BackendSandboxScopeResolver
 import ru.souz.backend.agent.runtime.BackendConversationTurnRunner
 import ru.souz.backend.agent.runtime.BackendConversationRuntimeTurnRunner
+import ru.souz.backend.agent.runtime.WaitingPhrases
 import ru.souz.backend.agent.runtime.conversation.BackendConversationRuntimeFactory
 import ru.souz.backend.agent.session.AgentStateRepository
 import ru.souz.backend.bootstrap.BackendBootstrapService
@@ -100,6 +101,7 @@ import ru.souz.backend.storage.postgres.PostgresChatRepository
 import ru.souz.backend.storage.postgres.PostgresClientRequestRepository
 import ru.souz.backend.storage.postgres.PostgresOptionRepository
 import ru.souz.backend.storage.postgres.PostgresDataSourceFactory
+import ru.souz.backend.storage.postgres.PostgresReadinessProbe
 import ru.souz.backend.storage.postgres.PostgresMessageRepository
 import ru.souz.backend.storage.postgres.PostgresToolCallRepository
 import ru.souz.backend.storage.postgres.PostgresTelegramBotBindingRepository
@@ -144,7 +146,7 @@ import ru.souz.tool.memory.ToolSearchMemory
 import ru.souz.tool.skills.SkillCommandExecutor
 import ru.souz.tool.web.internal.WebResearchClient
 
-private object BackendDiTags {
+internal object BackendDiTags {
     const val LOG_OBJECT_MAPPER = "backendLogObjectMapper"
     const val MERGED_TOOL_CATALOG = "backendMergedToolCatalog"
 }
@@ -181,8 +183,7 @@ fun backendDiModule(
         bindSingleton { AttachmentCleanupWorker(instance()) }
         bindSingleton { AttachmentDelivery(instance(), instance<HikariDataSource>()) }
         bindSingleton { BackendAttachmentInput(instance(), config, instance()) }
-        bindSingleton { BackendAttachmentAccess(instance(), instance(), config) }
-        bindSingleton { AttachmentTools(instance<BackendAttachmentAccess>()) }
+        bindSingleton { BackendAttachmentAccess(instance(), instance()) }
         bindSingleton { ru.souz.tool.files.DocumentMediaTools(instance()) }
         bindSingleton { ru.souz.backend.attachments.AttachmentMediaOperations(instance<HikariDataSource>()) }
         bindSingleton {
@@ -196,10 +197,16 @@ fun backendDiModule(
         val metrics = instance<BackendMetrics>()
         (dataSourceFactory?.invoke(appConfig.postgres)
             ?: PostgresDataSourceFactory.create(appConfig.postgres, metrics.registry))
-            .also { metrics.executions.bindDatabase(it) }
+            .also {
+                metrics.executions.bindDatabase(it)
+                metrics.historyMemory.bindDatabase(it)
+            }
     }
-    bindSingleton { PostgresJobService(instance<HikariDataSource>()) }
+    bindSingleton {
+        PostgresJobService(instance<HikariDataSource>()).also { it.bindMetrics(instance<BackendMetrics>().registry) }
+    }
     bindSingleton<JobService> { instance<PostgresJobService>() }
+    bindSingleton { PostgresReadinessProbe(instance<HikariDataSource>()) }
     bindSingleton<BackendServerPreferenceStore> {
         PostgresBackendServerPreferenceStore(
             dataSource = instance(),
@@ -332,6 +339,7 @@ fun backendDiModule(
             HindsightConversationMemoryRuntime(
                 httpClient = instance<ProviderHttpClients>().standard,
                 baseUrl = hindsightUrl,
+                metrics = instance(),
                 apiToken = appConfig.hindsightApiToken,
                 clock = instance(),
                 retainAsync = appConfig.hindsightRetainAsync,
@@ -342,7 +350,7 @@ fun backendDiModule(
         }
     }
     if (appConfig.hindsightApiUrl != null) {
-        bindSingleton { PostgresHistoryMemoryRepository(instance(), instance()) }
+        bindSingleton { PostgresHistoryMemoryRepository(instance(), instance(), instance()) }
         bindSingleton {
             HistoryMemoryWorker(instance(), instance<ConversationMemoryRuntime>() as HindsightConversationMemoryRuntime, instance(),
                 ru.souz.backend.memory.hindsight.VoiceMemoryRouting { instance<ru.souz.jev.JevClient>() })
@@ -352,7 +360,11 @@ fun backendDiModule(
             ToolForgetAllMemory(instance<ConversationMemoryRuntime>() as HindsightConversationMemoryRuntime, instance(), instance(), instance())
         }
     }
-    bindSingleton<TaskComplexityClassifier> { JevClassifier(instance()) }
+    bindSingleton { WaitingPhrases.load() }
+    bindSingleton<TaskComplexityClassifier> {
+        JevClassifier(instance(), waitCategories = instance<WaitingPhrases>().categories.mapValues { it.value.description },
+            waitCategoryThreshold = appConfig.jevWaitCategoryThreshold)
+    }
     bindSingleton {
         BackendConversationRuntimeFactory(
             userSettingsRepository = instance(),
@@ -369,6 +381,7 @@ fun backendDiModule(
             credentialResolver = instance(),
             effectiveSettingsResolver = instance(),
             retryPolicy = appConfig.providerRetryPolicy,
+            attachmentHistoryLimit = appConfig.attachmentHistoryLimit,
             providerHttpClients = instance(),
             providerApiOverride = instanceOrNull(),
             codexOAuthService = instance<CodexOAuthService>(),
@@ -437,6 +450,7 @@ fun backendDiModule(
             hookStore = instance(),
             hookConfig = appConfig.hooks,
             attachmentRepository = instance(),
+            waitingPhrases = instance(),
         )
     }
     if (appConfig.featureFlags.telegramBot) {
@@ -565,7 +579,7 @@ fun backendDiModule(
         AgentToolCatalog.compose(
             instance<RuntimeToolsFactory>().catalog,
             instance<BackendChannelToolCatalog>().catalog,
-            instanceOrNull<AttachmentTools>()?.catalog ?: AgentToolCatalog(),
+            instanceOrNull<BackendAttachmentAccess>()?.let(::attachmentToolCatalog) ?: AgentToolCatalog(),
             instanceOrNull<ru.souz.backend.attachments.AttachmentMediaTools>()?.catalog ?: AgentToolCatalog(),
             instanceOrNull<ru.souz.tool.files.DocumentMediaTools>()?.catalog ?: AgentToolCatalog(),
             AgentToolCatalog(mapOf(ToolCategory.SCHEDULING to listOf(
@@ -583,6 +597,7 @@ fun backendDiModule(
             scope = instance<BackendApplicationScope>(),
             config = appConfig.scheduledTasks,
             clock = instance(),
+            metrics = instance(),
         )
     }
     bindSingleton {
@@ -651,6 +666,7 @@ fun backendDiModule(
             telegramBotBindingService = if (featureFlags.telegramBot) instance() else null,
             vkBotBindingService = if (featureFlags.vkBot) instance() else null,
             featureFlags = featureFlags,
+            readinessProbe = instance(),
             selectedModel = { settingsResolver.defaultModel() },
             trustedProxyToken = { appConfig.server.proxyToken },
             ensureTrustedUser = userRepository::ensureUser,

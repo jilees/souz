@@ -24,7 +24,7 @@ class AttachmentDelivery(private val storage: AttachmentStorage, private val dat
     ) {
         require(files.size <= 10 && files.sumOf { it.sizeBytes } <= 100_000_000)
         val prepared = files.map { file ->
-            val saved = storage.get(userId, attachmentId(file.file.fileId))
+            val saved = storage.get(userId, attachmentId(file.fileId))
             saved.toContent(file.presentation) to storage.read(userId, saved.id)
         }
         var index = 0
@@ -35,7 +35,7 @@ class AttachmentDelivery(private val storage: AttachmentStorage, private val dat
         val combinedText = if (combine) channelTextChunks(text, documentTextLimit).first() else ""
         if (combine) {
             val (file, bytes) = prepared.first()
-            val hash = "document-text:${file.file.fileId}:${bytes.attachmentChecksum()}:$combinedText".toByteArray().attachmentChecksum()
+            val hash = "document-text:${file.fileId}:${bytes.attachmentChecksum()}:$combinedText".toByteArray().attachmentChecksum()
             sendPart(userId, key, index++, hash, checkOwnership) { requireNotNull(sendDocumentWithText)(file, bytes, combinedText) }
             onAccepted(combinedText, file)
         }
@@ -45,7 +45,7 @@ class AttachmentDelivery(private val storage: AttachmentStorage, private val dat
             onAccepted(chunk, null)
         }
         for ((file, bytes) in if (combine) prepared.drop(1) else prepared) {
-            val hash = "${file.file.fileId}:${file.presentation}:${bytes.attachmentChecksum()}".toByteArray().attachmentChecksum()
+            val hash = "${file.fileId}:${file.presentation}:${bytes.attachmentChecksum()}".toByteArray().attachmentChecksum()
             sendPart(userId, key, index++, hash, checkOwnership) { sendFile(file, bytes) }
             onAccepted(null, file)
         }

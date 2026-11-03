@@ -5,6 +5,7 @@ import java.time.ZoneId
 import java.util.Locale
 import ru.souz.backend.agent.model.AgentConversationKey
 import ru.souz.backend.agent.model.chatId
+import ru.souz.llms.FileContent
 import ru.souz.llms.LLMRequest
 
 /** Persisted backend conversation snapshot used to resume the next agent turn. */
@@ -15,6 +16,8 @@ data class AgentConversationSession(
     val timeZone: String,
     val basedOnMessageSeq: Long = 0L,
     val rowVersion: Long = 0L,
+    val attachmentExecutionId: String? = null,
+    val replyAttachments: List<FileContent> = emptyList(),
 )
 
 internal fun AgentConversationSession.toState(key: AgentConversationKey): AgentConversationState =
@@ -29,6 +32,8 @@ internal fun AgentConversationSession.toState(key: AgentConversationKey): AgentC
         basedOnMessageSeq = basedOnMessageSeq,
         updatedAt = Instant.now(),
         rowVersion = rowVersion,
+        attachmentExecutionId = attachmentExecutionId,
+        replyAttachments = replyAttachments,
     )
 
 internal fun AgentConversationState.toConversationSession(): AgentConversationSession {
@@ -40,6 +45,8 @@ internal fun AgentConversationState.toConversationSession(): AgentConversationSe
         timeZone = timeZone.id,
         basedOnMessageSeq = basedOnMessageSeq,
         rowVersion = rowVersion,
+        attachmentExecutionId = attachmentExecutionId,
+        replyAttachments = replyAttachments,
     )
 }
 

@@ -33,7 +33,8 @@ class BackendRuntime private constructor(
         runBlocking { httpDependencies.hookService.start(applicationScope) }
         // The worker keeps its first handler, so this is the only job dispatch path.
         runBlocking {
-            di.direct.instance<PostgresJobService>().startWorker(applicationScope, di.direct.instance<ScheduledTaskRunner>()::run)
+            val runner = di.direct.instance<ScheduledTaskRunner>()
+            di.direct.instance<PostgresJobService>().startWorker(applicationScope, runner::awaitCapacity, runner::run)
         }
         if (httpDependencies.featureFlags.wsEvents) {
             runBlocking { clientThreadRecoveryService.recover() }
@@ -68,7 +69,7 @@ class BackendRuntime private constructor(
             return BackendRuntime(di = di)
         }
 
-        private fun backendSystemPrompt(): String =
+        internal fun backendSystemPrompt(): String =
             System.getenv("SOUZ_BACKEND_SYSTEM_PROMPT")
                 ?: System.getProperty("souz.backend.systemPrompt")
                 ?: "You are Souz AI backend assistant. Answer directly and concisely in the user's language."

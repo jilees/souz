@@ -143,7 +143,8 @@ class BackendPersonalityE2eTest {
             val provider = createPublicChat(owner, "orion", clientToolsJson(PERSONALITY_SYNC_COMMAND))
             withPublicSocket(provider) { device ->
                 acknowledge(device, snapshot(device), null, 1)
-                withPublicSocket(source) {
+                withPublicSocket(source) { socket ->
+                    discover(socket, source, "[]")
                     coroutineScope {
                         val changing = async { turn(source, "brief") }
                         acknowledge(device, snapshot(device), "brief", 2)

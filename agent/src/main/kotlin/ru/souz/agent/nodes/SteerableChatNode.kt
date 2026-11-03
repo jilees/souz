@@ -97,7 +97,7 @@ internal class SteerableChatNode(
                 addAll(input.history)
                 add(LLMRequest.Message(LLMMessageRole.user, input.input,
                     name = speakerMessageName(input.messageAttributes.orEmpty(), this), files = input.attachments,
-                    images = input.attachments.filter { it.mimeType.startsWith("image/") }.map { ru.souz.llms.ImageContent(it.file) }))
+                    images = input.attachments.filter { it.mimeType.startsWith("image/") }.map { ru.souz.llms.ImageContent(ru.souz.llms.FileReference(it.fileId)) }))
             }
         }
         val attributes = inputs.lastOrNull { it.messageAttributes != null }?.messageAttributes

@@ -6,6 +6,7 @@ import kotlinx.coroutines.ensureActive
 import ru.souz.agent.runtime.AgentRuntimeEventSink
 import ru.souz.agent.state.AgentContext
 import ru.souz.agent.state.AgentSettings
+import ru.souz.llms.FileContent
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.LLMRequest
 import ru.souz.llms.LLMResponse
@@ -69,7 +70,7 @@ class SubagentTool(
         eventSink: AgentRuntimeEventSink,
     ): LLMRequest.Message {
         // Return failures as tool results so parent graph retries cannot replay child side effects.
-        var files: List<MessageAttachment> = emptyList()
+        var files: List<FileContent> = emptyList()
         val result = try {
             val input = try {
                 restJsonMapper.convertValue(functionCall.arguments, Input::class.java)
@@ -92,13 +93,13 @@ class SubagentTool(
                 toolInvocationMeta = meta,
                 runtimeEventSink = object : AgentRuntimeEventSink {
                     override suspend fun emit(event: ru.souz.agent.runtime.AgentRuntimeEvent) {
-                        if (event != ru.souz.agent.runtime.AgentRuntimeEvent.InitialWait) eventSink.emit(event)
+                        if (event !is ru.souz.agent.runtime.AgentRuntimeEvent.InitialWait) eventSink.emit(event)
                     }
                 },
             )
             val result = createAgent(input.maxTurns).execute(childContext)
             currentCoroutineContext().ensureActive()
-            files = result.attachments
+            files = result.context.replyAttachments
             buildMap<String, Any> {
                 put("result", result.output)
                 if (files.isNotEmpty()) put("files", files)

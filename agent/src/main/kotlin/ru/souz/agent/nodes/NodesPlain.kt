@@ -29,7 +29,7 @@ internal object NodesPlain {
             if (isEmpty()) add(ctx.systemPrompt.toSystemPromptMessage())
             add(LLMRequest.Message(LLMMessageRole.user, ctx.input,
                 name = speakerMessageName(ctx.toolInvocationMeta.attributes, ctx.history), files = ctx.inputAttachments,
-                images = ctx.inputAttachments.filter { it.mimeType.startsWith("image/") }.map { ru.souz.llms.ImageContent(it.file) }))
+                images = ctx.inputAttachments.filter { it.mimeType.startsWith("image/") }.map { ru.souz.llms.ImageContent(ru.souz.llms.FileReference(it.fileId)) }))
         }
         ctx.map(history = history, activeExchangeStartIndex = history.lastIndex) { ctx.input }
     }
@@ -55,9 +55,9 @@ internal object NodesPlain {
         executor: AgentToolExecutor,
         name: String = "toolUse",
     ): Node<LLMResponse.Chat.Ok, String> = Node(name) { ctx ->
-        val messages = executeFunctionCalls(ctx, executor).map { it.message }
-        ctx.map(history = ctx.history + messages) { ctx.history.last().content }
-            .copy(replyAttachments = (ctx.replyAttachments + messages.flatMap { it.replyFiles }).distinctBy { it.file })
+        val selection = ctx.replyAttachments.applyReplyFileSelection(executeFunctionCalls(ctx, executor).map { it.message })
+        ctx.map(history = ctx.history + selection.messages) { ctx.history.last().content }
+            .copy(replyAttachments = selection.files)
     }
 
     suspend fun executeFunctionCalls(

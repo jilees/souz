@@ -13,6 +13,7 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import ru.souz.agent.AgentStreamChunk
+import ru.souz.agent.DEFAULT_ATTACHMENT_HISTORY_LIMIT
 import ru.souz.agent.graph.Node
 import ru.souz.agent.runtime.AgentRuntimeEvent
 import ru.souz.agent.runtime.AgentRuntimeEventSink
@@ -40,6 +41,7 @@ internal class NodesLLM(
     private val complexityClassifier: TaskComplexityClassifier? = null,
     /** Rebinds a routed turn's tools to the chosen model: a `SpawnSubagent` child defaults to its parent's model. */
     private val routedTools: ((AgentSettings) -> List<LLMToolSetup>)? = null,
+    private val attachmentHistoryLimit: Int = DEFAULT_ATTACHMENT_HISTORY_LIMIT,
 ) {
     private val l = LoggerFactory.getLogger(NodesLLM::class.java)
     private var initialWaitDecided = false
@@ -80,6 +82,7 @@ internal class NodesLLM(
             ctx.toChatRequest(history, maxOutputTokens = CHAT_MAX_OUTPUT_TOKENS)
                 .copy(messages = renderSpeakerContext(history))
                 .withConversationInstructions(instructions)
+                .withFileReferences()
 
         var history = ctx.history
         var request = build(history)
@@ -87,6 +90,7 @@ internal class NodesLLM(
             history = llmApi.compactHistory(
                 ctx.toChatRequest(history, maxOutputTokens = settingsProvider.summarizationMaxOutputTokens),
                 ctx.activeExchangeStartIndex,
+                attachmentHistoryLimit,
             )
             request = build(history)
         }
@@ -120,16 +124,22 @@ internal class NodesLLM(
             val decided = CompletableDeferred<Unit>()
             val speculative = async { call(simple, instructions, streamRevision, decided) }
             val started = TimeSource.Monotonic.markNow()
-            val (verdict, target) = try {
-                if (classifier.isComplex(ctx.classificationRequest(), ctx.routingCapabilities)) "complex" to complex else "simple" to simple
+            val classification = try {
+                classifier.classify(ctx.classificationRequest(), ctx.routingCapabilities)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 l.warn("Model routing classifier failed: {}", error.message)
-                "unknown" to ctx.on(normal)
+                null
             }
-            l.info("Model routing class={} model={} durationMs={}", verdict, target.settings.model, started.elapsedNow().inWholeMilliseconds)
-            decideInitialWait(ctx, send = target !== simple)
+            val (verdict, target) = when (classification?.complex) {
+                true -> "complex" to complex
+                false -> "simple" to simple
+                null -> "unknown" to ctx.on(normal)
+            }
+            l.info("Model routing class={} model={} waitCategory={} durationMs={}", verdict, target.settings.model,
+                classification?.waitCategory, started.elapsedNow().inWholeMilliseconds)
+            decideInitialWait(ctx, send = target !== simple, classification?.waitCategory)
             if (target === simple) {
                 decided.complete(Unit)
                 speculative.await()
@@ -143,10 +153,10 @@ internal class NodesLLM(
     private fun AgentSettings.routedTo(target: RoutedModel): AgentSettings =
         copy(model = target.model, provider = target.provider, routing = null)
 
-    private suspend fun decideInitialWait(ctx: AgentContext<*>, send: Boolean) {
+    private suspend fun decideInitialWait(ctx: AgentContext<*>, send: Boolean, category: String? = null) {
         if (initialWaitDecided) return
         initialWaitDecided = true
-        if (send) ctx.runtimeEventSink.emit(AgentRuntimeEvent.InitialWait)
+        if (send) ctx.runtimeEventSink.emit(AgentRuntimeEvent.InitialWait(category))
     }
 
     private fun AgentContext<String>.on(settings: AgentSettings): AgentContext<String> =

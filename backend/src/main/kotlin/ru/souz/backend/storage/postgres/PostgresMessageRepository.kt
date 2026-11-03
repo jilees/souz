@@ -7,6 +7,7 @@ import javax.sql.DataSource
 import ru.souz.backend.chat.model.ChatMessage
 import ru.souz.backend.chat.model.ChatRole
 import ru.souz.backend.chat.repository.MessageRepository
+import ru.souz.llms.FileContent
 
 class PostgresMessageRepository(
     private val dataSource: DataSource,
@@ -19,7 +20,7 @@ class PostgresMessageRepository(
         metadata: Map<String, String>,
         id: UUID,
         createdAt: Instant,
-        attachments: List<ru.souz.llms.FileContent>,
+        attachments: List<FileContent>,
     ): ChatMessage = dataSource.write { connection ->
         connection.lockChat(userId, chatId)
         append(connection, userId, chatId, role, content, metadata, id, createdAt, attachments)
@@ -34,7 +35,7 @@ class PostgresMessageRepository(
         metadata: Map<String, String>,
         id: UUID,
         createdAt: Instant,
-        attachments: List<ru.souz.llms.FileContent> = emptyList(),
+        attachments: List<FileContent> = emptyList(),
     ): ChatMessage {
         connection.validateAttachments(userId, attachments)
         val nextSeq = connection.prepareStatement(
@@ -137,19 +138,21 @@ class PostgresMessageRepository(
         chatId: UUID,
         messageId: UUID,
         content: String,
+        attachments: List<FileContent>? = null,
     ): ChatMessage? =
         connection.prepareStatement(
             """
             update messages
-            set content = ?
+            set content = ?, attachments = coalesce(?::jsonb, attachments)
             where user_id = ? and chat_id = ? and id = ?
             returning *
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, content)
-            statement.setString(2, userId)
-            statement.setObject(3, chatId)
-            statement.setObject(4, messageId)
+            statement.setString(2, attachments?.let(postgresStorageMapper::writeValueAsString))
+            statement.setString(3, userId)
+            statement.setObject(4, chatId)
+            statement.setObject(5, messageId)
             statement.executeQuery().use { resultSet ->
                 if (resultSet.next()) resultSet.toMessage() else null
             }
