@@ -54,3 +54,5 @@ Codex calls convert Chat Completions messages into Responses input, including sy
 ## Verification
 
 Run `./gradlew :backend:test --tests '*BackendLlmGatewayE2eTest'` with Docker available, then `./gradlew souzGateFast`. The production-wired tests cover independent authentication, model discovery, explicit failover, parameter isolation, schemas and tool history, Codex OAuth, SSE and partial-response failures.
+
+The `llmgateway` package owns HTTP authentication, request/response framing, limits and provider wire calls. Host composition imports its DI module and registers the optional routes/security scheme. Native chat and the gateway share the upstream-derived `modelCascade` executor and unchanged `ModelFailureMemory`; Codex wire handling lives in the shared provider module. The HTTP layer consumes these services independently of agent execution setup.

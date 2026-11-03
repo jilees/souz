@@ -19,6 +19,7 @@ Register a Codex model with `{"provider":"codex","modelId":"<upstream-id>"}` in 
   "reasoningEfforts": {"gpt-5-mini": "low"},
   "subagentModels": ["tv-agent"],
   "summarization": {"model": "tv-agent"},
+  "cascades": {"fast": ["test-chat", "tv-agent"]},
   "routing": {
     "simple": {"model": "test-chat"},
     "complex": {"model": "tv-agent"}

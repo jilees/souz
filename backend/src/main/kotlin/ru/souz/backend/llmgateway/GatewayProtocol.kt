@@ -8,6 +8,7 @@ import io.ktor.client.statement.bodyAsChannel
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
 import ru.souz.llms.restJsonMapper
+import ru.souz.backend.llm.isModelProviderFailure
 
 internal const val GATEWAY_BASE = "/llm/v1"
 internal const val MAX_GATEWAY_BYTES = 8 * 1024 * 1024
@@ -20,7 +21,7 @@ internal class GatewayFailure(
     val code: String,
     override val message: String,
 ) : RuntimeException(message) {
-    val retryable: Boolean get() = status >= 500 || status in 401..403 || status == 408 || status == 429 || code == "model_not_found"
+    val retryable: Boolean get() = isModelProviderFailure(status, code)
     fun body(): ObjectNode = gatewayObject("error" to gatewayObject(
         "message" to message, "type" to if (status in 400..499) "invalid_request_error" else "server_error",
         "param" to null, "code" to code,

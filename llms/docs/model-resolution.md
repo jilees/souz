@@ -6,7 +6,7 @@ The serialized default embeddings marker is exactly `Embeddings` and does not id
 
 An ambiguous embeddings alias prefers the configured embeddings model only when that model is one of the matching candidates. Unsupported configured providers, including Giga on backend, remain explicit failures.
 
-The EN profile uses `gpt-6.1-sol` as the Codex default, including the backend's provider fallback chain. Explicit legacy model selections remain resolvable. Additional Codex models such as Terra are registered in the backend model configuration without enum entries; see [the gateway configuration](../../backend/docs/llm-gateway.md#models-and-cascades).
+The EN profile uses `gpt-6.1-sol` as the Codex default, including the backend's provider fallback chain. Explicit legacy model selections remain resolvable. Additional Codex models such as Terra are registered in the backend model configuration without enum entries; see [named model configuration](../../backend/docs/named-llm-connections.md).
 
 ## Safe changes
 

@@ -214,13 +214,8 @@ fun backendDiModule(
         )
     }
     bindSingleton { SystemBackendConfigSource.loadNamedModels() }
-    bindSingleton {
-        ru.souz.backend.llmgateway.LlmGateway(
-            config = appConfig.llmGateway, models = instance(), settings = instance(),
-            clients = instance(), oauth = instance(), endpoints = appConfig.codexEndpoints,
-            concurrency = appConfig.llmLimits.globalProviderConcurrency, metrics = instance(),
-        )
-    }
+    import(ru.souz.backend.llmgateway.llmGatewayModule(appConfig.llmGateway, appConfig.codexEndpoints,
+        appConfig.llmLimits.globalProviderConcurrency))
     bindSingleton<SettingsProvider> {
         BackendSettingsProvider(
             preferenceStore = instance(),

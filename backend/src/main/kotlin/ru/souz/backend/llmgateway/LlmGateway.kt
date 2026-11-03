@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory
 import ru.souz.backend.config.NamedLlmConfig
 import ru.souz.backend.config.NamedLlmModel
 import ru.souz.backend.llm.ModelFailureMemory
+import ru.souz.backend.llm.modelCascade
 import ru.souz.backend.llm.hasCompleteCodexOAuthCredentials
 import ru.souz.backend.metrics.BackendMetrics
 import ru.souz.db.SettingsProvider
@@ -61,30 +62,21 @@ internal class LlmGateway(
         val chain = (models.cascades[selection] ?: listOf(selection)).distinctBy(::failureKey)
         if (!permits.tryAcquire()) throw GatewayFailure(429, "gateway_busy", "LLM gateway concurrency limit reached.")
         try {
-            var lastFailure: GatewayFailure? = null
-            var tried = false
-            for (name in chain) {
-                val key = failureKey(name)
-                if (chain.size > 1 && !failures.shouldTry(key)) continue
-                tried = true
-                var emitted = false
-                var failed: GatewayFailure? = null
+            modelCascade(
+                targets = chain,
+                failures = failures,
+                failureKey = { failureKey(it) },
+                isProviderFailure = { it is GatewayFailure && it.retryable },
+                onFallback = { name, failure ->
+                    log.warn("LLM gateway model {} failed with status {}; trying fallback", name, (failure as GatewayFailure).status)
+                },
+            ) { name ->
                 attempt(name, body).catch { failure ->
-                    failed = asGatewayFailure(failure)
+                    val error = asGatewayFailure(failure)
                     log.warn("LLM gateway upstream failure for {}: {}", name, failure.javaClass.simpleName)
-                }.collect {
-                    emitted = true
-                    emit(it)
+                    throw error
                 }
-                failures.record(key, failed?.retryable == true)
-                if (failed == null) return@flow
-                if (emitted || !failed.retryable) throw failed
-                if (name != chain.last()) log.warn("LLM gateway model {} failed with status {}; trying fallback", name, failed.status)
-                lastFailure = failed
-            }
-            if (tried) throw requireNotNull(lastFailure)
-            // Keep a fully cooling-down chain usable, matching the backend's primary trial policy.
-            attempt(chain.first(), body).collect { emit(it) }
+            }.collect { emit(it) }
         } finally {
             permits.release()
         }

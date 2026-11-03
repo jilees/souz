@@ -5,7 +5,9 @@ import kotlin.math.min
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.single
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.Logger
@@ -79,21 +81,7 @@ internal class BackendExecutionLlmChatApi(
             is ChatRoute.Ready -> route
             is ChatRoute.Rejected -> return route.error
         }
-        val routes = chatRoutes(body, primary)
-        if (routes.size == 1) return chat(primary)
-        var lastFailure: LLMResponse.Chat.Error? = null
-        for (route in routes) {
-            val failureKey = route.target to userId.takeIf { usesUserKey(route) }
-            if (!failureMemory.shouldTry(failureKey)) continue
-            val response = chat(route)
-            val failed = response is LLMResponse.Chat.Error && response.isProviderFailure()
-            failureMemory.record(failureKey, failed)
-            if (!failed) return response
-            log.warn("Model {} failed with status {}; trying the next fallback model", route.request.model, response.status)
-            lastFailure = response
-        }
-        // Every model is cooling down: the requested one is still the best attempt.
-        return lastFailure ?: chat(primary)
+        return cascade(body, primary, streaming = false).single()
     }
 
     private suspend fun chat(route: ChatRoute.Ready): LLMResponse.Chat =
@@ -118,28 +106,28 @@ internal class BackendExecutionLlmChatApi(
             is ChatRoute.Ready -> route
             is ChatRoute.Rejected -> return flow { emit(route.error) }
         }
-        if (body.model !in llmConfig.cascades) return stream(primary)
-        return flow {
-            var lastFailure: LLMResponse.Chat.Error? = null
-            for (route in chatRoutes(body, primary)) {
-                val failureKey = route.target to userId.takeIf { usesUserKey(route) }
-                if (!failureMemory.shouldTry(failureKey)) continue
-                var emitted = false
-                var failure: LLMResponse.Chat.Error? = null
-                stream(route).takeWhile { response ->
-                    if (response is LLMResponse.Chat.Error && response.isProviderFailure()) {
-                        failure = response
-                        emitted
-                    } else true
-                }.collect { response -> emit(response); emitted = true }
-                failureMemory.record(failureKey, failure != null)
-                if (emitted || failure == null) return@flow
-                log.warn("Model {} failed with status {}; trying the next fallback model", route.request.model, failure.status)
-                lastFailure = failure
-            }
-            if (lastFailure != null) emit(lastFailure) else stream(primary).collect { emit(it) }
-        }
+        return cascade(body, primary, streaming = true)
     }
+
+    private fun cascade(body: LLMRequest.Chat, primary: ChatRoute.Ready, streaming: Boolean): Flow<LLMResponse.Chat> =
+        modelCascade(
+            targets = chatRoutes(body, primary),
+            failures = failureMemory,
+            failureKey = { route -> route.target to userId.takeIf { usesUserKey(route) } },
+            isProviderFailure = { it is NativeProviderFailure },
+            onFallback = { route, failure ->
+                log.warn("Model {} failed with status {}; trying the next fallback model", route.request.model,
+                    (failure as NativeProviderFailure).error.status)
+            },
+        ) { route ->
+            val source = if (streaming) stream(route) else flow { emit(chat(route)) }
+            source.map { response ->
+                if (response is LLMResponse.Chat.Error && response.isProviderFailure()) throw NativeProviderFailure(response)
+                response
+            }
+        }.catch { failure ->
+            if (failure is NativeProviderFailure) emit(failure.error) else throw failure
+        }
 
     private suspend fun stream(route: ChatRoute.Ready): Flow<LLMResponse.Chat> =
         retryingStream(route.provider, apiFor(route.provider, route.namedModel), route.request, route.modelName)
@@ -434,13 +422,12 @@ private sealed interface ChatRoute {
 }
 
 /** The provider failed rather than the request: no HTTP status, 5xx, rejected credentials, timeout or rate limit. */
-private fun LLMResponse.Chat.Error.isProviderFailure(): Boolean =
-    status !in 400..499 ||
-        status in 401..403 ||
-        status == 408 ||
-        status == 429 || ((status == 400 || status == 404) && runCatching {
-            ru.souz.llms.restJsonMapper.readTree(message)?.path("error")?.path("code")?.asText() == "model_not_found"
-        }.getOrDefault(false))
+private fun LLMResponse.Chat.Error.isProviderFailure(): Boolean = isModelProviderFailure(status,
+    if (status == 400 || status == 404) runCatching {
+        ru.souz.llms.restJsonMapper.readTree(message)?.path("error")?.path("code")?.asText()
+    }.getOrNull() else null)
+
+private class NativeProviderFailure(val error: LLMResponse.Chat.Error) : Exception("provider failure", null, false, false)
 
 private class RetryFirstStreamingError(val error: LLMResponse.Chat.Error) : Exception("retry", null, false, false)
 
