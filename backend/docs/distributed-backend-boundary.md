@@ -39,3 +39,4 @@ Run `./gradlew :backend:test` for changes to execution ownership or recovery. Co
 
 Backend settings accept the legacy `SOUZ_BACKEND_CODEX_*` environment names and their `souz.backend.codex.*` properties. Nonblank canonical `CODEX_*` settings take precedence. PostgreSQL credentials and rejection tombstones retain their existing precedence and token-replacement behavior; do not seed credentials by bypassing that logic.
 
+Region selection also accepts `SOUZ_BACKEND_REGION_PROFILE` and `souz.backend.regionProfile` when nonblank `APP_LANGUAGE` is absent. Secret decryption caches at most 128 key/ciphertext pairs at the synchronous JVM crypto boundary.

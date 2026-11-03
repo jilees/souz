@@ -140,6 +140,7 @@ class BackendSettingsProvider(
             CODEX_REFRESH_TOKEN -> read("SOUZ_BACKEND_CODEX_REFRESH_TOKEN", "souz.backend.codex.refreshToken")
             CODEX_ACCOUNT_ID -> read("SOUZ_BACKEND_CODEX_ACCOUNT_ID", "souz.backend.codex.accountId")
             CODEX_EXPIRES_AT -> read("SOUZ_BACKEND_CODEX_EXPIRES_AT", "souz.backend.codex.expiresAt")
+            APP_LANGUAGE -> read("SOUZ_BACKEND_REGION_PROFILE", "souz.backend.regionProfile")
             else -> null
         }
     }
