@@ -75,7 +75,7 @@ class BackendModelRoutingE2eTest {
             assertEquals("lite-model answer" to "route-lite", turn("Delegate a simple task"))
             verdict = { true }
             assertEquals("strong-model answer" to "route-strong", turn("Delegate a complex task"))
-            // The first configured model is the only accessible entry of the default-model order.
+            // The routed selection explicitly includes default-chat as its backup.
             assertEquals("default-model answer" to "route-strong", turn("Fail over"))
             verdict = { error("Jev unavailable") }
             assertEquals("default-model answer" to "default-chat", turn("Anything"))
@@ -147,8 +147,9 @@ class BackendModelRoutingE2eTest {
           "models": {
             "default-chat": {"connection":"router", "modelId":"default-model"},
             "route-lite": {"connection":"router", "modelId":"lite-model"},
-            "route-strong": {"connection":"router", "modelId":"strong-model"}
+            "strong-primary": {"connection":"router", "modelId":"strong-model"}
           },
+          "cascades": {"route-strong":["strong-primary","default-chat"]},
           "routing": {"simple": {"model":"route-lite"}, "complex": {"model":"route-strong"}}
         }"""
     }

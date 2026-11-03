@@ -116,7 +116,7 @@ class BackendExecutionLlmChatApiTest {
     }
 
     @Test
-    fun `unary chat falls back once per model on provider failures only`() = runTest {
+    fun `explicit cascade falls back once per model on provider failures only`() = runTest {
         val primary = LLMModel.OpenAIGpt52.alias
         val fallback = LLMModel.QwenMax.alias
         val switched = listOf(primary, fallback)
@@ -129,10 +129,10 @@ class BackendExecutionLlmChatApiTest {
             val failure = LLMResponse.Chat.Error(status, "down")
             facadeFixture(
                 retryPolicy = BackendProviderRetryPolicy(max429Retries = 1),
-                fallbackModels = listOf(primary, fallback),
+                llmConfig = NamedLlmConfig(cascades = mapOf("test-chain" to listOf(primary, fallback))),
                 providerApiOverride = { StubChatApi(message = { calls += it.model; if (it.model == primary) failure else ok(it.model) }) },
             ).use { fixture ->
-                assertEquals(if (attempts == kept) failure else ok(fallback), fixture.api.message(chat(primary)))
+                assertEquals(if (attempts == kept) failure else ok(fallback), fixture.api.message(chat("test-chain")))
                 assertEquals(attempts, calls, "status $status")
             }
         }
@@ -140,7 +140,7 @@ class BackendExecutionLlmChatApiTest {
         val calls = mutableListOf<String>()
         var cancel = false
         facadeFixture(
-            fallbackModels = listOf(fallback),
+            llmConfig = NamedLlmConfig(cascades = mapOf("test-chain" to listOf(primary, fallback))),
             providerApiOverride = {
                 StubChatApi(
                     message = { calls += it.model; if (cancel) throw CancellationException("stop") else LLMResponse.Chat.Error(500, it.model) },
@@ -148,20 +148,38 @@ class BackendExecutionLlmChatApiTest {
                 )
             },
         ).use { fixture ->
-            assertEquals(LLMResponse.Chat.Error(500, fallback), fixture.api.message(chat(primary)))
+            assertEquals(LLMResponse.Chat.Error(500, fallback), fixture.api.message(chat("test-chain")))
             assertEquals(listOf(LLMResponse.Chat.Error(500, primary)), fixture.api.messageStream(chat(primary)).toList())
             cancel = true
-            assertFailsWith<CancellationException> { fixture.api.message(chat(primary)) }
+            assertFailsWith<CancellationException> { fixture.api.message(chat("test-chain")) }
             assertEquals(listOf(primary, fallback, primary, primary), calls)
         }
 
         // Named connections with one endpoint and upstream ID still differ by key.
         val namedCalls = mutableListOf<String>()
         facadeFixture(
-            llmConfig = NamedLlmConfig(models = listOf("bad", "good").associateWith { NamedLlmModel("shared", "https://same.test/v1", "$it-key") }),
-            fallbackModels = listOf("good"),
+            llmConfig = NamedLlmConfig(models = listOf("bad", "good").associateWith { NamedLlmModel("shared", "https://same.test/v1", "$it-key") }, cascades = mapOf("test-chain" to listOf("bad", "good"))),
             providerApiOverride = { StubChatApi(message = { namedCalls += it.model; if (namedCalls.size == 1) LLMResponse.Chat.Error(500, "down") else ok(it.model) }) },
-        ).use { assertEquals(ok("shared"), it.api.message(chat("bad"))) }
+        ).use { assertEquals(ok("shared"), it.api.message(chat("test-chain"))) }
+    }
+
+    @Test
+    fun `direct models never use another model even when an explicit cascade exists`() = runTest {
+        for (provider in listOf(LlmProvider.OPENAI, LlmProvider.CODEX)) {
+            val calls = mutableListOf<String>()
+            val failure = LLMResponse.Chat.Error(500, "down")
+            val config = NamedLlmConfig(models = mapOf(
+                "direct" to NamedLlmModel("primary", provider = provider),
+                "backup" to NamedLlmModel("reserve", provider = LlmProvider.OPENAI),
+            ), cascades = mapOf("recovery" to listOf("direct", "backup")))
+            facadeFixture(llmConfig = config, providerApiOverride = {
+                StubChatApi(message = { calls += it.model; failure }, stream = { calls += it.model; flowOf(failure) })
+            }).use { fixture ->
+                assertEquals(failure, fixture.api.message(chat("direct")))
+                assertEquals(listOf(failure), fixture.api.messageStream(chat("direct")).toList())
+                assertEquals(listOf("primary", "primary"), calls)
+            }
+        }
     }
 
     @Test
@@ -175,7 +193,7 @@ class BackendExecutionLlmChatApiTest {
                     "gemini" to NamedLlmModel("gemini-flash", "https://cloud.test", "key"),
                     "next-codex" to NamedLlmModel("future-model-without-enum", provider = LlmProvider.CODEX),
                 ), cascades = mapOf("mixed" to targets))
-                facadeFixture(llmConfig = config, fallbackModels = listOf(LLMModel.CodexGpt54.alias), providerApiOverride = { provider ->
+                facadeFixture(llmConfig = config, providerApiOverride = { provider ->
                     fun result(body: LLMRequest.Chat): LLMResponse.Chat {
                         calls += provider to body.model
                         return when {
@@ -209,12 +227,12 @@ class BackendExecutionLlmChatApiTest {
             facadeFixture(
                 userId = userId,
                 credentialResolver = CountingCredentialResolver("key", source = source),
-                fallbackModels = listOf(fallback),
+                llmConfig = NamedLlmConfig(cascades = mapOf("test-chain" to listOf(primary, fallback))),
                 failureMemory = memory,
                 providerApiOverride = {
                     StubChatApi(message = { calls += it.model; if (primaryDown && it.model == primary) LLMResponse.Chat.Error(500, "down") else ok(it.model) })
                 },
-            ).use { it.api.message(chat(primary)) }
+            ).use { it.api.message(chat("test-chain")) }
             return calls
         }
         val both = listOf(primary, fallback)
@@ -807,7 +825,6 @@ private fun facadeFixture(
     client: HttpClient = HttpClient(MockEngine { respondOk() }) {
         providerHttpClientDefaults()
     },
-    fallbackModels: List<String> = emptyList(),
     failureMemory: ModelFailureMemory = ModelFailureMemory(),
 ): FacadeFixture {
     val clients = ProviderHttpClients(standard = client, openAi = client)
@@ -826,7 +843,6 @@ private fun facadeFixture(
         providerApiOverride = providerApiOverride,
         hookBudget = hookBudget,
         metrics = metrics,
-        fallbackModels = fallbackModels,
         failureMemory = failureMemory,
     )
     return FacadeFixture(api, credentialResolver, clients, metrics)

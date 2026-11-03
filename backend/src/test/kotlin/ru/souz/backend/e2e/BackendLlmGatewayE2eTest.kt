@@ -31,7 +31,7 @@ private const val GATEWAY_KEY = "gateway-test-key-0123456789abcdef0123456789"
 private const val COMPLETIONS = "/llm/v1/chat/completions"
 private const val MODEL_LIST = "/llm/v1/models"
 private val GATEWAY_ENV = mapOf("SOUZ_LLM_GATEWAY_API_KEY" to GATEWAY_KEY)
-private val CASCADE_CONFIG = NAMED_LLM_CONFIG.replace("\"connection\":\"experiment\"", "\"fallbacks\":[\"tv-agent\"],\"connection\":\"experiment\"")
+private val CASCADE_CONFIG = NAMED_LLM_CONFIG
     .replace("\"modelId\":\"shared-model\"", "\"modelId\":\"shared-model\",\"parameters\":{\"top_p\":0.8}")
     .replace("\"models\":", "\"cascades\":{\"fast\":[\"test-chat\",\"tv-agent\"]},\"models\":")
 
@@ -57,7 +57,7 @@ class BackendLlmGatewayE2eTest {
                 assertEquals(listOf("fast", "test-chat", "tv-agent"), client.get(MODEL_LIST) {
                     header("Authorization", "Bearer $GATEWAY_KEY")
                 }.jsonBody()["data"].map { it["id"].asText() })
-                val body = """{"model":"test-chat","messages":[{"role":"user","content":[{"type":"text","text":"Hi"}]}],"tools":[{"type":"function","function":{"name":"test","parameters":{"type":"object","properties":{"x":{"type":"array","items":{"type":"integer"}}}}}}],"response_format":{"type":"json_object"},"top_p":0.4}"""
+                val body = """{"model":"fast","messages":[{"role":"user","content":[{"type":"text","text":"Hi"}]}],"tools":[{"type":"function","function":{"name":"test","parameters":{"type":"object","properties":{"x":{"type":"array","items":{"type":"integer"}}}}}}],"response_format":{"type":"json_object"},"top_p":0.4}"""
                 repeat(4) {
                     val response = client.post(COMPLETIONS) { header("Authorization", "Bearer $GATEWAY_KEY"); jsonBody(body) }
                     assertEquals(HttpStatusCode.OK, response.status)
@@ -92,6 +92,13 @@ class BackendLlmGatewayE2eTest {
                         .takeIf { it.last()["content"].asText() == "OK" }
                 }
                 assertEquals("router.test", requests.last().first)
+                val beforeDirect = requests.size
+                assertEquals(HttpStatusCode.ServiceUnavailable, client.post(COMPLETIONS) {
+                    header("Authorization", "Bearer $GATEWAY_KEY")
+                    jsonBody("""{"model":"test-chat","messages":[{"role":"user","content":"Hi"}]}""")
+                }.status)
+                assertEquals(beforeDirect + 1, requests.size)
+                assertEquals("experiment.test", requests.last().first)
             }
         }
     }
@@ -141,7 +148,7 @@ class BackendLlmGatewayE2eTest {
             backendE2eTest("e2e_gateway_stream", settingsSource = source, providerClients = ProviderHttpClients(upstream, upstream)) {
                 suspend fun complete() = client.post(COMPLETIONS) {
                     header("Authorization", "Bearer $GATEWAY_KEY")
-                    jsonBody("""{"model":"test-chat","messages":[{"role":"user","content":"Hi"}],"stream":true}""")
+                    jsonBody("""{"model":"fast","messages":[{"role":"user","content":"Hi"}],"stream":true}""")
                 }
                 val result = complete()
                 assertEquals(HttpStatusCode.OK, result.status)

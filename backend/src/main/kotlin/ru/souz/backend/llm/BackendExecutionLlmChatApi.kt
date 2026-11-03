@@ -52,7 +52,6 @@ internal class BackendExecutionLlmChatApi(
     private val llmConfig: NamedLlmConfig = NamedLlmConfig(),
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
     private val codexEndpoints: CodexEndpoints = CodexEndpoints(),
-    private val fallbackModels: List<String> = emptyList(),
     private val failureMemory: ModelFailureMemory = ModelFailureMemory(),
 ) : LLMChatAPI {
     private val providerStateMutex = Mutex()
@@ -102,7 +101,7 @@ internal class BackendExecutionLlmChatApi(
             route.modelName) }
 
     private fun chatRoutes(body: LLMRequest.Chat, primary: ChatRoute.Ready): List<ChatRoute.Ready> {
-        val targets = llmConfig.cascades[body.model] ?: primary.namedModel?.fallbacks ?: fallbackModels
+        val targets = llmConfig.cascades[body.model] ?: return listOf(primary)
         val fallbacks = targets.map {
             chatRoute(body.copy(model = it, provider = findLLMModel(it)?.provider ?: LlmProvider.OPENAI))
         }.filterIsInstance<ChatRoute.Ready>()
@@ -119,7 +118,7 @@ internal class BackendExecutionLlmChatApi(
             is ChatRoute.Ready -> route
             is ChatRoute.Rejected -> return flow { emit(route.error) }
         }
-        if (body.model !in llmConfig.cascades && primary.namedModel?.fallbacks == null) return stream(primary)
+        if (body.model !in llmConfig.cascades) return stream(primary)
         return flow {
             var lastFailure: LLMResponse.Chat.Error? = null
             for (route in chatRoutes(body, primary)) {

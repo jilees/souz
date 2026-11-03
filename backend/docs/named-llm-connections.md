@@ -2,7 +2,7 @@
 
 Set `SOUZ_LLM_CONFIG_FILE` to a JSON file readable by the backend, and supply the referenced API keys through server environment variables. Configuration is loaded once at startup; restart after edits.
 
-The optional [LLM gateway](llm-gateway.md) exposes these models and server-managed Codex through OpenAI-compatible routes. Its top-level `cascades` map defines ordered virtual model names; a named model's optional `fallbacks` array supplies an explicit backup list for that selection.
+The optional [LLM gateway](llm-gateway.md) exposes these models and server-managed Codex through OpenAI-compatible routes. Its top-level `cascades` map is the sole configuration for ordered failover. Ordinary models select one upstream; models have no fallback lists, and cascades contain only model names.
 
 Register a Codex model with `{"provider":"codex","modelId":"<upstream-id>"}` in `models`. IDs are forwarded exactly and need no enum entry. The server OAuth session supplies credentials; `connection` and OpenAI `parameters` are not accepted for Codex registrations. `reasoningEfforts` accepts their configured names. Named Codex models work in agent and subagent selections, complexity routing, image generation, and cascades.
 

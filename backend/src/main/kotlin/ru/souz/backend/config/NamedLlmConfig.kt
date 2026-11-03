@@ -20,7 +20,6 @@ class NamedLlmModel(
     val baseUrl: String? = null,
     val apiKey: String? = null,
     val parameters: String? = null,
-    val fallbacks: List<String>? = null,
     val provider: LlmProvider = LlmProvider.OPENAI,
     val timeoutMillis: Long? = null,
 )
@@ -65,7 +64,7 @@ internal fun BackendConfigSource.loadNamedModels(): NamedLlmConfig {
     }
     val models = root.entries("models").mapValues { (name, node) ->
         require(resolveChatModel(name) is ModelResolution.Unknown) { "Model name $name conflicts with a built-in model." }
-        node.fieldsOnly("connection", "modelId", "parameters", "fallbacks", "provider", "timeoutMs")
+        node.fieldsOnly("connection", "modelId", "parameters", "provider", "timeoutMs")
         require(name != value("OPENAI_MODEL", "OPENAI_MODEL")?.trim()) { "OPENAI_MODEL must not overlap named model selections." }
         val provider = when (node.get("provider")?.let { node.text("provider") }) {
             null, "openai" -> LlmProvider.OPENAI
@@ -83,25 +82,13 @@ internal fun BackendConfigSource.loadNamedModels(): NamedLlmConfig {
                 "Model parameters must be an object without request structure or token-limit overrides."
             }
         }?.toString()
-        val fallbacks = node["fallbacks"]?.let { targets ->
-            require(targets.isArray && targets.all { it.isTextual && it.textValue().isNotBlank() &&
-                it.textValue() == it.textValue().trim() }) { "Model fallbacks must be an array of trimmed model names." }
-            targets.map { it.textValue() }.also {
-                require(it.distinct().size == it.size && name !in it) { "Model fallbacks must be distinct and exclude the primary." }
-            }
-        }
         val timeout = node.get("timeoutMs")?.let {
             require(it.isIntegralNumber && it.canConvertToLong() && it.asLong() in 1..300_000L) {
                 "Model timeoutMs must be an integer between 1 and 300000."
             }
             it.asLong()
         }
-        NamedLlmModel(node.text("modelId"), connection?.first, connection?.second, parameters, fallbacks, provider, timeout)
-    }
-    models.values.forEach { model ->
-        require(model.fallbacks.orEmpty().all { it in models || findLLMModel(it)?.provider == LlmProvider.CODEX }) {
-            "Model fallbacks must reference configured models or built-in Codex models."
-        }
+        NamedLlmModel(node.text("modelId"), connection?.first, connection?.second, parameters, provider, timeout)
     }
     val cascades = root.entries("cascades").mapValues { (name, targets) ->
         require(name !in models && resolveChatModel(name) is ModelResolution.Unknown) { "Cascade name conflicts with a model." }

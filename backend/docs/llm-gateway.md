@@ -37,7 +37,7 @@ The optional top-level `cascades` map registers virtual model names shared by th
 
 Each target must be a configured named model or a built-in Codex selector. Arrays are nonempty, ordered and distinct. Cascade names cannot collide with models; cascades cannot reference other cascades. The client sends `"model":"fast"` and receives the actual provider model ID in the response. The same aliases are selectable in the agent's settings, request overrides, subagent selections and complexity-routing targets. Ordinary and streaming agent chat calls follow the same explicit order, including Codex in any position. Dedicated summarization retains its separately configured connection.
 
-A named model can also declare `"fallbacks":["backup-model"]` in its own model definition. This applies when calling that named model directly, and replaces the agent's regional fallback list for ordinary non-streaming calls. `[]` disables that list; omission retains the agent's existing regional policy. Gateway calls without an explicit chain use only the selected model. Chains are flat: a target's own fallback list is not expanded.
+Ordinary model names address one upstream model. Only the top-level `cascades` map enables failover; model definitions cannot declare fallback lists. A cascade contains model names only and cannot contain another cascade. Native chat and gateway calls follow this same rule.
 
 A model may set `"timeoutMs":3000` (integer 1–300000) to override the per-attempt request timeout in both native chat and the gateway. Give a latency-sensitive client enough total time for the primary timeout plus the fallback response; a caller that cancels first cannot receive failover.
 

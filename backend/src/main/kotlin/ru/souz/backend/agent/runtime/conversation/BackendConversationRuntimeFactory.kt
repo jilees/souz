@@ -162,7 +162,6 @@ internal class BackendConversationRuntimeFactory(
             hookBudget = hookBudget,
             metrics = metrics,
             attachmentInput = attachmentInput,
-            fallbackModels = effectiveSettingsResolver.fallbackModels(key.userId, Locale.forLanguageTag(request.locale)),
             failureMemory = modelFailures,
         )
         val visionGateway = LLMCapabilityResolver(

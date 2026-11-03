@@ -58,7 +58,7 @@ internal class LlmGateway(
         validateGatewayRequest(body)
         val selection = body.path("model").asText()
         requireModel(selection)
-        val chain = (models.cascades[selection] ?: (listOf(selection) + models.models[selection]?.fallbacks.orEmpty())).distinctBy(::failureKey)
+        val chain = (models.cascades[selection] ?: listOf(selection)).distinctBy(::failureKey)
         if (!permits.tryAcquire()) throw GatewayFailure(429, "gateway_busy", "LLM gateway concurrency limit reached.")
         try {
             var lastFailure: GatewayFailure? = null
@@ -79,7 +79,7 @@ internal class LlmGateway(
                 failures.record(key, failed?.retryable == true)
                 if (failed == null) return@flow
                 if (emitted || !failed.retryable) throw failed
-                log.warn("LLM gateway model {} failed with status {}; trying fallback", name, failed.status)
+                if (name != chain.last()) log.warn("LLM gateway model {} failed with status {}; trying fallback", name, failed.status)
                 lastFailure = failed
             }
             if (tried) throw requireNotNull(lastFailure)

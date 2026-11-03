@@ -20,6 +20,16 @@ import ru.souz.db.SUBAGENT_MODELS_JSON
 
 class BackendSettingsProviderTest {
     @Test
+    fun `model definitions reject fallback lists so failover has one configuration source`() {
+        for (value in listOf("[]", "[\"tv-agent\"]")) {
+            val config = NAMED_LLM_CONFIG.replace("\"connection\":\"experiment\"", "\"fallbacks\":$value,\"connection\":\"experiment\"")
+            withNamedLlmConfig(config) { source ->
+                assertFailsWith<IllegalArgumentException> { source.loadNamedModels() }
+            }
+        }
+    }
+
+    @Test
     fun `model request timeout accepts bounded integers and rejects ambiguous values`() {
         fun config(value: String) = NAMED_LLM_CONFIG.replace("\"connection\":\"experiment\"", "\"timeoutMs\":$value,\"connection\":\"experiment\"")
         withNamedLlmConfig(config("3000")) { source ->
