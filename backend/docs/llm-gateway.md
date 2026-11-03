@@ -39,6 +39,8 @@ Each target must be a configured named model or a built-in Codex selector. Array
 
 A named model can also declare `"fallbacks":["backup-model"]` in its own model definition. This applies when calling that named model directly, and replaces the agent's regional fallback list for ordinary non-streaming calls. `[]` disables that list; omission retains the agent's existing regional policy. Gateway calls without an explicit chain use only the selected model. Chains are flat: a target's own fallback list is not expanded.
 
+A model may set `"timeoutMs":3000` (integer 1–300000) to override the per-attempt request timeout in both native chat and the gateway. Give a latency-sensitive client enough total time for the primary timeout plus the fallback response; a caller that cancels first cannot receive failover.
+
 Connection errors, provider timeouts, `5xx`, `401–403`, `408`, `429` and explicit upstream `model_not_found` errors advance the chain. Other request errors, including generic `400`, are returned without failover. The gateway tries each candidate once per request. After three consecutive provider failures, it skips that model for five minutes before allowing one trial. If every candidate is cooling down, it tries the first one. This state is process-local and shared across gateway callers. Each candidate uses its own credentials, model ID and model-specific default parameters.
 
 ## Wire behavior

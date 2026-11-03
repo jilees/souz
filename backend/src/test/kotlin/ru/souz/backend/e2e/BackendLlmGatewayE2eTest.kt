@@ -97,6 +97,36 @@ class BackendLlmGatewayE2eTest {
     }
 
     @Test
+    fun `primary timeout allows gateway and native agent to use the configured fallback`() {
+        val calls = CopyOnWriteArrayList<String>()
+        val upstream = HttpClient(MockEngine { request ->
+            calls += request.url.host
+            if (request.url.host == "experiment.test") kotlinx.coroutines.delay(60_000)
+            respond("""{"model":"shared-model","choices":[{"message":{"role":"assistant","content":"Timeout fallback"},"finish_reason":"stop"}]}""",
+                headers = headersOf("Content-Type", "application/json"))
+        }) { providerHttpClientDefaults() }
+        val config = CASCADE_CONFIG.replace("\"connection\":\"experiment\"", "\"timeoutMs\":100,\"connection\":\"experiment\"")
+        withNamedLlmConfig(config, GATEWAY_ENV) { source ->
+            backendE2eTest("e2e_gateway_timeout", settingsSource = source, providerClients = ProviderHttpClients(upstream, upstream)) {
+                assertEquals(HttpStatusCode.OK, client.post(COMPLETIONS) {
+                    header("Authorization", "Bearer $GATEWAY_KEY")
+                    jsonBody("""{"model":"fast","messages":[{"role":"user","content":"Hi"}]}""")
+                }.status)
+                val userId = UUID.randomUUID().toString()
+                val chatId = createPublicChat(userId)
+                assertEquals(HttpStatusCode.OK, client.post(BackendHttpRoutes.chatMessages(chatId)) {
+                    trusted(userId); jsonBody("""{"content":"Hi","options":{"model":"fast"}}""")
+                }.status)
+                eventually("native fallback after primary timeout") {
+                    client.get(BackendHttpRoutes.chatMessages(chatId)) { trusted(userId) }.jsonBody()["items"]
+                        .takeIf { it.last()["content"].asText() == "Timeout fallback" }
+                }
+                assertEquals(listOf("experiment.test", "router.test", "experiment.test", "router.test"), calls.toList())
+            }
+        }
+    }
+
+    @Test
     fun `gateway stream fails over before output and never replays a partial response`() {
         val calls = CopyOnWriteArrayList<String>()
         var partial = false

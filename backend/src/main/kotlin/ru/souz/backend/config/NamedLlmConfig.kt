@@ -22,6 +22,7 @@ class NamedLlmModel(
     val parameters: String? = null,
     val fallbacks: List<String>? = null,
     val provider: LlmProvider = LlmProvider.OPENAI,
+    val timeoutMillis: Long? = null,
 )
 
 class NamedLlmConfig(
@@ -64,7 +65,7 @@ internal fun BackendConfigSource.loadNamedModels(): NamedLlmConfig {
     }
     val models = root.entries("models").mapValues { (name, node) ->
         require(resolveChatModel(name) is ModelResolution.Unknown) { "Model name $name conflicts with a built-in model." }
-        node.fieldsOnly("connection", "modelId", "parameters", "fallbacks", "provider")
+        node.fieldsOnly("connection", "modelId", "parameters", "fallbacks", "provider", "timeoutMs")
         require(name != value("OPENAI_MODEL", "OPENAI_MODEL")?.trim()) { "OPENAI_MODEL must not overlap named model selections." }
         val provider = when (node.get("provider")?.let { node.text("provider") }) {
             null, "openai" -> LlmProvider.OPENAI
@@ -89,7 +90,13 @@ internal fun BackendConfigSource.loadNamedModels(): NamedLlmConfig {
                 require(it.distinct().size == it.size && name !in it) { "Model fallbacks must be distinct and exclude the primary." }
             }
         }
-        NamedLlmModel(node.text("modelId"), connection?.first, connection?.second, parameters, fallbacks, provider)
+        val timeout = node.get("timeoutMs")?.let {
+            require(it.isIntegralNumber && it.canConvertToLong() && it.asLong() in 1..300_000L) {
+                "Model timeoutMs must be an integer between 1 and 300000."
+            }
+            it.asLong()
+        }
+        NamedLlmModel(node.text("modelId"), connection?.first, connection?.second, parameters, fallbacks, provider, timeout)
     }
     models.values.forEach { model ->
         require(model.fallbacks.orEmpty().all { it in models || findLLMModel(it)?.provider == LlmProvider.CODEX }) {

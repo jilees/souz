@@ -115,7 +115,7 @@ internal class LlmGateway(
         var outcome = "error"
         try {
             val source = if (provider == LlmProvider.OPENAI) compatible(requireNotNull(named), request) else {
-                codex.completion(request, upstream, models.reasoningEfforts[name] ?: models.reasoningEfforts[upstream], config.timeoutMillis) {
+                codex.completion(request, upstream, models.reasoningEfforts[name] ?: models.reasoningEfforts[upstream], named?.timeoutMillis ?: config.timeoutMillis) {
                     metrics.llmUsage(provider, upstream, it)
                 }
             }
@@ -137,7 +137,7 @@ internal class LlmGateway(
         body.setAll<ObjectNode>(input)
         body.put("model", model.modelId)
         clients.openAi.preparePost(requireNotNull(model.baseUrl).trimEnd('/') + "/chat/completions") {
-            timeout { requestTimeoutMillis = config.timeoutMillis }
+            timeout { requestTimeoutMillis = model.timeoutMillis ?: config.timeoutMillis }
             contentType(ContentType.Application.Json)
             header(HttpHeaders.Authorization, "Bearer ${model.apiKey}")
             setBody(body.toString())

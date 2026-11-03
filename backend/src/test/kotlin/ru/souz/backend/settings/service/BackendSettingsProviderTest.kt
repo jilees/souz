@@ -20,6 +20,19 @@ import ru.souz.db.SUBAGENT_MODELS_JSON
 
 class BackendSettingsProviderTest {
     @Test
+    fun `model request timeout accepts bounded integers and rejects ambiguous values`() {
+        fun config(value: String) = NAMED_LLM_CONFIG.replace("\"connection\":\"experiment\"", "\"timeoutMs\":$value,\"connection\":\"experiment\"")
+        withNamedLlmConfig(config("3000")) { source ->
+            assertEquals(3000L, source.loadNamedModels().models.getValue("test-chat").timeoutMillis)
+        }
+        for (value in listOf("0", "-1", "300001", "1.5", "\"3000\"", "null", "9223372036854775808")) {
+            withNamedLlmConfig(config(value)) { source ->
+                assertFailsWith<IllegalArgumentException> { source.loadNamedModels() }
+            }
+        }
+    }
+
+    @Test
     fun `region compatibility honors nonblank canonical values before legacy deployment settings`() {
         assertEquals("en", provider(env = mapOf("SOUZ_BACKEND_REGION_PROFILE" to " en ")).regionProfile)
         assertEquals("en", provider(properties = mapOf("souz.backend.regionProfile" to "en")).regionProfile)

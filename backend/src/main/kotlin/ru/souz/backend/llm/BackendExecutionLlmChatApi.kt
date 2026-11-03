@@ -233,13 +233,18 @@ internal class BackendExecutionLlmChatApi(
         return providerStateMutex.withLock {
             val cacheKey = provider to namedModel
             providerApis[cacheKey]?.let { return@withLock it }
+            val requestSettings = namedModel?.timeoutMillis?.let { timeout ->
+                object : SettingsProvider by settingsProvider {
+                    override var requestTimeoutMillis: Long = timeout
+                }
+            } ?: settingsProvider
             val api = providerApiOverride?.invoke(provider) ?: when (provider) {
                 LlmProvider.OPENAI,
                 LlmProvider.AI_TUNNEL,
                 LlmProvider.QWEN,
                 -> OpenAICompatibleChatAPI(
                     provider = provider,
-                    settingsProvider = settingsProvider,
+                    settingsProvider = requestSettings,
                     client = when (provider) {
                         LlmProvider.OPENAI -> httpClients.openAi
                         else -> httpClients.standard
@@ -249,12 +254,12 @@ internal class BackendExecutionLlmChatApi(
                     requestParameters = namedModel?.parameters,
                 )
                 LlmProvider.ANTHROPIC -> AnthropicChatAPI(
-                    settingsProvider,
+                    requestSettings,
                     httpClients.standard,
                     apiKey = resolveCredentialLocked(provider).apiKey,
                 )
                 LlmProvider.CODEX -> CodexChatAPI(
-                    settingsProvider,
+                    requestSettings,
                     codexOAuthService,
                     httpClients.standard,
                     codexEndpoints,
