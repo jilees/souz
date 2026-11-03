@@ -2,6 +2,10 @@
 
 Set `SOUZ_LLM_CONFIG_FILE` to a JSON file readable by the backend, and supply the referenced API keys through server environment variables. Configuration is loaded once at startup; restart after edits.
 
+The top-level `cascades` map is the sole configuration for ordered failover. Ordinary models select one upstream; models have no fallback lists, and cascades contain only model names.
+
+Register a Codex model with `{"provider":"codex","modelId":"<upstream-id>"}` in `models`. IDs are forwarded exactly and need no enum entry. The server OAuth session supplies credentials; `connection` and OpenAI `parameters` are not accepted for Codex registrations. `reasoningEfforts` accepts their configured names. Named Codex models work in agent and subagent selections, complexity routing, image generation, and cascades.
+
 ```json
 {
   "openaiConnections": {
@@ -15,6 +19,7 @@ Set `SOUZ_LLM_CONFIG_FILE` to a JSON file readable by the backend, and supply th
   "reasoningEfforts": {"gpt-5-mini": "low"},
   "subagentModels": ["tv-agent"],
   "summarization": {"model": "tv-agent"},
+  "cascades": {"fast": ["test-chat", "tv-agent"]},
   "routing": {
     "simple": {"model": "test-chat"},
     "complex": {"model": "tv-agent"}
@@ -45,3 +50,5 @@ Backend settings and execution records carry public model names as strings; the 
 `routing` is optional and enables complexity-aware execution routing; it requires `JEV_TOKEN`, otherwise startup fails. Each target names a configured or built-in model other than `openai-compatible-custom`. Both targets must support `CONTEXT_SIZE`: a 32k/128k pair needs a common value such as `32000`. A new turn is routed only when it runs on the server default model: no model in the request and no different `defaultModel` in the user's settings, and both targets selectable for the user. Jev decides whether the turn is simple or complex; the agent's sequence is described in [model routing](../../agent/docs/execution-lifecycle.md#model-routing). The chosen model replaces the execution's model when the turn commits, so an option continuation resumes on it. `execution.started` still reports the model the turn started with.
 
 Verify with `./gradlew :backend:test`. Existing configuration, request-routing and backend E2E tests cover malformed configuration, identical upstream IDs, independent keys/endpoints, streaming, user selections and child calls.
+
+A named model can set `timeoutMs` (integer 1–300000) to bound each provider request independently of the server default, including native calls and cascades.

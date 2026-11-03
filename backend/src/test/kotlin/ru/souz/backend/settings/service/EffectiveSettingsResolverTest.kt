@@ -19,6 +19,7 @@ import ru.souz.llms.LLMModel
 import ru.souz.llms.LLMModel.AiTunnelClaudeHaiku
 import ru.souz.llms.LLMModel.AnthropicHaiku45
 import ru.souz.llms.LLMModel.CodexGpt54
+import ru.souz.llms.LLMModel.CodexGpt61Sol
 import ru.souz.llms.LLMModel.OpenAICompatibleCustom
 import ru.souz.llms.LLMModel.OpenAIGpt5Mini
 import ru.souz.llms.LLMModel.QwenMax
@@ -45,7 +46,8 @@ class EffectiveSettingsResolverTest {
             Case(CodexGpt54.alias, selected = CodexGpt54.alias, listings = 0, region = "en", customOpenAi = true, codex = true),
             Case(LLMModel.Max.alias, selected = LLMModel.Max.alias, listings = 0),
             Case(OpenAIGpt5Mini.alias, selected = OpenAICompatibleCustom.alias, listings = 1, region = "en", customOpenAi = true, keys = setOf(OPENAI)),
-            Case(QwenMax.alias, selected = CodexGpt54.alias, listings = 1, region = "en", customOpenAi = true),
+            Case(QwenMax.alias, selected = CodexGpt61Sol.alias, listings = 1, region = "en", customOpenAi = true),
+            Case(null, selected = CodexGpt61Sol.alias, listings = 0, region = "en", codex = true),
             Case(QwenMax.alias, selected = AiTunnelClaudeHaiku.alias, listings = 1, keys = setOf(AI_TUNNEL, ANTHROPIC)),
             Case(QwenMax.alias, selected = AnthropicHaiku45.alias, listings = 1, region = "en", keys = setOf(AI_TUNNEL, ANTHROPIC)),
             Case(OpenAICompatibleCustom.alias, selected = QwenMax.alias, listings = 1, region = "en", customOpenAi = true, keys = setOf(QWEN)),
@@ -53,7 +55,7 @@ class EffectiveSettingsResolverTest {
             Case(null, selected = OpenAICompatibleCustom.alias, listings = 1, region = "en", customOpenAi = true, keys = setOf(OPENAI)),
             Case(
                 null, selected = OpenAICompatibleCustom.alias, listings = 1, region = "en", customOpenAi = true,
-                keys = setOf(OPENAI, ANTHROPIC), named = true, fallbacks = listOf("custom-model", AnthropicHaiku45.alias, named),
+                keys = setOf(OPENAI, ANTHROPIC), named = true,
             ),
             Case(QwenMax.alias, selected = QwenMax.alias, listings = 0, supplied = setOf(QWEN)),
             Case(AiTunnelClaudeHaiku.alias, selected = QwenMax.alias, listings = 0, keys = setOf(AI_TUNNEL), supplied = emptySet()),
@@ -112,11 +114,11 @@ class EffectiveSettingsResolverTest {
         )
         val resolved = resolver.resolve(USER, UserSettingsOverrides(defaultModel = case.requestModel), userManagedProviders = case.supplied)
         val selection = case.copy(selected = resolved.defaultModel, saved = saved, listings = listings)
-        return selection.copy(fallbacks = if (case.fallbacks == null) null else resolver.fallbackModels(USER, Locale.forLanguageTag(case.region)))
+        return selection
     }
 }
 
-/** Resolution inputs with the expected selected model, new-user saved default, stored key listings and fallback chain. */
+/** Resolution inputs with the expected selected model, new-user saved default, stored key listings. */
 private data class Case(
     val model: String?,
     val requestModel: String? = null,
@@ -132,7 +134,6 @@ private data class Case(
     val newUser: Boolean = false,
     val named: Boolean = false,
     val serverDefault: LLMModel = LLMModel.Max,
-    val fallbacks: List<String>? = null,
 )
 
 private const val USER = "user-1"

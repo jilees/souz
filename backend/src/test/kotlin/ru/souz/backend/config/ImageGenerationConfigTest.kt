@@ -18,6 +18,9 @@ class ImageGenerationConfigTest {
         val resolved = resolveImageModel("illustrator", mapOf("illustrator" to connection))
         assertEquals(connection, resolved.connection)
         assertEquals("custom-image", resolved.modelId)
+        val codex = resolveImageModel("new-codex", mapOf("new-codex" to NamedLlmModel("future-model-without-enum", provider = LlmProvider.CODEX)))
+        assertEquals(LlmProvider.CODEX, codex.provider)
+        assertEquals("future-model-without-enum", codex.modelId)
         assertFailsWith<IllegalStateException> { resolveImageModel("unknown-model", emptyMap()) }
     }
 

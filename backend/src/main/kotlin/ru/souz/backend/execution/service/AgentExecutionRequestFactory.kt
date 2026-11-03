@@ -41,6 +41,7 @@ internal class AgentExecutionRequestFactory(
     private val effectiveSettingsResolver: EffectiveSettingsResolver,
     private val clientThreadRegistry: ClientThreadRuntimeRegistry? = null,
     private val modelRouting: ModelRouting? = null,
+    private val llmConfig: ru.souz.backend.config.NamedLlmConfig = ru.souz.backend.config.NamedLlmConfig(),
 ) {
     suspend fun prepareChatTurn(
         userId: String,
@@ -55,7 +56,7 @@ internal class AgentExecutionRequestFactory(
         attachments: List<FileContent> = emptyList(),
     ): PreparedChatTurn {
         val effectiveSettings = effectiveSettingsResolver.resolve(userId, requestOverrides)
-        val provider = findLLMModel(effectiveSettings.defaultModel)?.provider ?: LlmProvider.OPENAI
+        val provider = llmConfig.providerForSelection(effectiveSettings.defaultModel)
         if (provider !in BackendLlmSupport.chatProviders) {
             throw unsupportedBackendModel()
         }

@@ -1,16 +1,8 @@
 package ru.souz.llms.codex
 
 import io.ktor.client.HttpClient
-import io.ktor.client.plugins.timeout
-import io.ktor.client.request.header
-import io.ktor.client.request.preparePost
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsChannel
-import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
-import io.ktor.http.contentType
-import io.ktor.utils.io.readUTF8Line
 import java.util.Base64
+import kotlinx.coroutines.flow.collect
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.restJsonMapper
 import ru.souz.llms.runtime.GeneratedImage
@@ -23,12 +15,12 @@ class CodexImageGenerationGateway(
     private val oauth: CodexOAuthService,
     private val client: HttpClient,
     private val maxImageBytes: Int = 20_000_000,
+    private val endpoints: CodexEndpoints = CodexEndpoints(),
 ) : ImageGenerationGateway {
     override suspend fun generate(input: ImageGenerationInput): GeneratedImage {
         require(input.prompt.isNotBlank() && input.prompt.length <= 32_000)
         require(input.outputFormat == null || input.outputFormat == "png")
         require(maxImageBytes in 1..100_000_000)
-        val token = oauth.refreshTokenIfNeeded()
         val tool = buildMap<String, Any> {
             put("type", "image_generation")
             put("output_format", "png")
@@ -48,34 +40,15 @@ class CodexImageGenerationGateway(
             "store" to false,
             "stream" to true,
         )
-        return client.preparePost("https://chatgpt.com/backend-api/codex/responses") {
-            timeout { requestTimeoutMillis = 180_000 }
-            contentType(ContentType.Application.Json)
-            header(HttpHeaders.Authorization, "Bearer $token")
-            header("Chatgpt-Account-Id", settings.codexAccountId.orEmpty())
-            header("originator", "codex_cli_rs")
-            header("OpenAI-Beta", "responses=experimental")
-            setBody(restJsonMapper.writeValueAsBytes(body))
-        }.execute { response ->
-            check(response.status.value in 200..299) { "codex_image_http_${response.status.value}" }
-            val channel = response.bodyAsChannel()
-            val encodedLimit = ((maxImageBytes.toLong() + 2) / 3 * 4).toInt()
-            var remaining = encodedLimit.toLong() * 2 + 1_000_000
-            var event: String? = null
-            var image: ByteArray? = null
-            var generator: String? = null
-            var completed = false
-            while (!channel.isClosedForRead) {
-                val line = channel.readUTF8Line(max = encodedLimit + 65_536) ?: break
-                remaining -= line.length + 1
-                check(remaining >= 0) { "codex_image_response_too_large" }
-                if (line.startsWith("event: ")) event = line.removePrefix("event: ").trim()
-                if (!line.startsWith("data: ")) continue
-                val data = line.removePrefix("data: ").trim()
-                if (data == "[DONE]") break
-                val node = restJsonMapper.readTree(data)
-                when (event ?: node["type"]?.asText()) {
-                    "error", "response.failed", "response.incomplete" -> error("codex_image_generation_failed")
+        val encodedLimit = ((maxImageBytes.toLong() + 2) / 3 * 4).toInt()
+        var image: ByteArray? = null
+        var generator: String? = null
+        val transport = CodexResponsesTransport(client, settings, oauth, endpoints)
+        try {
+            transport.events(restJsonMapper.valueToTree(body), timeoutMillis = 180_000,
+                maxFrameChars = encodedLimit + 65_536, maxResponseChars = encodedLimit.toLong() * 2 + 1_000_000,
+            ).collect { node ->
+                when (node["type"]?.asText()) {
                     "response.created" -> generator = node["response"]?.get("tools")
                         ?.firstOrNull { it["type"]?.asText() == "image_generation" }?.get("model")?.asText()
                     "response.output_item.done" -> {
@@ -90,17 +63,12 @@ class CodexImageGenerationGateway(
                                 image.copyOfRange(0, 8).contentEquals(PNG_SIGNATURE)) { "codex_image_invalid_png" }
                         }
                     }
-                    "response.completed" -> {
-                        check(node["response"]?.get("status")?.asText() == "completed") { "codex_image_generation_failed" }
-                        completed = true
-                    }
                 }
-                event = null
-                if (completed) break
             }
-            check(completed) { "codex_image_incomplete_stream" }
-            GeneratedImage(checkNotNull(image) { "codex_image_missing_result" }, "image/png", "CODEX", generator)
+        } catch (failure: CodexFailure) {
+            throw IllegalStateException(if (failure.code == "codex_http_error") "codex_image_http_${failure.status}" else "codex_image_generation_failed")
         }
+        return GeneratedImage(image ?: error("codex_image_missing_result"), "image/png", "CODEX", generator)
     }
 
     private companion object {

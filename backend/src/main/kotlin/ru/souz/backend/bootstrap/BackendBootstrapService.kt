@@ -20,6 +20,7 @@ class BackendBootstrapService(
     toolCatalog: AgentToolCatalog,
     private val featureFlags: BackendFeatureFlags,
     private val userProviderKeyRepository: UserProviderKeyRepository,
+    private val llmConfig: ru.souz.backend.config.NamedLlmConfig = ru.souz.backend.config.NamedLlmConfig(),
 ) {
     private val advertisedToolNames: Set<String> =
         BackendToolCapabilityPolicy.advertisedToolNames(toolCatalog)
@@ -58,7 +59,7 @@ class BackendBootstrapService(
                         model.provider in capabilityProviders
                     }
                     .map { modelCapability(it, userManagedProviders) } + effectiveSettingsResolver.namedModelNames.map {
-                        BootstrapModelCapability(provider = "openai", model = it, serverManagedKey = true, userManagedKey = false)
+                        BootstrapModelCapability(provider = llmConfig.providerForSelection(it).name.lowercase(), model = it, serverManagedKey = true, userManagedKey = false)
                     },
                 tools = advertisedToolNames.map { toolName ->
                     BootstrapToolCapability(name = toolName, enabled = true)

@@ -162,15 +162,6 @@ class EffectiveSettingsResolver(
             ?: fallbackModel(locale, userManagedProviders)
     }
 
-    /** Models the user can access, in the default-model order; executions fall back along this list. */
-    suspend fun fallbackModels(userId: String, locale: Locale): List<String> {
-        val providers = loadUserManagedProviders(userId)
-        // Upstream IDs: inside an execution on a named model, the custom selector would resolve to that named model.
-        return defaultModelOrder(locale).filter { isSelectableModel(it) { providers } }
-            .map { baseSettingsProvider.executionModelId(it.withConfiguredOpenAiCompatibleChatModel()) }
-            .distinct() + listOfNotNull(namedModelNames.firstOrNull())
-    }
-
     private suspend fun fallbackModel(
         locale: Locale,
         userManagedProviders: suspend () -> Set<LlmProvider>,

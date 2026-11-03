@@ -31,8 +31,8 @@ class BackendSettingsProvider(
         source.value(SUBAGENT_MODELS_JSON, SUBAGENT_MODELS_JSON),
         BackendLlmSupport.chatProviders,
     ).also { legacy ->
-        require(legacy.keys.intersect(namedModels.models.keys).isEmpty()) { "SUBAGENT_MODELS_JSON IDs must not overlap named model selections." }
-    } + namedModels.subagentModels.associateWith { LlmProvider.OPENAI }
+        require(legacy.keys.intersect(namedModels.selectionNames).isEmpty()) { "SUBAGENT_MODELS_JSON IDs must not overlap named model selections." }
+    } + namedModels.subagentModels.associateWith(namedModels::providerForSelection)
 
     private val promptOverrides = mutableMapOf<Pair<AgentId, LLMModel>, String>()
     private val llmBuildProfile by lazy { LlmBuildProfile(this) }
@@ -133,10 +133,16 @@ class BackendSettingsProvider(
         LlmProvider.CODEX -> !codexAccessToken.isNullOrBlank()
     }
 
-    private fun configured(envKey: String, propertyKey: String = envKey): String? =
-        source.value(envKey = envKey, propertyKey = propertyKey)
-            ?.trim()
-            ?.takeIf(String::isNotEmpty)
+    private fun configured(envKey: String, propertyKey: String = envKey): String? {
+        fun read(env: String, property: String): String? = source.value(env, property)?.trim()?.takeIf(String::isNotEmpty)
+        return read(envKey, propertyKey) ?: when (envKey) {
+            CODEX_ACCESS_TOKEN -> read("SOUZ_BACKEND_CODEX_ACCESS_TOKEN", "souz.backend.codex.accessToken")
+            CODEX_REFRESH_TOKEN -> read("SOUZ_BACKEND_CODEX_REFRESH_TOKEN", "souz.backend.codex.refreshToken")
+            CODEX_ACCOUNT_ID -> read("SOUZ_BACKEND_CODEX_ACCOUNT_ID", "souz.backend.codex.accountId")
+            CODEX_EXPIRES_AT -> read("SOUZ_BACKEND_CODEX_EXPIRES_AT", "souz.backend.codex.expiresAt")
+            else -> null
+        }
+    }
 
     private fun storedOrConfigured(key: String): String? {
         val rejectedRefreshToken = preferenceStore.get(CODEX_REJECTED_DEPLOY_REFRESH_TOKEN)

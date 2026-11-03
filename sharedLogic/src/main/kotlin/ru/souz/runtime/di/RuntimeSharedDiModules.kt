@@ -6,6 +6,7 @@ import org.kodein.di.instance
 import ru.souz.agent.skills.SkillClassifier
 import ru.souz.frida.FridaClient
 import ru.souz.jev.JevClient
+import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.http.ProviderHttpClients
 import ru.souz.llms.runtime.FridaClassifier
@@ -15,7 +16,8 @@ import ru.souz.llms.runtime.JevClassifier
 const val FRIDA_FALLBACK_TAG = "fridaFallback"
 
 /** Process-owned remote transports that are shared by backend executions. */
-fun runtimeProviderHttpDiModule(): DI.Module = DI.Module("runtimeProviderHttp") {
+fun runtimeProviderHttpDiModule(codexEndpoints: CodexEndpoints = CodexEndpoints.load()): DI.Module = DI.Module("runtimeProviderHttp") {
+    bindSingleton { codexEndpoints }
     bindSingleton { ProviderHttpClients() }
     bindSingleton { JevClient(instance<ProviderHttpClients>().jev) }
     bindSingleton<SkillClassifier> {
@@ -33,6 +35,7 @@ fun runtimeProviderHttpDiModule(): DI.Module = DI.Module("runtimeProviderHttp") 
         CodexOAuthService(
             settingsProvider = instance(),
             client = instance<ProviderHttpClients>().standard,
+            endpoints = instance(),
         )
     }
 }
