@@ -161,6 +161,7 @@ data class BackendAppConfig(
     val attachments: AttachmentStorageConfig? = null,
     val codexEndpoints: CodexEndpoints = CodexEndpoints(),
     val imageModel: String = "gpt-image-1",
+    val llmGateway: ru.souz.backend.llmgateway.LlmGatewayConfig = ru.souz.backend.llmgateway.LlmGatewayConfig(),
 ) {
     fun validate(): BackendAppConfig {
         server.validate()
@@ -214,6 +215,7 @@ data class BackendAppConfig(
     companion object {
         fun load(source: BackendConfigSource = SystemBackendConfigSource): BackendAppConfig =
             BackendAppConfig(
+                llmGateway = ru.souz.backend.llmgateway.LlmGatewayConfig.load(source),
                 codexEndpoints = CodexEndpoints.load { source.value(it, it) },
                 imageModel = ru.souz.backend.config.loadImageModel(source),
                 featureFlags = BackendFeatureFlags.load(source),

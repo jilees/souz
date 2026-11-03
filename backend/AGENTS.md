@@ -29,6 +29,7 @@ Before changing this module, read the relevant pain-point topics below.
 
 ## Pain points
 
+- [LLM gateway](docs/llm-gateway.md) — service-authenticated OpenAI-compatible named-model and Codex calls, explicit cascades, and SSE boundaries.
 
 - [Personality settings](docs/personality-settings.md) — validated user style, conversational scope and Orion snapshots.
 - [User file storage](docs/s3-storage.md) — private S3 bucket, owner-scoped metadata, expiry and retryable cleanup.

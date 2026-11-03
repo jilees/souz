@@ -37,6 +37,7 @@ import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.http.routes.v1Routes
 import ru.souz.backend.http.routes.hookRoutes
 import ru.souz.backend.security.RequestIdentityPlugin
+import ru.souz.backend.llmgateway.llmGatewayRoutes
 import ru.souz.skilloauth.impl.installSkillOAuthRoutes
 
 /** Health-check response returned by `GET /health`. */
@@ -150,6 +151,14 @@ internal fun Application.configureBackendHttpServer(dependencies: BackendHttpDep
         trustedProxyToken = dependencies.trustedProxyToken
         ensureUser = dependencies.ensureTrustedUser
     }
+    if (dependencies.llmGateway?.config?.enabled == true) {
+        registerApiKeySecurityScheme(
+            name = "llmGatewayBearer",
+            keyName = "Authorization",
+            keyLocation = SecuritySchemeIn.HEADER,
+            description = "Bearer service key configured by SOUZ_LLM_GATEWAY_API_KEY. No user identity is used.",
+        )
+    }
     registerApiKeySecurityScheme(
         name = "hookBearer",
         keyName = "Authorization",
@@ -237,6 +246,7 @@ internal fun Application.configureBackendHttpServer(dependencies: BackendHttpDep
         }
 
         v1Routes(dependencies)
+        dependencies.llmGateway?.let { llmGatewayRoutes(it) }
         hookRoutes(dependencies.hookService)
         dependencies.skillOAuthGatewayImpl?.let { installSkillOAuthRoutes(it, BackendHttpRoutes.OAUTH_CALLBACK) }
 

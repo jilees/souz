@@ -2,7 +2,7 @@
 
 Set `SOUZ_LLM_CONFIG_FILE` to a JSON file readable by the backend, and supply the referenced API keys through server environment variables. Configuration is loaded once at startup; restart after edits.
 
-The top-level `cascades` map is the sole configuration for ordered failover. Ordinary models select one upstream; models have no fallback lists, and cascades contain only model names.
+The optional [LLM gateway](llm-gateway.md) exposes these models and server-managed Codex through OpenAI-compatible routes. Its top-level `cascades` map is the sole configuration for ordered failover. Ordinary models select one upstream; models have no fallback lists, and cascades contain only model names.
 
 Register a Codex model with `{"provider":"codex","modelId":"<upstream-id>"}` in `models`. IDs are forwarded exactly and need no enum entry. The server OAuth session supplies credentials; `connection` and OpenAI `parameters` are not accepted for Codex registrations. `reasoningEfforts` accepts their configured names. Named Codex models work in agent and subagent selections, complexity routing, image generation, and cascades.
 
@@ -51,4 +51,4 @@ Backend settings and execution records carry public model names as strings; the 
 
 Verify with `./gradlew :backend:test`. Existing configuration, request-routing and backend E2E tests cover malformed configuration, identical upstream IDs, independent keys/endpoints, streaming, user selections and child calls.
 
-A named model can set `timeoutMs` (integer 1–300000) to bound each provider request independently of the server default, including native calls and cascades.
+A named model can set `timeoutMs` (integer 1–300000) to bound each provider request independently of the server default, including native calls and gateway cascades.

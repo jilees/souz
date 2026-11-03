@@ -214,6 +214,8 @@ fun backendDiModule(
         )
     }
     bindSingleton { SystemBackendConfigSource.loadNamedModels() }
+    import(ru.souz.backend.llmgateway.llmGatewayModule(appConfig.llmGateway, appConfig.codexEndpoints,
+        appConfig.llmLimits.globalProviderConcurrency))
     bindSingleton<SettingsProvider> {
         BackendSettingsProvider(
             preferenceStore = instance(),
@@ -663,6 +665,7 @@ fun backendDiModule(
             selectedModel = { settingsResolver.defaultModel() },
             trustedProxyToken = { appConfig.server.proxyToken },
             ensureTrustedUser = userRepository::ensureUser,
+            llmGateway = instance(),
         )
     }
 }

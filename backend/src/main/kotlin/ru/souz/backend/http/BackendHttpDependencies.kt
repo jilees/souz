@@ -41,4 +41,5 @@ internal data class BackendHttpDependencies(
     val featureFlags: BackendFeatureFlags,
     val trustedProxyToken: () -> String?,
     val ensureTrustedUser: suspend (String) -> Unit,
+    val llmGateway: ru.souz.backend.llmgateway.LlmGateway? = null,
 )
