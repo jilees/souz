@@ -11,7 +11,6 @@ import ru.souz.backend.config.booleanValue
 import ru.souz.backend.hooks.HookConfig
 import ru.souz.backend.scheduler.ScheduledTaskConfig
 import ru.souz.skilloauth.impl.OAuthProviderCatalog
-import ru.souz.llms.codex.CodexEndpoints
 
 /**
  * Credentials for one [OAuthProviderCatalog] entry — read from `<NAME>_OAUTH_CLIENT_ID` /
@@ -159,7 +158,6 @@ data class BackendAppConfig(
     val attachmentHistoryLimit: Int = DEFAULT_ATTACHMENT_HISTORY_LIMIT,
     val policyPrompt: String? = null,
     val attachments: AttachmentStorageConfig? = null,
-    val codexEndpoints: CodexEndpoints = CodexEndpoints(),
     val imageModel: String = "gpt-image-1",
 ) {
     fun validate(): BackendAppConfig {
@@ -214,7 +212,6 @@ data class BackendAppConfig(
     companion object {
         fun load(source: BackendConfigSource = SystemBackendConfigSource): BackendAppConfig =
             BackendAppConfig(
-                codexEndpoints = CodexEndpoints.load { source.value(it, it) },
                 imageModel = ru.souz.backend.config.loadImageModel(source),
                 featureFlags = BackendFeatureFlags.load(source),
                 jevWaitCategoryThreshold = source.env("JEV_WAIT_CATEGORY_THRESHOLD")?.let {

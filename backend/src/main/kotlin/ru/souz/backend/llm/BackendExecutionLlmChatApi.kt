@@ -27,7 +27,6 @@ import ru.souz.llms.LlmProvider
 import ru.souz.llms.ModelResolution
 import ru.souz.llms.anthropic.AnthropicChatAPI
 import ru.souz.llms.codex.CodexChatAPI
-import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.findLLMModel
 import ru.souz.llms.resolveChatModel
@@ -50,7 +49,6 @@ internal class BackendExecutionLlmChatApi(
     private val metrics: BackendMetrics? = null,
     private val llmConfig: NamedLlmConfig = NamedLlmConfig(),
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
-    private val codexEndpoints: CodexEndpoints = CodexEndpoints(),
     private val fallbackModels: List<String> = emptyList(),
     private val failureMemory: ModelFailureMemory = ModelFailureMemory(),
 ) : LLMChatAPI {
@@ -73,7 +71,7 @@ internal class BackendExecutionLlmChatApi(
                 requestParameters = settingsProvider.openaiSummarizationParameters,
             )
             val request = body.copy(model = summarizationModel, provider = LlmProvider.OPENAI)
-            return retryChat(LlmProvider.OPENAI) { callProvider(LlmProvider.OPENAI, request, api) }
+            return retryChat { callProvider(LlmProvider.OPENAI, request, api) }
         }
         val primary = when (val route = chatRoute(body)) {
             is ChatRoute.Ready -> route
@@ -99,7 +97,7 @@ internal class BackendExecutionLlmChatApi(
     }
 
     private suspend fun chat(route: ChatRoute.Ready): LLMResponse.Chat =
-        retryChat(route.provider) { callProvider(route.provider, route.request, apiFor(route.provider, route.namedModel),
+        retryChat { callProvider(route.provider, route.request, apiFor(route.provider, route.namedModel),
             route.modelName) }
 
     // A user's own key fails for that user only; every other credential is shared by the whole server.
@@ -225,7 +223,6 @@ internal class BackendExecutionLlmChatApi(
                     settingsProvider,
                     codexOAuthService,
                     httpClients.standard,
-                    codexEndpoints,
                 )
                 LlmProvider.GIGA -> error(BackendLlmSupport.GIGA_UNSUPPORTED_MESSAGE)
             }
@@ -239,15 +236,15 @@ internal class BackendExecutionLlmChatApi(
         return credentials.getValue(provider) ?: error("Missing configured credential for provider $provider.")
     }
 
-    private suspend fun retryChat(provider: LlmProvider, request: suspend () -> LLMResponse.Chat): LLMResponse.Chat {
+    private suspend fun retryChat(request: suspend () -> LLMResponse.Chat): LLMResponse.Chat {
         var attempt = 0
         while (true) {
             val response = request()
-            if (response !is LLMResponse.Chat.Error || !isRetryable(provider, response)) {
+            if (response !is LLMResponse.Chat.Error || response.status != TOO_MANY_REQUESTS) {
                 return response
             }
             if (attempt == retryPolicy.max429Retries) return response
-            waitForRetry(provider, attempt, response)
+            delayMillis(backoffForAttempt(attempt, response.message))
             attempt += 1
         }
     }
@@ -277,8 +274,8 @@ internal class BackendExecutionLlmChatApi(
                     measureAttempt(provider, request.model) { outcome ->
                         api.messageStream(request).collect { response ->
                             if (response is LLMResponse.Chat.Error) outcome(responseMetricOutcome(response.status))
-                            if (!emitted && response is LLMResponse.Chat.Error && isRetryable(provider, response) &&
-                                attempt < retryPolicy.max429Retries) throw RetryFirstStreamingError(response)
+                            if (!emitted && response is LLMResponse.Chat.Error && response.status == TOO_MANY_REQUESTS &&
+                                attempt < retryPolicy.max429Retries) throw RetryFirstStreaming429(response)
                             if (response is LLMResponse.Chat.Ok) {
                                 val delta = response.usage.deltaFrom(previousUsage)
                                 recordUsage(provider, request.model, delta)
@@ -290,8 +287,8 @@ internal class BackendExecutionLlmChatApi(
                     }
                 }
                 return@flow
-            } catch (retry: RetryFirstStreamingError) {
-                waitForRetry(provider, attempt, retry.error)
+            } catch (retry: RetryFirstStreaming429) {
+                delayMillis(backoffForAttempt(attempt, retry.error.message))
                 attempt += 1
             }
         }
@@ -327,21 +324,6 @@ internal class BackendExecutionLlmChatApi(
                 is LLMResponse.Chat.Error -> error("attachment_vision_failed")
             }
         }
-    }
-
-    private fun isRetryable(provider: LlmProvider, error: LLMResponse.Chat.Error): Boolean =
-        error.status == TOO_MANY_REQUESTS || (provider == LlmProvider.CODEX && error.status == 503)
-
-    private suspend fun waitForRetry(provider: LlmProvider, attempt: Int, error: LLMResponse.Chat.Error) {
-        val delay = backoffForAttempt(attempt, error.message)
-        LoggerFactory.getLogger(BackendExecutionLlmChatApi::class.java).atWarn()
-            .addKeyValue("event", "provider.retry")
-            .addKeyValue("provider", provider.name)
-            .addKeyValue("status", error.status)
-            .addKeyValue("retry_number", attempt + 1)
-            .addKeyValue("delay_ms", delay)
-            .log("Retrying model request")
-        delayMillis(delay)
     }
 
     private suspend fun recordUsage(provider: LlmProvider, model: String, delta: LLMResponse.Usage) {
@@ -404,7 +386,7 @@ private fun LLMResponse.Chat.Error.isProviderFailure(): Boolean =
         status == 408 ||
         status == 429
 
-private class RetryFirstStreamingError(val error: LLMResponse.Chat.Error) : Exception("retry", null, false, false)
+private class RetryFirstStreaming429(val error: LLMResponse.Chat.Error) : Exception("retry", null, false, false)
 
 private fun ModelResolution<*>.description(): String = when (this) {
     is ModelResolution.Resolved -> value.toString()
