@@ -20,6 +20,14 @@ import ru.souz.db.SUBAGENT_MODELS_JSON
 
 class BackendSettingsProviderTest {
     @Test
+    fun `region compatibility honors nonblank canonical values before legacy deployment settings`() {
+        assertEquals("en", provider(env = mapOf("SOUZ_BACKEND_REGION_PROFILE" to " en ")).regionProfile)
+        assertEquals("en", provider(properties = mapOf("souz.backend.regionProfile" to "en")).regionProfile)
+        assertEquals("ru", provider(env = mapOf("APP_LANGUAGE" to "ru", "SOUZ_BACKEND_REGION_PROFILE" to "en")).regionProfile)
+        assertEquals("en", provider(env = mapOf("APP_LANGUAGE" to " ", "SOUZ_BACKEND_REGION_PROFILE" to "en")).regionProfile)
+    }
+
+    @Test
     fun `Codex models register unknown upstream IDs without enum entries or per-model credentials`() {
         val entry = "\"future\":{\"provider\":\"codex\",\"modelId\":\"future-model-without-enum\"},"
         val valid = NAMED_LLM_CONFIG.replace("\"models\": {", "\"reasoningEfforts\":{\"future\":\"low\"},\"models\": {$entry")
