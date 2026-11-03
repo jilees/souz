@@ -3,6 +3,7 @@ package ru.souz.backend.execution.service
 import java.time.Instant
 import java.util.UUID
 import ru.souz.agent.spi.ModelRouting
+import ru.souz.agent.spi.RoutedModel
 import ru.souz.backend.agent.model.AgentConversationKey
 import ru.souz.backend.agent.model.BackendConversationTurnRequest
 import ru.souz.backend.execution.model.AgentExecution
@@ -61,11 +62,16 @@ internal class AgentExecutionRequestFactory(
             throw unsupportedBackendModel()
         }
         val normalizedClientMessageId = clientMessageId?.trim()?.takeIf { it.isNotEmpty() }
-        // Route only turns on the deployment's default model, never a model the user chose for the chat or request.
-        val routing = modelRouting?.takeIf { routing ->
-            requestOverrides.defaultModel == null &&
-                effectiveSettings.defaultModel == effectiveSettingsResolver.defaultModel() &&
-                listOf(routing.simple, routing.complex).all { effectiveSettingsResolver.isSelectableDefaultModel(userId, it.model) }
+        // A saved user model serves both branches; an explicit request model bypasses routing.
+        val routing = modelRouting?.takeIf { requestOverrides.defaultModel == null }?.let { configured ->
+            if (effectiveSettings.defaultModel == effectiveSettingsResolver.defaultModel()) {
+                configured
+            } else {
+                val selected = RoutedModel(effectiveSettings.defaultModel, provider)
+                ModelRouting(simple = selected, complex = selected)
+            }
+        }?.takeIf { routing ->
+            listOf(routing.simple, routing.complex).all { effectiveSettingsResolver.isSelectableDefaultModel(userId, it.model) }
         }
         // Turning intermediate messages off also drops the narration prompt instruction.
         val narrateSteps = effectiveSettings.narrateSteps && effectiveSettings.intermediateMessages

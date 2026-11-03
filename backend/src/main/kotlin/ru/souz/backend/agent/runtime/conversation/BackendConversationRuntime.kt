@@ -7,6 +7,7 @@ import ru.souz.agent.AgentContextFactory
 import ru.souz.agent.AgentExecutor
 import ru.souz.agent.AgentId
 import ru.souz.agent.runtime.AgentRuntimeEventSink
+import ru.souz.agent.spi.RoutedModel
 import ru.souz.backend.agent.model.AgentConversationKey
 import ru.souz.backend.agent.model.BackendConversationTurnRequest
 import ru.souz.backend.agent.model.chatId
@@ -67,12 +68,19 @@ internal class BackendConversationRuntime(
             ),
         )
 
+        // Preserve public selections while using the seed's resolved ID for the same model.
+        fun executionTarget(target: RoutedModel): RoutedModel =
+            if (target.model == request.model) target.copy(model = seedContext.settings.model) else target
+        val routing = request.routing?.let {
+            it.copy(simple = executionTarget(it.simple), complex = executionTarget(it.complex))
+        }
+
         val result = executor.execute(
             agentId = AgentId.SKILLS_GRAPH,
             context = seedContext.copy(
                 inputAttachments = request.attachments,
                 replyAttachments = previousSelection,
-                settings = seedContext.settings.copy(reasoningEffort = request.reasoningEffort, routing = request.routing),
+                settings = seedContext.settings.copy(reasoningEffort = request.reasoningEffort, routing = routing),
             ),
             input = request.prompt,
             eventSink = eventSink,
@@ -97,7 +105,7 @@ internal class BackendConversationRuntime(
             session = nextSession,
             attachments = result.attachments,
             routedModel = request.routing?.let { listOf(it.simple, it.complex) }
-                ?.firstOrNull { it.model == used.model && it.provider == used.provider },
+                ?.firstOrNull { executionTarget(it).let { target -> target.model == used.model && target.provider == used.provider } },
         )
     }
 

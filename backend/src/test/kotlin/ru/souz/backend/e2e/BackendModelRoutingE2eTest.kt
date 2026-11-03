@@ -7,6 +7,7 @@ import io.ktor.client.engine.mock.toByteArray
 import io.ktor.client.request.get
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
@@ -26,10 +27,13 @@ import ru.souz.backend.llm.withNamedLlmConfig
 import ru.souz.llms.http.ProviderHttpClients
 import ru.souz.llms.http.providerHttpClientDefaults
 import ru.souz.llms.restJsonMapper
+import ru.souz.llms.LLMModel
 
 class BackendModelRoutingE2eTest {
     @Test
-    fun `default-model turns run on the routed model, fall back when it fails and keep chosen models`() = withNamedLlmConfig(ROUTING_CONFIG) { source ->
+    fun `turns route with server targets or a saved user model and explicit request models bypass routing`() = withNamedLlmConfig(
+        ROUTING_CONFIG, environment = mapOf("OPENAI_MODEL" to "legacy-user-model"),
+    ) { source ->
         val children = CopyOnWriteArrayList<String>()
         val http = HttpClient(MockEngine { request ->
             val body = restJsonMapper.readTree(request.body.toByteArray())
@@ -44,7 +48,10 @@ class BackendModelRoutingE2eTest {
                 """{"role":"assistant","tool_calls":[{"index":0,"id":"spawn","type":"function",""" +
                     """"function":{"name":"SpawnSubagent","arguments":"{\"task\":\"child task\"}"}}]}"""
             } else {
-                """{"role":"assistant","content":"$model answer"}"""
+                val toolMode = if (last.startsWith("Chosen ")) {
+                    if (body.path("tools").any()) " with tools" else " without tools"
+                } else ""
+                """{"role":"assistant","content":"$model$toolMode answer"}"""
             }
             respond(
                 """{"choices":[{"index":0,"message":$message,"finish_reason":"${if (delegate) "tool_calls" else "stop"}"}],"created":1}""",
@@ -83,8 +90,28 @@ class BackendModelRoutingE2eTest {
 
             assertEquals("default-model answer" to "default-chat", turn("Explicit", ""","options":{"model":"default-chat"}"""))
             client.patch(BackendHttpRoutes.SETTINGS) { trusted(userId); jsonBody("""{"defaultModel":"route-strong"}""") }
-            assertEquals("strong-model answer" to "route-strong", turn("Chosen"))
-            assertEquals(4, classified.get())
+            verdict = { false }
+            assertEquals("strong-model without tools answer" to "route-strong", turn("Chosen simple"))
+            verdict = { true }
+            assertEquals("strong-model with tools answer" to "route-strong", turn("Chosen complex"))
+            verdict = { error("Jev unavailable") }
+            assertEquals("strong-model with tools answer" to "route-strong", turn("Chosen fallback"))
+            assertEquals("default-model answer" to "default-chat", turn("Explicit over saved", ""","options":{"model":"default-chat"}"""))
+            assertEquals(7, classified.get())
+
+            client.patch(BackendHttpRoutes.SETTINGS) { trusted(userId); jsonBody("""{"defaultModel":"default-chat"}""") }
+            verdict = { false }
+            assertEquals("lite-model answer" to "route-lite", turn("Restored default"))
+            assertEquals(8, classified.get())
+
+            client.put(BackendHttpRoutes.providerKey("openai")) { trusted(userId); jsonBody("""{"apiKey":"user-openai-key"}""") }
+            val custom = LLMModel.OpenAICompatibleCustom.alias
+            client.patch(BackendHttpRoutes.SETTINGS) { trusted(userId); jsonBody("""{"defaultModel":"$custom"}""") }
+            verdict = { false }
+            assertEquals("legacy-user-model without tools answer" to custom, turn("Chosen legacy simple"))
+            verdict = { true }
+            assertEquals("legacy-user-model with tools answer" to custom, turn("Chosen legacy complex"))
+            assertEquals(10, classified.get())
         }
     }
 
