@@ -19,6 +19,7 @@ import ru.souz.llms.LLMModel
 import ru.souz.llms.LLMModel.AiTunnelClaudeHaiku
 import ru.souz.llms.LLMModel.AnthropicHaiku45
 import ru.souz.llms.LLMModel.CodexGpt54
+import ru.souz.llms.LLMModel.CodexGpt61Sol
 import ru.souz.llms.LLMModel.OpenAICompatibleCustom
 import ru.souz.llms.LLMModel.OpenAIGpt5Mini
 import ru.souz.llms.LLMModel.QwenMax
@@ -45,7 +46,8 @@ class EffectiveSettingsResolverTest {
             Case(CodexGpt54.alias, selected = CodexGpt54.alias, listings = 0, region = "en", customOpenAi = true, codex = true),
             Case(LLMModel.Max.alias, selected = LLMModel.Max.alias, listings = 0),
             Case(OpenAIGpt5Mini.alias, selected = OpenAICompatibleCustom.alias, listings = 1, region = "en", customOpenAi = true, keys = setOf(OPENAI)),
-            Case(QwenMax.alias, selected = CodexGpt54.alias, listings = 1, region = "en", customOpenAi = true),
+            Case(QwenMax.alias, selected = CodexGpt61Sol.alias, listings = 1, region = "en", customOpenAi = true),
+            Case(null, selected = CodexGpt61Sol.alias, listings = 0, region = "en", codex = true, fallbacks = listOf(CodexGpt61Sol.alias)),
             Case(QwenMax.alias, selected = AiTunnelClaudeHaiku.alias, listings = 1, keys = setOf(AI_TUNNEL, ANTHROPIC)),
             Case(QwenMax.alias, selected = AnthropicHaiku45.alias, listings = 1, region = "en", keys = setOf(AI_TUNNEL, ANTHROPIC)),
             Case(OpenAICompatibleCustom.alias, selected = QwenMax.alias, listings = 1, region = "en", customOpenAi = true, keys = setOf(QWEN)),

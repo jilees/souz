@@ -29,6 +29,8 @@ Before changing this module, read the relevant pain-point topics below.
 
 ## Pain points
 
+- [LLM gateway](docs/llm-gateway.md) — service-authenticated OpenAI-compatible named-model and Codex calls, explicit cascades, and SSE boundaries.
+
 - [Attachments](docs/attachments.md) — ownership, expiry, model input and channel delivery.
 
 - [Personality settings](docs/personality-settings.md) — validated user style, conversational scope and Orion snapshots.

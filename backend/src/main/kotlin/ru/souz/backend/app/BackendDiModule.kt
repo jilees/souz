@@ -166,7 +166,7 @@ fun backendDiModule(
             scopeResolver = BackendSandboxScopeResolver,
         )
     )
-    import(runtimeProviderHttpDiModule())
+    import(runtimeProviderHttpDiModule(appConfig.codexEndpoints))
     import(fileSystemSkillRegistryDiModule())
     import(skillRuntimeToolsDiModule())
     val skillOAuthConfig = SkillOAuthBackendConfig.from(appConfig)
@@ -207,6 +207,13 @@ fun backendDiModule(
         )
     }
     bindSingleton { SystemBackendConfigSource.loadNamedModels() }
+    bindSingleton {
+        ru.souz.backend.llmgateway.LlmGateway(
+            config = appConfig.llmGateway, models = instance(), settings = instance(),
+            clients = instance(), oauth = instance(), endpoints = appConfig.codexEndpoints,
+            concurrency = appConfig.llmLimits.globalProviderConcurrency, metrics = instance(),
+        )
+    }
     bindSingleton<SettingsProvider> {
         BackendSettingsProvider(
             preferenceStore = instance(),
@@ -278,7 +285,7 @@ fun backendDiModule(
     }
     bindSingleton {
         EffectiveSettingsResolver(
-            namedModelNames = instance<NamedLlmConfig>().models.keys,
+            namedModelNames = instance<NamedLlmConfig>().selectionNames,
             baseSettingsProvider = instance(),
             userSettingsRepository = instance(),
             userProviderKeyRepository = instance(),
@@ -365,6 +372,7 @@ fun backendDiModule(
             providerHttpClients = instance(),
             providerApiOverride = instanceOrNull(),
             codexOAuthService = instance<CodexOAuthService>(),
+            codexEndpoints = instance(),
             agentStateRepository = instance(),
             messageRepository = instance(),
             logObjectMapper = instance(BackendDiTags.LOG_OBJECT_MAPPER),
@@ -394,6 +402,7 @@ fun backendDiModule(
             effectiveSettingsResolver = instance(),
             clientThreadRegistry = instance(),
             modelRouting = instance<NamedLlmConfig>().routing,
+            llmConfig = instance(),
         )
     }
     bindSingleton<BackendConversationTurnRunner> {
@@ -593,7 +602,7 @@ fun backendDiModule(
     bindSingleton {
         PublicClientService(
             attachmentStorage = instanceOrNull(),
-            namedModelNames = instance<NamedLlmConfig>().models.keys,
+            namedModelNames = instance<NamedLlmConfig>().selectionNames,
             chatRepository = instance(),
             executionRepository = instance(),
             clientRequestRepository = instance(),
@@ -612,6 +621,7 @@ fun backendDiModule(
     }
     bindSingleton {
         BackendBootstrapService(
+            llmConfig = instance(),
             settingsProvider = instance(),
             effectiveSettingsResolver = instance(),
             toolCatalog = instance<AgentToolCatalog>(tag = BackendDiTags.MERGED_TOOL_CATALOG),
@@ -644,6 +654,7 @@ fun backendDiModule(
             selectedModel = { settingsResolver.defaultModel() },
             trustedProxyToken = { appConfig.server.proxyToken },
             ensureTrustedUser = userRepository::ensureUser,
+            llmGateway = instance(),
         )
     }
 }

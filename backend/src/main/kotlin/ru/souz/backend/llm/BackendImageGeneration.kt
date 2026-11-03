@@ -5,6 +5,7 @@ import ru.souz.backend.hooks.HookLlmBudget
 import ru.souz.db.SettingsProvider
 import ru.souz.llms.LlmProvider
 import ru.souz.llms.ModelResolution
+import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.codex.CodexImageGenerationGateway
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.http.ProviderHttpClients
@@ -20,7 +21,7 @@ internal class BackendImageModel(
 
 internal fun resolveImageModel(selection: String, namedModels: Map<String, NamedLlmModel>): BackendImageModel {
     val name = selection.trim()
-    namedModels[name]?.let { return BackendImageModel(it.modelId, LlmProvider.OPENAI, it) }
+    namedModels[name]?.let { return BackendImageModel(it.modelId, it.provider, it.takeIf { model -> model.provider == LlmProvider.OPENAI }) }
     val imageId = setOf("gpt-image-1", "gpt-image-2.5-flare").firstOrNull { it.equals(name, ignoreCase = true) }
     if (imageId != null) return BackendImageModel(imageId, LlmProvider.OPENAI)
     return when (val resolved = resolveChatModel(name, supportedProviders = setOf(LlmProvider.CODEX))) {
@@ -39,9 +40,10 @@ internal fun imageGenerationGateway(
     oauth: CodexOAuthService,
     openAiCredential: suspend () -> String,
     hookBudget: HookLlmBudget?,
+    codexEndpoints: CodexEndpoints,
 ): ImageGenerationGateway {
     val delegate = when (model.provider) {
-        LlmProvider.CODEX -> CodexImageGenerationGateway(settings, oauth, clients.openAi)
+        LlmProvider.CODEX -> CodexImageGenerationGateway(settings, oauth, clients.openAi, endpoints = codexEndpoints)
         LlmProvider.OPENAI -> OpenAIImageGenerationGateway(
             settings, clients.openAi,
             apiKeyProvider = { model.connection?.apiKey ?: openAiCredential() },

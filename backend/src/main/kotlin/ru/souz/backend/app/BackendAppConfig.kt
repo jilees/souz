@@ -10,6 +10,7 @@ import ru.souz.backend.config.booleanValue
 import ru.souz.backend.hooks.HookConfig
 import ru.souz.backend.scheduler.ScheduledTaskConfig
 import ru.souz.skilloauth.impl.OAuthProviderCatalog
+import ru.souz.llms.codex.CodexEndpoints
 
 /**
  * Credentials for one [OAuthProviderCatalog] entry — read from `<NAME>_OAUTH_CLIENT_ID` /
@@ -155,7 +156,9 @@ data class BackendAppConfig(
     val scheduledTasks: ScheduledTaskConfig = ScheduledTaskConfig(),
     val policyPrompt: String? = null,
     val attachments: AttachmentStorageConfig? = null,
+    val codexEndpoints: CodexEndpoints = CodexEndpoints(),
     val imageModel: String = "gpt-image-1",
+    val llmGateway: ru.souz.backend.llmgateway.LlmGatewayConfig = ru.souz.backend.llmgateway.LlmGatewayConfig(),
 ) {
     fun validate(): BackendAppConfig {
         server.validate()
@@ -203,6 +206,8 @@ data class BackendAppConfig(
     companion object {
         fun load(source: BackendConfigSource = SystemBackendConfigSource): BackendAppConfig =
             BackendAppConfig(
+                llmGateway = ru.souz.backend.llmgateway.LlmGatewayConfig.load(source),
+                codexEndpoints = CodexEndpoints.load { source.value(it, it) },
                 attachments = AttachmentStorageConfig.load(source),
                 imageModel = ru.souz.backend.config.loadImageModel(source),
                 featureFlags = BackendFeatureFlags.load(source),

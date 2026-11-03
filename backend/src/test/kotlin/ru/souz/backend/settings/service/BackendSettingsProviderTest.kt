@@ -20,6 +20,46 @@ import ru.souz.db.SUBAGENT_MODELS_JSON
 
 class BackendSettingsProviderTest {
     @Test
+    fun `Codex models register unknown upstream IDs without enum entries or per-model credentials`() {
+        val entry = "\"future\":{\"provider\":\"codex\",\"modelId\":\"future-model-without-enum\"},"
+        val valid = NAMED_LLM_CONFIG.replace("\"models\": {", "\"reasoningEfforts\":{\"future\":\"low\"},\"models\": {$entry")
+            .replace("\"subagentModels\": [\"tv-agent\"]", "\"subagentModels\": [\"future\"]")
+        withNamedLlmConfig(valid) { source ->
+            val config = source.loadNamedModels()
+            assertEquals("future-model-without-enum", config.models.getValue("future").modelId)
+            assertEquals(LlmProvider.CODEX, config.models.getValue("future").provider)
+            assertNull(config.models.getValue("future").apiKey)
+            assertEquals(mapOf("future" to "low"), config.reasoningEfforts)
+            assertEquals(mapOf("future" to LlmProvider.CODEX), BackendSettingsProvider(MapBackendServerPreferenceStore(), source).subagentModels)
+        }
+        for (bad in listOf(
+            valid.replace("\"provider\":\"codex\"", "\"provider\":\"other\""),
+            valid.replace("\"provider\":\"codex\"", "\"provider\":\"codex\",\"connection\":\"router\""),
+            valid.replace("\"provider\":\"codex\"", "\"provider\":\"codex\",\"parameters\":{}"),
+        )) withNamedLlmConfig(bad) { source -> assertFailsWith<IllegalArgumentException> { source.loadNamedModels() } }
+    }
+
+    @Test
+    fun `cascades accept configured and Codex models in either order and reject invalid references`() {
+        fun config(targets: String, name: String = "mixed") = NAMED_LLM_CONFIG.replace(
+            "\"models\":", "\"cascades\":{\"$name\":$targets},\"models\":",
+        )
+        for (targets in listOf("[\"gpt-6.1-sol\",\"tv-agent\"]", "[\"tv-agent\",\"gpt-6.1-sol\"]")) {
+            withNamedLlmConfig(config(targets)) { source ->
+                val settings = source.loadNamedModels()
+                assertTrue("mixed" in settings.selectionNames)
+                assertEquals(2, settings.cascades.getValue("mixed").size)
+            }
+        }
+        for (targets in listOf("[]", "null", "{}", "[1]", "[\"missing\"]", "[\"mixed\"]", "[\"tv-agent\",\"tv-agent\"]", "[\" tv-agent\"]")) {
+            withNamedLlmConfig(config(targets)) { source -> assertFailsWith<IllegalArgumentException> { source.loadNamedModels() } }
+        }
+        for (name in listOf("tv-agent", "gpt-6.1-sol")) {
+            withNamedLlmConfig(config("[\"tv-agent\"]", name)) { source -> assertFailsWith<IllegalArgumentException> { source.loadNamedModels() } }
+        }
+    }
+
+    @Test
     fun `summary output budget defaults to 2048 and validates server overrides`() {
         assertEquals(2_048, provider().summarizationMaxOutputTokens)
         assertEquals(3_072, provider(properties = mapOf("SUMMARIZATION_MAX_OUTPUT_TOKENS" to "3072")).summarizationMaxOutputTokens)
@@ -164,6 +204,40 @@ class BackendSettingsProviderTest {
 
         assertEquals("", store.values.getValue("CODEX_ACCESS_TOKEN"))
         assertNull(provider.codexAccessToken)
+    }
+
+    @Test
+    fun `legacy VPS settings preserve refreshed credentials and rejected token recovery`() {
+        val env = mutableMapOf(
+            "SOUZ_BACKEND_CODEX_ACCESS_TOKEN" to "legacy-access",
+            "SOUZ_BACKEND_CODEX_REFRESH_TOKEN" to "legacy-refresh",
+            "SOUZ_BACKEND_CODEX_ACCOUNT_ID" to "legacy-account",
+            "SOUZ_BACKEND_CODEX_EXPIRES_AT" to "1800000000",
+        )
+        val store = MapBackendServerPreferenceStore()
+        val settings = provider(store = store, env = env)
+        assertEquals("legacy-access", settings.codexAccessToken)
+        assertEquals("legacy-account", settings.codexAccountId)
+        assertEquals(1800000000L, settings.codexExpiresAt)
+        assertTrue(settings.hasCompleteCodexOAuthCredentials())
+        settings.codexAccessToken = "refreshed-access"
+        settings.codexRefreshToken = "refreshed-refresh"
+        assertEquals("refreshed-access", provider(store = store, env = env).codexAccessToken)
+        settings.codexAccessToken = null
+        assertNull(provider(store = store, env = env).codexAccessToken)
+        env["SOUZ_BACKEND_CODEX_REFRESH_TOKEN"] = "replacement-refresh"
+        assertEquals("legacy-access", settings.codexAccessToken)
+        assertEquals("replacement-refresh", settings.codexRefreshToken)
+        env["CODEX_ACCESS_TOKEN"] = "canonical-access"
+        assertEquals("canonical-access", provider(env = env).codexAccessToken)
+        val properties = provider(properties = mapOf(
+            "souz.backend.codex.accessToken" to "property-access",
+            "souz.backend.codex.refreshToken" to "property-refresh",
+            "souz.backend.codex.accountId" to "property-account",
+            "souz.backend.codex.expiresAt" to "1800000000",
+        ))
+        assertTrue(properties.hasCompleteCodexOAuthCredentials())
+        assertEquals("property-access", properties.codexAccessToken)
     }
 
     @Test

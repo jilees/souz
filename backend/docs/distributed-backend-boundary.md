@@ -34,3 +34,7 @@ Codex refresh tokens can rotate. Without database coordination, two replicas can
 ## Verification
 
 Run `./gradlew :backend:test` for changes to execution ownership or recovery. Cover ordinary HTTP execution crash recovery, Telegram/VK-triggered execution crash recovery, Client-Souz expired lease recovery, sticky active-thread routing, cancellation races, option resume from `waiting_option`, and concurrent Codex OAuth refresh when Codex is enabled on multiple replicas.
+
+## VPS configuration compatibility
+
+Backend settings accept the legacy `SOUZ_BACKEND_CODEX_*` environment names and their `souz.backend.codex.*` properties. Nonblank canonical `CODEX_*` settings take precedence. PostgreSQL credentials and rejection tombstones retain their existing precedence and token-replacement behavior; do not seed credentials by bypassing that logic.

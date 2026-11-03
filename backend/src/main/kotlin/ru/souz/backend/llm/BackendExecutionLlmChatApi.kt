@@ -5,6 +5,7 @@ import kotlin.math.min
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.Logger
@@ -27,6 +28,7 @@ import ru.souz.llms.LlmProvider
 import ru.souz.llms.ModelResolution
 import ru.souz.llms.anthropic.AnthropicChatAPI
 import ru.souz.llms.codex.CodexChatAPI
+import ru.souz.llms.codex.CodexEndpoints
 import ru.souz.llms.codex.CodexOAuthService
 import ru.souz.llms.findLLMModel
 import ru.souz.llms.resolveChatModel
@@ -49,6 +51,7 @@ internal class BackendExecutionLlmChatApi(
     private val metrics: BackendMetrics? = null,
     private val llmConfig: NamedLlmConfig = NamedLlmConfig(),
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
+    private val codexEndpoints: CodexEndpoints = CodexEndpoints(),
     private val fallbackModels: List<String> = emptyList(),
     private val failureMemory: ModelFailureMemory = ModelFailureMemory(),
 ) : LLMChatAPI {
@@ -71,15 +74,13 @@ internal class BackendExecutionLlmChatApi(
                 requestParameters = settingsProvider.openaiSummarizationParameters,
             )
             val request = body.copy(model = summarizationModel, provider = LlmProvider.OPENAI)
-            return retryChat { callProvider(LlmProvider.OPENAI, request, api) }
+            return retryChat(LlmProvider.OPENAI) { callProvider(LlmProvider.OPENAI, request, api) }
         }
         val primary = when (val route = chatRoute(body)) {
             is ChatRoute.Ready -> route
             is ChatRoute.Rejected -> return route.error
         }
-        val fallbacks = fallbackModels.map { chatRoute(body.copy(model = it, provider = findLLMModel(it)?.provider ?: LlmProvider.OPENAI)) }
-            .filterIsInstance<ChatRoute.Ready>()
-        val routes = (listOf(primary) + fallbacks).distinctBy { it.target }
+        val routes = chatRoutes(body, primary)
         if (routes.size == 1) return chat(primary)
         var lastFailure: LLMResponse.Chat.Error? = null
         for (route in routes) {
@@ -97,8 +98,16 @@ internal class BackendExecutionLlmChatApi(
     }
 
     private suspend fun chat(route: ChatRoute.Ready): LLMResponse.Chat =
-        retryChat { callProvider(route.provider, route.request, apiFor(route.provider, route.namedModel),
+        retryChat(route.provider) { callProvider(route.provider, route.request, apiFor(route.provider, route.namedModel),
             route.modelName) }
+
+    private fun chatRoutes(body: LLMRequest.Chat, primary: ChatRoute.Ready): List<ChatRoute.Ready> {
+        val targets = llmConfig.cascades[body.model] ?: primary.namedModel?.fallbacks ?: fallbackModels
+        val fallbacks = targets.map {
+            chatRoute(body.copy(model = it, provider = findLLMModel(it)?.provider ?: LlmProvider.OPENAI))
+        }.filterIsInstance<ChatRoute.Ready>()
+        return (listOf(primary) + fallbacks).distinctBy { it.target }
+    }
 
     // A user's own key fails for that user only; every other credential is shared by the whole server.
     private suspend fun usesUserKey(route: ChatRoute.Ready): Boolean =
@@ -106,13 +115,35 @@ internal class BackendExecutionLlmChatApi(
             providerStateMutex.withLock { resolveCredentialLocked(route.provider) }.source == CredentialSource.USER_MANAGED
 
     override suspend fun messageStream(body: LLMRequest.Chat): Flow<LLMResponse.Chat> {
-        val (provider, request, namedModel) = when (val route = chatRoute(body)) {
+        val primary = when (val route = chatRoute(body)) {
             is ChatRoute.Ready -> route
             is ChatRoute.Rejected -> return flow { emit(route.error) }
         }
-        val api = apiFor(provider, namedModel)
-        return retryingStream(provider, api, request, body.model.takeIf(llmConfig.models::containsKey))
+        if (body.model !in llmConfig.cascades && primary.namedModel?.fallbacks == null) return stream(primary)
+        return flow {
+            var lastFailure: LLMResponse.Chat.Error? = null
+            for (route in chatRoutes(body, primary)) {
+                val failureKey = route.target to userId.takeIf { usesUserKey(route) }
+                if (!failureMemory.shouldTry(failureKey)) continue
+                var emitted = false
+                var failure: LLMResponse.Chat.Error? = null
+                stream(route).takeWhile { response ->
+                    if (response is LLMResponse.Chat.Error && response.isProviderFailure()) {
+                        failure = response
+                        emitted
+                    } else true
+                }.collect { response -> emit(response); emitted = true }
+                failureMemory.record(failureKey, failure != null)
+                if (emitted || failure == null) return@flow
+                log.warn("Model {} failed with status {}; trying the next fallback model", route.request.model, failure.status)
+                lastFailure = failure
+            }
+            if (lastFailure != null) emit(lastFailure) else stream(primary).collect { emit(it) }
+        }
     }
+
+    private suspend fun stream(route: ChatRoute.Ready): Flow<LLMResponse.Chat> =
+        retryingStream(route.provider, apiFor(route.provider, route.namedModel), route.request, route.modelName)
 
     override suspend fun embeddings(body: LLMRequest.Embeddings): LLMResponse.Embeddings {
         val configuredModel = settingsProvider.embeddingsModel
@@ -161,17 +192,20 @@ internal class BackendExecutionLlmChatApi(
         return providerStateMutex.withLock { resolveCredentialLocked(provider) }.apiKey
     }
 
-    private fun currentProvider(): LlmProvider = settingsProvider.gigaModel.provider
+    private fun currentProvider(): LlmProvider = llmConfig.providerForSelection(settingsProvider.executionModelId(settingsProvider.gigaModel))
 
-    private fun currentNamedModel(): NamedLlmModel? = llmConfig.models[
-        settingsProvider.executionModelId(settingsProvider.gigaModel)
-    ]
+    private fun currentNamedModel(): NamedLlmModel? {
+        val selection = settingsProvider.executionModelId(settingsProvider.gigaModel)
+        return llmConfig.models[llmConfig.cascades[selection]?.firstOrNull() ?: selection]
+    }
 
     private fun chatRoute(body: LLMRequest.Chat): ChatRoute {
-        if (body.provider == null || body.provider == LlmProvider.OPENAI) {
-            llmConfig.models[body.model]?.let { model ->
-                return ChatRoute.Ready(LlmProvider.OPENAI, body.copy(model = model.modelId, provider = LlmProvider.OPENAI), model, body.model)
-            }
+        llmConfig.cascades[body.model]?.firstOrNull()?.let { target ->
+            return chatRoute(body.copy(model = target, provider = findLLMModel(target)?.provider ?: LlmProvider.OPENAI))
+        }
+        llmConfig.models[body.model]?.let { model ->
+            val effort = body.reasoningEffort ?: llmConfig.reasoningEfforts[body.model]
+            return ChatRoute.Ready(model.provider, body.copy(model = model.modelId, provider = model.provider, reasoningEffort = effort), model, body.model)
         }
         body.provider?.let { provider ->
             val effort = body.reasoningEffort ?: findLLMModel(body.model)?.takeIf { it.provider == provider }
@@ -223,6 +257,7 @@ internal class BackendExecutionLlmChatApi(
                     settingsProvider,
                     codexOAuthService,
                     httpClients.standard,
+                    codexEndpoints,
                 )
                 LlmProvider.GIGA -> error(BackendLlmSupport.GIGA_UNSUPPORTED_MESSAGE)
             }
@@ -236,15 +271,15 @@ internal class BackendExecutionLlmChatApi(
         return credentials.getValue(provider) ?: error("Missing configured credential for provider $provider.")
     }
 
-    private suspend fun retryChat(request: suspend () -> LLMResponse.Chat): LLMResponse.Chat {
+    private suspend fun retryChat(provider: LlmProvider, request: suspend () -> LLMResponse.Chat): LLMResponse.Chat {
         var attempt = 0
         while (true) {
             val response = request()
-            if (response !is LLMResponse.Chat.Error || response.status != TOO_MANY_REQUESTS) {
+            if (response !is LLMResponse.Chat.Error || !isRetryable(provider, response)) {
                 return response
             }
             if (attempt == retryPolicy.max429Retries) return response
-            delayMillis(backoffForAttempt(attempt, response.message))
+            waitForRetry(provider, attempt, response)
             attempt += 1
         }
     }
@@ -274,8 +309,8 @@ internal class BackendExecutionLlmChatApi(
                     measureAttempt(provider, request.model) { outcome ->
                         api.messageStream(request).collect { response ->
                             if (response is LLMResponse.Chat.Error) outcome(responseMetricOutcome(response.status))
-                            if (!emitted && response is LLMResponse.Chat.Error && response.status == TOO_MANY_REQUESTS &&
-                                attempt < retryPolicy.max429Retries) throw RetryFirstStreaming429(response)
+                            if (!emitted && response is LLMResponse.Chat.Error && isRetryable(provider, response) &&
+                                attempt < retryPolicy.max429Retries) throw RetryFirstStreamingError(response)
                             if (response is LLMResponse.Chat.Ok) {
                                 val delta = response.usage.deltaFrom(previousUsage)
                                 recordUsage(provider, request.model, delta)
@@ -287,8 +322,8 @@ internal class BackendExecutionLlmChatApi(
                     }
                 }
                 return@flow
-            } catch (retry: RetryFirstStreaming429) {
-                delayMillis(backoffForAttempt(attempt, retry.error.message))
+            } catch (retry: RetryFirstStreamingError) {
+                waitForRetry(provider, attempt, retry.error)
                 attempt += 1
             }
         }
@@ -324,6 +359,21 @@ internal class BackendExecutionLlmChatApi(
                 is LLMResponse.Chat.Error -> error("attachment_vision_failed")
             }
         }
+    }
+
+    private fun isRetryable(provider: LlmProvider, error: LLMResponse.Chat.Error): Boolean =
+        error.status == TOO_MANY_REQUESTS || (provider == LlmProvider.CODEX && error.status == 503)
+
+    private suspend fun waitForRetry(provider: LlmProvider, attempt: Int, error: LLMResponse.Chat.Error) {
+        val delay = backoffForAttempt(attempt, error.message)
+        LoggerFactory.getLogger(BackendExecutionLlmChatApi::class.java).atWarn()
+            .addKeyValue("event", "provider.retry")
+            .addKeyValue("provider", provider.name)
+            .addKeyValue("status", error.status)
+            .addKeyValue("retry_number", attempt + 1)
+            .addKeyValue("delay_ms", delay)
+            .log("Retrying model request")
+        delayMillis(delay)
     }
 
     private suspend fun recordUsage(provider: LlmProvider, model: String, delta: LLMResponse.Usage) {
@@ -374,7 +424,7 @@ internal class BackendExecutionLlmChatApi(
 private sealed interface ChatRoute {
     data class Ready(val provider: LlmProvider, val request: LLMRequest.Chat, val namedModel: NamedLlmModel? = null, val modelName: String? = null) : ChatRoute {
         /** The upstream model and connection this route reaches; named connections are shared, process-wide instances. */
-        val target = Triple(provider, namedModel, request.model)
+        val target = Triple(provider, namedModel.takeUnless { provider == LlmProvider.CODEX }, request.model)
     }
     data class Rejected(val error: LLMResponse.Chat.Error) : ChatRoute
 }
@@ -384,9 +434,11 @@ private fun LLMResponse.Chat.Error.isProviderFailure(): Boolean =
     status !in 400..499 ||
         status in 401..403 ||
         status == 408 ||
-        status == 429
+        status == 429 || ((status == 400 || status == 404) && runCatching {
+            ru.souz.llms.restJsonMapper.readTree(message)?.path("error")?.path("code")?.asText() == "model_not_found"
+        }.getOrDefault(false))
 
-private class RetryFirstStreaming429(val error: LLMResponse.Chat.Error) : Exception("retry", null, false, false)
+private class RetryFirstStreamingError(val error: LLMResponse.Chat.Error) : Exception("retry", null, false, false)
 
 private fun ModelResolution<*>.description(): String = when (this) {
     is ModelResolution.Resolved -> value.toString()

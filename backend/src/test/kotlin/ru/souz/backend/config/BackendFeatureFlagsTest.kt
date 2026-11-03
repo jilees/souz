@@ -12,6 +12,7 @@ import ru.souz.backend.app.BackendPostgresConfig
 import ru.souz.backend.app.BackendProviderRetryPolicy
 import ru.souz.backend.app.BackendServerConfig
 import ru.souz.backend.common.BackendConfigurationException
+import ru.souz.llms.codex.CodexEndpoints
 
 class BackendFeatureFlagsTest {
     @Test
@@ -71,6 +72,20 @@ class BackendFeatureFlagsTest {
 }
 
 class BackendAppConfigTest {
+    @Test
+    fun `Codex URLs read environment and property values with environment precedence`() {
+        val config = BackendAppConfig.load(MapBackendConfigSource(
+            env = mapOf("SOUZ_MASTER_KEY" to "test-master-key",
+                "CODEX_BASE_URL" to " https://relay.test/souz-llm/chatgpt/ "),
+            properties = mapOf("CODEX_BASE_URL" to "https://ignored.test",
+                "CODEX_AUTH_BASE_URL" to "https://relay.test/souz-llm/auth/"),
+        )).validate()
+        assertEquals(CodexEndpoints(
+            baseUrl = "https://relay.test/souz-llm/chatgpt",
+            authBaseUrl = "https://relay.test/souz-llm/auth",
+        ), config.codexEndpoints)
+    }
+
     @Test
     fun `server config reads defaults and explicit settings`() {
         val defaultConfig = BackendAppConfig.load(
