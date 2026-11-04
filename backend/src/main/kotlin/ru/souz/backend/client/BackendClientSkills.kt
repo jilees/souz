@@ -238,8 +238,6 @@ private class ClientWebSocketSkill(
         val pending = PendingClientTool(toolCallId)
         val device = when (val beginTool = registry.beginTool(threadId, pending)) {
             BeginClientToolResult.Missing -> return invokeOnChannel(chat, functionCall, meta)
-            BeginClientToolResult.Busy ->
-                return failed("client_tool_busy", "Another client tool call is already pending.")
             is BeginClientToolResult.Started -> beginTool.device
         }
         val startedAt = now()
@@ -379,7 +377,7 @@ private class ClientWebSocketSkill(
     }
 
     private suspend fun cancel(context: ToolCallContext) {
-        val error = ClientError("client_tool_cancelled", "Client tool call was cancelled with its thread.")
+        val error = ClientError("client_tool_cancelled", "Client tool call was cancelled.")
         toolCallRepository.completeClientCall(
             context = context,
             status = ToolCallStatus.CANCELLED,

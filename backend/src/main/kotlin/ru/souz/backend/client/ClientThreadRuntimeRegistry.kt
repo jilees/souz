@@ -57,7 +57,6 @@ internal class PendingChannelTool(private val deadlineAt: Instant) {
 
 internal sealed interface BeginClientToolResult {
     data class Started(val device: ClientDevice) : BeginClientToolResult
-    data object Busy : BeginClientToolResult
     data object Missing : BeginClientToolResult
 }
 
@@ -73,7 +72,7 @@ internal class ClientThreadRuntimeRegistry(
         val runtimeReady: CompletableDeferred<Unit> = CompletableDeferred(),
         val runtime: BackendConversationRuntime? = null,
         val latestDevice: ClientDevice,
-        val pendingTool: PendingClientTool? = null,
+        val pendingTools: Map<String, PendingClientTool> = emptyMap(),
         val terminal: Boolean = false,
         val removed: CompletableDeferred<Unit> = CompletableDeferred(),
     )
@@ -124,7 +123,7 @@ internal class ClientThreadRuntimeRegistry(
     suspend fun discard(threadId: UUID) {
         val discarded = mutex.withLock { states.remove(threadId) } ?: return
         discarded.runtimeReady.complete(Unit)
-        discarded.pendingTool?.result?.cancel()
+        discarded.pendingTools.values.forEach { it.result.cancel() }
         discarded.removed.complete(Unit)
     }
 
@@ -208,19 +207,16 @@ internal class ClientThreadRuntimeRegistry(
     suspend fun beginTool(threadId: UUID, pending: PendingClientTool): BeginClientToolResult = mutex.withLock {
         val state = states[threadId]?.takeUnless { it.terminal }
             ?: return@withLock BeginClientToolResult.Missing
-        if (state.pendingTool != null) return@withLock BeginClientToolResult.Busy
-        states[threadId] = state.copy(pendingTool = pending)
+        states[threadId] = state.copy(pendingTools = state.pendingTools + (pending.toolCallId to pending))
         BeginClientToolResult.Started(state.latestDevice)
     }
 
     suspend fun finishTool(threadId: UUID, toolCallId: String, outcome: ClientToolOutcome): Boolean {
         val pending = mutex.withLock {
             val state = states[threadId] ?: return@withLock null
-            state.pendingTool
-                ?.takeIf { it.toolCallId == toolCallId }
-                ?.also {
-                    storeOrRemove(threadId, state.copy(pendingTool = null))
-                }
+            state.pendingTools[toolCallId]?.also {
+                storeOrRemove(threadId, state.copy(pendingTools = state.pendingTools - toolCallId))
+            }
         } ?: return false
         return pending.result.complete(outcome)
     }
@@ -228,13 +224,12 @@ internal class ClientThreadRuntimeRegistry(
     suspend fun clearTool(threadId: UUID, toolCallId: String) {
         mutex.withLock {
             val state = states[threadId] ?: return@withLock
-            val cleared = if (state.pendingTool?.toolCallId == toolCallId) state.copy(pendingTool = null) else state
-            storeOrRemove(threadId, cleared)
+            storeOrRemove(threadId, state.copy(pendingTools = state.pendingTools - toolCallId))
         }
     }
 
     private fun storeOrRemove(threadId: UUID, state: State) {
-        if (state.terminal && state.runtime == null && state.pendingTool == null) {
+        if (state.terminal && state.runtime == null && state.pendingTools.isEmpty()) {
             states.remove(threadId)
             state.removed.complete(Unit)
         } else {

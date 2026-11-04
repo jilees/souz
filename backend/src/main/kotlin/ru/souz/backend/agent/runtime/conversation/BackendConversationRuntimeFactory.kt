@@ -275,7 +275,7 @@ internal class BackendConversationRuntimeFactory(
                 searchKnowledge = searchKnowledgeTool,
                 searchMemory = searchMemoryTool,
                 runtimeCommand = runtimeCommandTool,
-                spawnSubagent = subagentTools::create,
+                subagentTools = { subagentTools.create(it).tools },
                 forgetMemory = forgetMemoryTools,
             ),
             knowledgeStore = knowledgeStore,

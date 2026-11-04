@@ -1,7 +1,9 @@
 package ru.souz.agent.spi
 
 import ru.souz.agent.AgentId
+import ru.souz.agent.runtime.DEFAULT_SUBAGENT_TASK_TIMEOUT
 import ru.souz.llms.LLMModel
+import kotlin.time.Duration
 
 const val DEFAULT_SUMMARIZATION_MAX_OUTPUT_TOKENS = 2_048
 
@@ -13,6 +15,9 @@ const val DEFAULT_SUMMARIZATION_MAX_OUTPUT_TOKENS = 2_048
  * agent behavior.
  */
 interface AgentSettingsProvider {
+    /** Host-wide cooperative deadline for each child, independent of provider request timeouts. */
+    val subagentTaskTimeout: Duration get() = DEFAULT_SUBAGENT_TASK_TIMEOUT
+
     /** Returns a model-specific system prompt override if one was saved by the host. */
     fun getSystemPromptForAgentModel(agentId: AgentId, model: LLMModel): String?
 

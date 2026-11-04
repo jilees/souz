@@ -16,6 +16,8 @@ Conversation output defaults to 4,096 tokens. Named models can set a positive `m
 
 Summary output uses the startup-validated `SUMMARIZATION_MAX_OUTPUT_TOKENS` server setting (positive integer, default 2,048), independent of the context window.
 
+Subagents run asynchronously with admission limits and cooperative deadlines (`SUBAGENT_TASK_TIMEOUT_MS`, default 600000) within one parent execution; parent-only tools wait for or cancel children. A zero-timeout wait polls status. See [subagent lifecycle](agent/docs/subagents.md).
+
 Backend [personality settings](backend/docs/personality-settings.md) are separate from system prompts and synchronize revisioned snapshots to Orion. Before mutation, an unknown connected source requires `client_tool_discovery_required` even when another channel declares synchronization support; otherwise discovery is required when no connected provider is known. Parent discovery precedes retry without incrementing the revision.
 
 Backend [attachment contracts](backend/docs/attachments.md) carry owner-scoped flat `fileId` references through messages, tools and sessions; V29 converts stored nested metadata while public WebSocket attachment contracts remain stable. Trusted HTTP message reads expose flat attachment metadata.
