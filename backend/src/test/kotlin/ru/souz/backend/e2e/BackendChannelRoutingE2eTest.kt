@@ -84,7 +84,8 @@ class BackendChannelRoutingE2eTest {
                         "channelType" to "telegram", "channelId" to target, "text" to "From child",
                     ))
                 }
-                request.messages.last().name == "SpawnSubagent" -> reply(request, "Done")
+                request.messages.last().name == "SpawnSubagent" -> waitForChild(request, request.messages.last().content)
+                request.messages.last().name == "WaitSubagent" -> reply(request, "Done")
                 else -> toolCallReply(request, "SpawnSubagent", mapOf(
                     "task" to "Send From child to the target channel.", "skillIds" to listOf("SendMessageToChannel"),
                 ))

@@ -112,6 +112,8 @@ class BackendWebSocketAttachmentsE2eTest {
                             } else {
                                 toolCallReply(request, "AttachFileToReply", mapOf("path" to output.toString()))
                             }
+                        } else if (last.name == "SpawnSubagent") {
+                            waitForChild(request, last.content)
                         } else when (parentPhase++) {
                             0 -> toolCallReply(request, "GetSkillByName", mapOf("skillId" to "AttachFileToReply"))
                             1 -> {

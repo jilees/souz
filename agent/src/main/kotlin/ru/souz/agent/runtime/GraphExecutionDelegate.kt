@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
 import ru.souz.agent.AgentExecutionResult
 import ru.souz.agent.GraphStepCallback
@@ -14,10 +16,12 @@ import ru.souz.agent.state.AgentContext
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration
 
 internal class GraphExecutionDelegate(
     private val logObjectMapper: ObjectMapper,
     loggerClass: Class<*>,
+    private val subagentTaskTimeout: Duration = DEFAULT_SUBAGENT_TASK_TIMEOUT,
 ) {
     private val logger = LoggerFactory.getLogger(loggerClass)
     private val runningJob = AtomicReference<Deferred<*>?>(null)
@@ -34,19 +38,32 @@ internal class GraphExecutionDelegate(
         cancelActiveJob()
         val newContext = coroutineScope {
             val result: Deferred<AgentContext<String>> = async {
-                graph.start(ctx) { step, node, from, to ->
-                    val fromCtx = from as AgentContext<Any?>
-                    val toCtx = to as AgentContext<Any?>
-                    val prettyInput = runCatching {
-                        logObjectMapper.writeValueAsString(fromCtx.input)
-                    }.getOrElse { fromCtx.input.toString() }
-                    logger.debug("Step: {}, node: {}, input: {}", step.index, node.name, prettyInput)
-                    onStep?.invoke(step, node, fromCtx, toCtx)
+                // Parent and children share the sink, whose emit contract is sequential.
+                val eventSink = if (ctx.runtimeEventSink === AgentRuntimeEventSink.NONE) {
+                    ctx.runtimeEventSink
+                } else {
+                    val eventMutex = Mutex()
+                    object : AgentRuntimeEventSink {
+                        override suspend fun emit(event: AgentRuntimeEvent) {
+                            eventMutex.withLock { ctx.runtimeEventSink.emit(event) }
+                        }
+                    }
+                }
+                withSubagentTasks(subagentTaskTimeout) {
+                    graph.start(ctx.copy(runtimeEventSink = eventSink)) { step, node, from, to ->
+                        val fromCtx = from as AgentContext<Any?>
+                        val toCtx = to as AgentContext<Any?>
+                        val prettyInput = runCatching {
+                            logObjectMapper.writeValueAsString(fromCtx.input)
+                        }.getOrElse { fromCtx.input.toString() }
+                        logger.debug("Step: {}, node: {}, input: {}", step.index, node.name, prettyInput)
+                        onStep?.invoke(step, node, fromCtx, toCtx)
+                    }
                 }
             }
             runningJob.store(result)
             try {
-                result.await()
+                result.await().copy(runtimeEventSink = ctx.runtimeEventSink)
             } finally {
                 runningJob.compareAndSet(result, null)
             }

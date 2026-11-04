@@ -1,6 +1,9 @@
 package ru.souz.agent.runtime
 
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlin.math.max
 import ru.souz.agent.SubagentTool
 import ru.souz.agent.state.AgentSettings
@@ -14,7 +17,7 @@ import ru.souz.llms.ToolInvocationMeta
 class AgentToolExecutor(
     private val telemetry: AgentTelemetry = AgentTelemetry.NONE,
 ) {
-    // Completion accounting also runs when cancellation prevents failure-event delivery.
+    // Record cancellation before propagating it past the tool boundary.
     @Suppress("SuspendFunSwallowedCancellation")
     suspend fun execute(
         settings: AgentSettings,
@@ -42,9 +45,18 @@ class AgentToolExecutor(
             }
         } catch (error: Throwable) {
             failure = error
-            eventSink.emit(
-                AgentRuntimeEvent.ToolCallFailed(runtimeToolCallId, functionCall.name, error, durationMsSince(startedAtNanos))
-            )
+            val event = AgentRuntimeEvent.ToolCallFailed(runtimeToolCallId, functionCall.name, error, durationMsSince(startedAtNanos))
+            if (error is CancellationException) {
+                withContext(NonCancellable) {
+                    try {
+                        eventSink.emit(event)
+                    } catch (emitError: Exception) {
+                        if (emitError !== error) error.addSuppressed(emitError)
+                    }
+                }
+                throw error
+            }
+            eventSink.emit(event)
             if (error is UnknownTool) return LLMRequest.Message(
                 role = LLMMessageRole.function,
                 content = """{"result":"no such function ${functionCall.name}"}""",

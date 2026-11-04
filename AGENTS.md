@@ -14,6 +14,8 @@ Backend uses one startup-validated `CONTEXT_SIZE` (minimum 24,000 tokens) for al
 
 Summary output uses the startup-validated `SUMMARIZATION_MAX_OUTPUT_TOKENS` server setting (positive integer, default 2,048), independent of the context window.
 
+Subagents run asynchronously with admission limits and cooperative deadlines (`SUBAGENT_TASK_TIMEOUT_MS`, default 600000) within one parent execution; parent-only tools wait for or cancel children. A zero-timeout wait polls status. See [subagent lifecycle](agent/docs/subagents.md).
+
 Backend [personality settings](backend/docs/personality-settings.md) store voice, appeal, style and custom personality per user; the unmodified activation word `your_name` belongs to its chat. Free string parameter dictionaries retain only these five known values. Server-driven Orion synchronization sends `parameters` with a user revision. Before mutation, an unknown connected source requires `client_tool_discovery_required` even when another channel declares synchronization support; otherwise discovery is required when no connected provider is known. Parent discovery precedes retry without incrementing the revision.
 
 Backend [attachment contracts](backend/docs/attachments.md) carry owner-scoped flat `fileId` references through messages, tools and sessions; V29 converts stored nested metadata while public WebSocket attachment contracts remain stable. Trusted HTTP message reads expose flat attachment metadata.
