@@ -19,7 +19,7 @@ class ToolListActiveChannels(
 
     override val name: String = LIST_ACTIVE_CHANNELS_TOOL_NAME
     override val description: String =
-        "Refreshes and lists the calling user's configured communication channels (e.g. Telegram) " +
+        "Refreshes and lists the calling user's configured communication channels (e.g. Telegram, vk) " +
             "that a message can be forwarded to. Returns an empty list " +
             "if the user has no configured channels. Reuse the result for repeated sends; refresh on request or changed destinations."
 
