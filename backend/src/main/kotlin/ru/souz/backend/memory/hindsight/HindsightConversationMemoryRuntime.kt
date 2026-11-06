@@ -232,12 +232,13 @@ internal class HindsightConversationMemoryRuntime(
     }
 
     /** Hides one fact from recall; false when the user's bank has no such fact. */
-    internal suspend fun forgetFact(userId: String, factId: String): Boolean = measured(
+    internal suspend fun forgetFact(bankId: String, factId: String, ownerId: String = bankId): Boolean = measured(
         "forget_fact",
+        fields = if (bankId != ownerId) mapOf("bank_id" to bankId) else emptyMap(),
         // The model supplies the ID, so only an ID Hindsight found is known to carry no dialogue text.
         describe = { found: Boolean -> mapOf("found" to found, "fact_id" to factId.takeIf { found }) },
     ) {
-        val response = httpClient.patch("${bankUrl(userId)}/memories/${factId.encodeURLPathPart()}") {
+        val response = httpClient.patch("${bankUrl(bankId)}/memories/${factId.encodeURLPathPart()}") {
             jsonRequest(apiToken)
             setBody(mapOf("state" to "invalidated", "reason" to "Forgotten at the user's request"))
         }
@@ -250,14 +251,41 @@ internal class HindsightConversationMemoryRuntime(
         }
     }
 
-    /** Deleting the bank also drops its queued and running extraction. */
+    /** Snapshot all owned banks before deleting; deleting a bank also drops its extraction jobs. */
     internal suspend fun forgetAll(userId: String) {
-        measured("forget_all") { httpClient.delete(bankUrl(userId)) { authorize(apiToken) }.requireSuccess() }
+        val banks = linkedSetOf(userId)
+        var offset = 0
+        do {
+            val page = measured("list_banks") {
+                httpClient.get("$baseUrl/v1/default/banks") {
+                    authorize(apiToken)
+                    parameter("limit", 100)
+                    parameter("offset", offset)
+                }.requireSuccess().body<JsonNode>()
+            }
+            val entries = page.path("banks")
+            check(entries.isArray) { "Hindsight bank list is missing." }
+            for (entry in entries) {
+                val bankId = entry.path("bank_id").asText()
+                if (isPersonalMemoryBank(userId, bankId)) banks += bankId
+            }
+            offset += entries.size()
+            // Older Hindsight versions return the complete list without pagination metadata.
+            val total = page.get("total")?.intValue() ?: break
+            check(entries.size() > 0 || offset >= total) { "Hindsight bank list is incomplete." }
+        } while (offset < total)
+        for (bankId in banks) {
+            measured("forget_all", if (bankId != userId) mapOf("bank_id" to bankId) else emptyMap()) {
+                val response = httpClient.delete(bankUrl(bankId)) { authorize(apiToken) }
+                if (response.status != HttpStatusCode.NotFound) response.requireSuccess()
+            }
+        }
     }
 
-    internal suspend fun hasPendingRetain(userId: String): Boolean = listOf("pending", "processing").any { status ->
-        measured("pending_check", mapOf("status" to status), describe = { pending: Boolean -> mapOf("pending" to pending) }) {
-            val response = httpClient.get("${bankUrl(userId)}/operations") {
+    internal suspend fun hasPendingRetain(bankId: String, ownerId: String = bankId): Boolean = listOf("pending", "processing").any { status ->
+        measured("pending_check", mapOf("status" to status) + if (bankId != ownerId) mapOf("bank_id" to bankId) else emptyMap(),
+            describe = { pending: Boolean -> mapOf("pending" to pending) }) {
+            val response = httpClient.get("${bankUrl(bankId)}/operations") {
                 authorize(apiToken)
                 parameter("status", status)
                 parameter("type", "retain")

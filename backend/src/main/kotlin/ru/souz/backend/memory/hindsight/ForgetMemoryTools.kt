@@ -33,7 +33,8 @@ internal class ToolForgetMemoryFact(
 ) : LLMToolSetup {
     override val fn = LLMRequest.Function(
         name = NAME,
-        description = "Forget exactly one persistent memory fact by its factId from SearchMemory. Use only when the user " +
+        description = "Forget exactly one persistent household or personal memory fact by its exact factId from SearchMemory, " +
+            "including its bank prefix when present. Personal banks of this account are supported. Use only when the user " +
             "explicitly asks to forget that information. If several facts match or none clearly does, ask the user instead " +
             "of guessing; never forget merely related facts. forgotten=true confirms it. pendingCapture=true means recent " +
             "dialogue is still being saved and may store it again: tell the user and suggest repeating the request in a " +
@@ -48,10 +49,15 @@ internal class ToolForgetMemoryFact(
     override suspend fun invoke(functionCall: LLMResponse.FunctionCall, meta: ToolInvocationMeta): LLMRequest.Message {
         val factId = (functionCall.arguments["factId"] as? String)?.trim()?.takeIf(String::isNotEmpty)
             ?: return failure(NAME, "invalid_arguments", "factId must be a non-blank string.")
+        val bankId = factId.substringBeforeLast(':', meta.userId)
+        val rawFactId = factId.substringAfterLast(':')
+        if (rawFactId.isBlank() || (bankId != meta.userId && !isPersonalMemoryBank(meta.userId, bankId))) {
+            return failure(NAME, "not_found", "The user's memory has no fact with this factId; nothing was forgotten.")
+        }
         return forgetting(NAME) {
             // Checked before forgetting so that a failed check never hides a completed change.
-            val pending = fragments.hasPending(meta.userId) || memory.hasPendingRetain(meta.userId)
-            if (memory.forgetFact(meta.userId, factId)) {
+            val pending = fragments.hasPending(meta.userId) || memory.hasPendingRetain(bankId, meta.userId)
+            if (memory.forgetFact(bankId, rawFactId, meta.userId)) {
                 response(NAME, mapOf("forgotten" to true, "pendingCapture" to pending))
             } else {
                 failure(NAME, "not_found", "The user's memory has no fact with this factId; nothing was forgotten.")
@@ -72,7 +78,8 @@ internal class ToolForgetAllMemory(
 ) : LLMToolSetup {
     override val fn = LLMRequest.Function(
         name = NAME,
-        description = "Forget all persistent memory of the user in every conversation. Use only when the user explicitly " +
+        description = "Forget all persistent memory of this account in every conversation, including the shared household " +
+            "bank and all personal speaker banks. Use only when the user explicitly " +
             "asks to forget everything. Without confirmationId nothing is deleted and the result returns one: ask the user " +
             "to confirm and end your turn. Call again with it only after the user explicitly confirms in a later message " +
             "within 10 minutes; each confirmationId works once. forgotten=true confirms deletion. $CAPTURE_NOTE",

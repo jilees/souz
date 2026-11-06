@@ -1,9 +1,17 @@
 package ru.souz.backend.memory.hindsight
 
+import java.util.UUID
 import ru.souz.jev.JevClient
 import ru.souz.llms.restJsonMapper
 
 internal fun personalMemoryBank(userId: String, embeddingId: String): String = "person:$userId:$embeddingId"
+
+internal fun isPersonalMemoryBank(userId: String, bankId: String): Boolean {
+    val prefix = "person:$userId:"
+    if (!bankId.startsWith(prefix)) return false
+    val voice = bankId.removePrefix(prefix)
+    return runCatching { UUID.fromString(voice).toString() == voice }.getOrDefault(false)
+}
 
 /** JEV selects destinations; Hindsight remains responsible for extracting facts. */
 internal class VoiceMemoryRouting(private val client: () -> JevClient) {

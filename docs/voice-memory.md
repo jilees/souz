@@ -14,7 +14,9 @@ Each accepted message carries its own voice and durable message ID. Active-run i
 
 ## Memory deletion scope
 
-`ForgetMemoryFact` and `ForgetAllMemory` address the account's household bank only. They do not route by voice identity. `ForgetMemoryFact` expects a raw household fact ID; bank-prefixed IDs returned by voice `SearchMemory` are not supported. `ForgetAllMemory` leaves personal banks intact. The deletion tools' user-wide wording does not describe this two-bank voice configuration; personal-bank deletion needs a separate integration.
+`ForgetMemoryFact` accepts the exact `factId` from `SearchMemory`: a raw ID targets the household bank, while `<bankId>:<factId>` targets that account's household or personal bank. Personal bank IDs must match `person:<trustedUserId>:<canonicalVoiceUuid>`; foreign or malformed bank prefixes are rejected before provider calls. Voice identity does not authorize deletion: any personal bank of the trusted account can be targeted by its exact ID. Pending-capture checks include the selected bank's retain operations and the account's queued history/voice fragments.
+
+After the existing one-time confirmation, `ForgetAllMemory` clears the account's queued fragments and deletes its household bank and every personal bank returned by Hindsight's bank listing. Listing completes before any bank deletion and supports paginated and legacy unpaginated responses. Missing banks are already forgotten. A listing or deletion error never confirms success; deletion across banks is not atomic, so a failed operation may have deleted some banks. Other accounts' banks are excluded. Retains arriving concurrently from another chat can recreate a bank.
 
 ## Speaker attribution in conversation
 
@@ -38,6 +40,6 @@ Unidentified inputs and imported `history.append` text use the existing househol
 
 ## Verification
 
-Run `:agent:test`, backend `BackendVoiceMemoryE2eTest`, `BackendHistoryMemoryE2eTest`, `VoiceMemoryTest`, `BackendDiModuleTest`, and shared `ToolSearchMemoryTest` / `MemoryRulesTest` with the Gradle wrapper. Database-backed tests require Docker. Run `souzGateFast` and the duplicate-code check.
+Run `:agent:test`, backend `BackendVoiceMemoryE2eTest`, `BackendHistoryMemoryE2eTest`, `BackendMemoryForgettingE2eTest`, `VoiceMemoryTest`, `BackendDiModuleTest`, and shared `ToolSearchMemoryTest` / `MemoryRulesTest` with the Gradle wrapper. Database-backed tests require Docker. Run `souzGateFast` and the duplicate-code check.
 
 The automated tests use real PostgreSQL and controlled JEV/Hindsight HTTP responses. Actual extraction and classification quality requires a live pilot: self-introduction, correction, another person's name, short replies, mixed household/personal facts, switching speakers, and recognition in another chat after extraction completes.

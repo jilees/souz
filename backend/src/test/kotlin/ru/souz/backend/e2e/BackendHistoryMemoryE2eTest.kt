@@ -17,6 +17,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.decodeURLPart
 import io.ktor.http.headersOf
 import io.ktor.websocket.Frame
 import java.io.IOException
@@ -59,7 +60,7 @@ import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.http.ProviderHttpClients
 import ru.souz.llms.http.providerHttpClientDefaults
 
-private const val HINDSIGHT_TEST_URL = "http://hindsight.test"
+internal const val HINDSIGHT_TEST_URL = "http://hindsight.test"
 
 class BackendHistoryMemoryE2eTest {
     private val hindsight = HistoryHindsightStub()
@@ -740,7 +741,7 @@ class BackendHistoryMemoryE2eTest {
 }
 
 /** Calls the memory tool named by the prompt's first word with its optional value, then records the last result. */
-private fun forgetLlm(results: MutableList<JsonNode>): E2eLlmApi {
+internal fun forgetLlm(results: MutableList<JsonNode>): E2eLlmApi {
     val mapper = jacksonObjectMapper()
     val search = mapOf("semanticQuery" to "everything about the user", "lexicalHints" to listOf("user"))
     return E2eLlmApi { request ->
@@ -770,7 +771,7 @@ private fun forgetLlm(results: MutableList<JsonNode>): E2eLlmApi {
     }
 }
 
-private suspend fun BackendE2eScope.submit(owner: String, chat: String, text: String): String {
+internal suspend fun BackendE2eScope.submit(owner: String, chat: String, text: String): String {
     val sent = client.post(BackendHttpRoutes.chatMessages(chat)) {
         trusted(owner)
         jsonBody(json.writeValueAsString(mapOf("content" to text, "options" to mapOf("model" to E2E_MODEL.alias))))
@@ -841,7 +842,7 @@ internal fun <T> withMemoryLogs(block: (List<ILoggingEvent>) -> T): T {
 internal fun ILoggingEvent.fields(): Map<String, String> =
     keyValuePairs.orEmpty().associate { it.key to it.value.toString() } - "duration_ms"
 
-private class HistoryHindsightStub {
+internal class HistoryHindsightStub {
     data class Item(val bank: String, val item: JsonNode, val operationId: String?)
     val items = CopyOnWriteArrayList<Item>()
     val recalls = CopyOnWriteArrayList<String>()
@@ -857,6 +858,9 @@ private class HistoryHindsightStub {
     val forgotten = CopyOnWriteArrayList<Pair<String, String>>()
     val deletedBanks = CopyOnWriteArrayList<String>()
     val pendingRetainBanks = CopyOnWriteArrayList<String>()
+    val banks = CopyOnWriteArrayList<String>()
+    var bankPageSize: Int? = null
+    var listBanksStatus = HttpStatusCode.OK
     var forgetStatus = HttpStatusCode.OK
     var forgetUnreachable = false
 
@@ -865,7 +869,7 @@ private class HistoryHindsightStub {
         val client = HttpClient(MockEngine { request ->
             val path = request.url.encodedPath
             paths += path
-            val bank = path.substringAfter("/banks/").substringBefore('/')
+            val bank = path.substringAfter("/banks/").substringBefore('/').decodeURLPart()
             var status = HttpStatusCode.OK
             if (request.method == HttpMethod.Patch || request.method == HttpMethod.Delete) {
                 if (forgetUnreachable) throw IOException("simulated unreachable memory")
@@ -873,9 +877,18 @@ private class HistoryHindsightStub {
             }
             val body = when {
                 status != HttpStatusCode.OK -> "{}"
+                path.endsWith("/banks") -> {
+                    status = listBanksStatus
+                    val offset = request.url.parameters["offset"]!!.toInt()
+                    val page = bankPageSize?.let { banks.drop(offset).take(it) } ?: banks.toList()
+                    mapper.writeValueAsString(buildMap<String, Any> {
+                        put("banks", page.map { mapOf("bank_id" to it) })
+                        if (bankPageSize != null) put("total", banks.size)
+                    })
+                }
                 request.method == HttpMethod.Patch -> {
                     assertEquals("invalidated", mapper.readTree(request.body.toByteArray())["state"].asText())
-                    val fact = bank to path.substringAfterLast('/')
+                    val fact = bank to path.substringAfterLast('/').decodeURLPart()
                     if (fact in facts) forgotten += fact else status = HttpStatusCode.NotFound
                     "{}"
                 }
