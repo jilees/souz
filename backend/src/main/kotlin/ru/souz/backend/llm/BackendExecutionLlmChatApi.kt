@@ -53,6 +53,7 @@ internal class BackendExecutionLlmChatApi(
     private val metrics: BackendMetrics? = null,
     private val llmConfig: NamedLlmConfig = NamedLlmConfig(),
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
+    private val visionModel: String? = attachmentInput?.visionModel,
     private val codexEndpoints: CodexEndpoints = CodexEndpoints(),
     private val failureMemory: ModelFailureMemory = ModelFailureMemory(),
 ) : LLMChatAPI {
@@ -75,13 +76,15 @@ internal class BackendExecutionLlmChatApi(
                 requestParameters = settingsProvider.openaiSummarizationParameters,
             )
             val request = body.copy(model = summarizationModel, provider = LlmProvider.OPENAI)
+                .inlineToolImages(download = ::downloadToolImage)
             return retryChat(LlmProvider.OPENAI) { callProvider(LlmProvider.OPENAI, request, api) }
         }
         val primary = when (val route = chatRoute(body)) {
             is ChatRoute.Ready -> route
             is ChatRoute.Rejected -> return route.error
         }
-        return cascade(body, primary, streaming = false).single()
+        val prepared = prepareToolImages(body, primary)
+        return cascade(prepared, primary.copy(request = primary.request.copy(messages = prepared.messages)), streaming = false).single()
     }
 
     private suspend fun chat(route: ChatRoute.Ready): LLMResponse.Chat =
@@ -106,7 +109,8 @@ internal class BackendExecutionLlmChatApi(
             is ChatRoute.Ready -> route
             is ChatRoute.Rejected -> return flow { emit(route.error) }
         }
-        return cascade(body, primary, streaming = true)
+        val prepared = prepareToolImages(body, primary)
+        return cascade(prepared, primary.copy(request = primary.request.copy(messages = prepared.messages)), streaming = true)
     }
 
     private fun cascade(body: LLMRequest.Chat, primary: ChatRoute.Ready, streaming: Boolean): Flow<LLMResponse.Chat> =
@@ -321,13 +325,26 @@ internal class BackendExecutionLlmChatApi(
         }
     }
 
-    private suspend fun prepareAttachments(raw: LLMRequest.Chat, modelName: String?): LLMRequest.Chat {
-        val body = raw.inlineToolImages { reference ->
+    private suspend fun prepareToolImages(body: LLMRequest.Chat, route: ChatRoute.Ready): LLMRequest.Chat {
+        val selection = visionModel
+        val direct = attachmentInput?.acceptsImages(route.request, route.modelName) == true ||
+            selection != null && (llmConfig.cascades[selection] ?: listOf(selection)).any { target ->
+                val builtin = findLLMModel(target)
+                val visionRoute = chatRoute(body.copy(model = builtin?.alias ?: target,
+                    provider = builtin?.provider ?: LlmProvider.OPENAI)) as? ChatRoute.Ready
+                visionRoute?.target == route.target
+            }
+        val analyze: (suspend (String, List<String>) -> String)? = if (selection != null && !direct)
+            { prompt, images -> analyzeVision(selection, prompt, images) } else null
+        return body.inlineToolImages(vision = analyze) { reference ->
             if (reference.startsWith("attachment:")) {
                 requireNotNull(attachmentInput) { "Attachment storage is unavailable." }
                     .toolImage(userId, reference.removePrefix("attachment:"))
             } else downloadToolImage(reference)
         }
+    }
+
+    private suspend fun prepareAttachments(body: LLMRequest.Chat, modelName: String?): LLMRequest.Chat {
         if (body.messages.none { it.files.isNotEmpty() || it.images.isNotEmpty() }) return body
         val input = attachmentInput ?: return body.copy(messages = body.messages.map { item ->
             if (item.files.isEmpty() && item.images.isEmpty()) item else item.copy(
@@ -336,20 +353,22 @@ internal class BackendExecutionLlmChatApi(
             )
         })
         return input.prepare(userId, body, modelName) { model, prompt, image ->
-            val named = llmConfig.models[model]
-            val known = ru.souz.llms.findLLMModel(model)
-            require(named != null || known != null) { "attachment_vision_model_unknown" }
-            val response = message(body.copy(
-                model = if (named != null) model else requireNotNull(known).alias,
-                provider = if (named != null) LlmProvider.OPENAI else requireNotNull(known).provider,
-                messages = listOf(LLMRequest.Message(ru.souz.llms.LLMMessageRole.user, prompt, attachments = listOf(image))),
-                functions = emptyList(), isSummarization = false,
-            ))
-            when (response) {
-                is LLMResponse.Chat.Ok -> response.choices.lastOrNull()?.message?.content
-                    ?.takeIf { it.isNotBlank() } ?: error("attachment_vision_empty")
-                is LLMResponse.Chat.Error -> error("attachment_vision_failed")
-            }
+            analyzeVision(model, prompt, listOf(image))
+        }
+    }
+
+    private suspend fun analyzeVision(model: String, prompt: String, images: List<String>): String {
+        val known = findLLMModel(model)
+        require(model in llmConfig.selectionNames || known != null) { "attachment_vision_model_unknown" }
+        val response = message(LLMRequest.Chat(
+            model = known?.alias ?: model,
+            provider = known?.provider ?: llmConfig.providerForSelection(model),
+            messages = listOf(LLMRequest.Message(ru.souz.llms.LLMMessageRole.user, prompt, attachments = images)),
+        ))
+        return when (response) {
+            is LLMResponse.Chat.Ok -> response.choices.lastOrNull()?.message?.content
+                ?.takeIf { it.isNotBlank() } ?: error("attachment_vision_empty")
+            is LLMResponse.Chat.Error -> error("attachment_vision_failed")
         }
     }
 

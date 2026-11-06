@@ -159,6 +159,7 @@ data class BackendAppConfig(
     val attachmentHistoryLimit: Int = DEFAULT_ATTACHMENT_HISTORY_LIMIT,
     val policyPrompt: String? = null,
     val attachments: AttachmentStorageConfig? = null,
+    val visionModel: String? = null,
     val codexEndpoints: CodexEndpoints = CodexEndpoints(),
     val imageModel: String = "gpt-image-1",
     val llmGateway: ru.souz.backend.llmgateway.LlmGatewayConfig = ru.souz.backend.llmgateway.LlmGatewayConfig(),
@@ -224,6 +225,7 @@ data class BackendAppConfig(
                         ?: throw BackendConfigurationException("JEV_WAIT_CATEGORY_THRESHOLD must be a number within [0, 1].")
                 } ?: 0.5,
                 attachments = AttachmentStorageConfig.load(source),
+                visionModel = source.value("SOUZ_ATTACHMENTS_VISION_MODEL", "souz.attachments.vision_model")?.trim(),
                 attachmentHistoryLimit = source.intValue("SOUZ_ATTACHMENTS_HISTORY_LIMIT", "souz.attachments.historyLimit", DEFAULT_ATTACHMENT_HISTORY_LIMIT),
                 hooks = HookConfig(
                     owners = source.value("SOUZ_HOOK_OWNERS", "souz.hooks.owners")

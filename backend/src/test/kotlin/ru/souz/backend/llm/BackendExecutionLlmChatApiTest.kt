@@ -38,6 +38,9 @@ import ru.souz.backend.config.NamedLlmModel
 import ru.souz.backend.config.loadNamedModels
 import ru.souz.db.SettingsProvider
 import ru.souz.backend.app.BackendProviderRetryPolicy
+import ru.souz.backend.attachments.BackendAttachmentInput
+import ru.souz.backend.attachments.attachmentTest
+import ru.souz.backend.e2e.reply
 import ru.souz.backend.hooks.HookAuth
 import ru.souz.backend.hooks.HookConfig
 import ru.souz.backend.hooks.HookDefinition
@@ -71,6 +74,56 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.TestTimeSource
 
 class BackendExecutionLlmChatApiTest {
+    @Test
+    fun `tool images use a separate vision route and reuse its analysis through text retries and cascades`() = attachmentTest {
+        val pixels = java.io.ByteArrayOutputStream().also {
+            javax.imageio.ImageIO.write(java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", it)
+        }.toByteArray()
+        val references = (1..2).map { "attachment:" + storage.save("user-a", "image-$it", "$it.png", pixels.inputStream()).id }
+        val input = chat("heavy").copy(provider = LlmProvider.OPENAI, reasoningEffort = "high", messages = listOf(
+            LLMRequest.Message(LLMMessageRole.user, "read these labels"),
+            LLMRequest.Message(LLMMessageRole.function, "camera result", name = "camera", attachments = references),
+        ))
+        var visionCalls = 0
+        var mainCalls = 0
+        var visionFailure = false
+        val models = NamedLlmConfig(
+            models = listOf("text", "vision", "backup").associateWith { NamedLlmModel("upstream-$it", "https://$it.test/v1", "$it-key") },
+            cascades = mapOf("heavy" to listOf("text", "backup")), reasoningEfforts = mapOf("vision" to "low"),
+        )
+        facadeFixture(llmConfig = models, visionModel = "vision", attachmentInput = BackendAttachmentInput(storage, config),
+            retryPolicy = BackendProviderRetryPolicy(max429Retries = 1),
+            providerApiOverride = { StubChatApi(message = { request ->
+                if (request.model == "upstream-vision") {
+                    visionCalls++
+                    assertEquals(2, request.messages.sumOf { it.attachments.orEmpty().size })
+                    assertEquals("low", request.reasoningEffort, "Main model effort must not leak into vision")
+                    if (visionFailure) LLMResponse.Chat.Error(503, "unavailable") else
+                        reply(request, "TWO_LABELS")
+                } else {
+                    assertTrue(request.messages.all { it.attachments.isNullOrEmpty() })
+                    assertTrue("TWO_LABELS" in request.messages.last().content)
+                    if (request.model == "upstream-text") LLMResponse.Chat.Error(if (mainCalls++ == 0) 429 else 503, "retry")
+                    else ok(request.model)
+                }
+            }, stream = { request ->
+                assertTrue(request.messages.all { it.attachments.isNullOrEmpty() })
+                assertTrue("TWO_LABELS" in request.messages.last().content)
+                flowOf(ok(request.model))
+            }) },
+        ).use { fixture ->
+            assertEquals("upstream-backup", assertIs<LLMResponse.Chat.Ok>(fixture.api.message(input)).model)
+            assertEquals(1, visionCalls)
+            assertEquals(usage(7, 3, 10, 0), fixture.api.cumulativeUsage())
+            fixture.api.messageStream(input).toList()
+            assertEquals(2, visionCalls)
+            assertEquals(references, input.messages.last().attachments, "Provider preparation must not mutate history")
+            visionFailure = true
+            assertFailsWith<IllegalStateException> { fixture.api.message(input) }
+            assertEquals(3, visionCalls, "Vision failure must not use the heavy cascade")
+        }
+    }
+
     @Test
     fun `raw routes preserve IDs across providers retries and stream accounting`() = runTest {
         val requests = mutableListOf<Pair<LlmProvider, LLMRequest.Chat>>()
@@ -826,6 +879,8 @@ private fun facadeFixture(
         providerHttpClientDefaults()
     },
     failureMemory: ModelFailureMemory = ModelFailureMemory(),
+    attachmentInput: BackendAttachmentInput? = null,
+    visionModel: String? = null,
 ): FacadeFixture {
     val clients = ProviderHttpClients(standard = client, openAi = client)
     val metrics = BackendMetrics()
@@ -844,6 +899,8 @@ private fun facadeFixture(
         hookBudget = hookBudget,
         metrics = metrics,
         failureMemory = failureMemory,
+        attachmentInput = attachmentInput,
+        visionModel = visionModel,
     )
     return FacadeFixture(api, credentialResolver, clients, metrics)
 }

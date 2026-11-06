@@ -396,6 +396,7 @@ internal class BackendE2eBackend(
         imageModel = settingsSource?.let(::loadImageModel) ?: "gpt-image-1",
         llmGateway = settingsSource?.let(ru.souz.backend.llmgateway.LlmGatewayConfig::load) ?: ru.souz.backend.llmgateway.LlmGatewayConfig(),
         codexEndpoints = ru.souz.llms.codex.CodexEndpoints.load { settingsSource?.value(it, it) },
+        visionModel = settingsSource?.value("SOUZ_ATTACHMENTS_VISION_MODEL", "souz.attachments.vision_model")?.trim(),
         attachments = attachments,
     )
     private val source = object : BackendConfigSource {

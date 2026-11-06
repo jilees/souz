@@ -112,10 +112,12 @@ internal class BackendConversationRuntimeFactory(
     imageModel: String = "gpt-image-1",
     private val attachmentMediaTools: AttachmentMediaTools? = null,
     private val attachmentInput: ru.souz.backend.attachments.BackendAttachmentInput? = null,
+    visionModel: String? = attachmentInput?.visionModel,
     private val codexEndpoints: CodexEndpoints = CodexEndpoints(),
     private val attachmentHistoryLimit: Int = DEFAULT_ATTACHMENT_HISTORY_LIMIT,
 ) {
     private val modelFailures = ModelFailureMemory()
+    private val visionSelection = ru.souz.backend.config.validateVisionModel(visionModel, llmConfig)
     private val imageSelection = resolveImageModel(imageModel, llmConfig.models)
 
     internal suspend fun create(
@@ -162,9 +164,11 @@ internal class BackendConversationRuntimeFactory(
             hookBudget = hookBudget,
             metrics = metrics,
             attachmentInput = attachmentInput,
+            visionModel = visionSelection,
             failureMemory = modelFailures,
         )
-        val visionGateway = LLMCapabilityResolver(
+        val visionGateway = if (visionSelection != null) OpenAIVisionGateway(settingsProvider, executionApi,
+            modelSelection = visionSelection) else LLMCapabilityResolver(
             settingsProvider = settingsProvider,
             openAiGateway = OpenAIVisionGateway(settingsProvider, executionApi),
             anthropicGateway = AnthropicVisionGateway(settingsProvider, executionApi),

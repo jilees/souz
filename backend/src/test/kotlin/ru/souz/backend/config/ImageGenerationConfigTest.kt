@@ -3,12 +3,13 @@ package ru.souz.backend.config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import ru.souz.backend.common.BackendConfigurationException
 import ru.souz.backend.llm.resolveImageModel
 import ru.souz.llms.LlmProvider
 
 class ImageGenerationConfigTest {
     @Test
-    fun `model selects the provider independently of S3 STT and chat`() {
+    fun `image and vision models select providers independently of S3 STT and chat`() {
         for (name in listOf("CodexGpt61Sol", "gpt-6.1-sol", " CodexGpt6Sol ")) {
             assertEquals(LlmProvider.CODEX, resolveImageModel(loadImageModel(source(mapOf("SOUZ_IMAGE_MODEL" to name))), emptyMap()).provider)
         }
@@ -22,6 +23,15 @@ class ImageGenerationConfigTest {
         assertEquals(LlmProvider.CODEX, codex.provider)
         assertEquals("future-model-without-enum", codex.modelId)
         assertFailsWith<IllegalStateException> { resolveImageModel("unknown-model", emptyMap()) }
+
+        val vision = NamedLlmConfig(models = mapOf("reader" to connection),
+            cascades = mapOf("visual" to listOf("reader", "CodexGpt61Sol"), "invalid" to listOf("QwenMax")))
+        for (selection in listOf(null, "reader", "visual", "CodexGpt61Sol")) {
+            assertEquals(selection, validateVisionModel(selection, vision))
+        }
+        for (selection in listOf("", "unknown", "QwenMax", "invalid", "openai-compatible-custom")) {
+            assertFailsWith<BackendConfigurationException> { validateVisionModel(selection, vision) }
+        }
     }
 
     @Test

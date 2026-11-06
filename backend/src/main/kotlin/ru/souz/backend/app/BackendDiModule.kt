@@ -368,6 +368,7 @@ fun backendDiModule(
             imageModel = appConfig.imageModel,
             attachmentMediaTools = instanceOrNull(),
             attachmentInput = instanceOrNull(),
+            visionModel = appConfig.visionModel ?: appConfig.attachments?.visionModel,
             skillClassifier = instance(),
             fallbackSkillClassifier = instanceOrNull<SkillClassifier>(tag = FRIDA_FALLBACK_TAG),
             // Routing needs Jev: a configured routing block without JEV_TOKEN fails at startup.

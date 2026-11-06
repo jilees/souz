@@ -14,6 +14,7 @@ class OpenAIVisionGateway(
     private val settingsProvider: SettingsProvider,
     private val chatApi: LLMChatAPI,
     private val maxImageBytes: Long = DEFAULT_MAX_VISION_IMAGE_BYTES,
+    private val modelSelection: String? = null,
 ) : VisionGateway {
 
     override suspend fun analyze(input: VisionInput): String {
@@ -27,6 +28,7 @@ class OpenAIVisionGateway(
             input = input,
             attachments = dataUrls,
             failurePrefix = "OpenAI image understanding failed",
+            modelSelection = modelSelection,
             chatRequest = chatApi::message,
         )
     }

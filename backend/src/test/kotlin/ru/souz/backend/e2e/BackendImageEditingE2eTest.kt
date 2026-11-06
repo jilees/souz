@@ -27,7 +27,9 @@ import ru.souz.backend.attachments.ATTACHMENT_RETENTION
 import ru.souz.backend.attachments.AttachmentClock
 import ru.souz.backend.attachments.AttachmentMinio
 import ru.souz.backend.config.BackendConfigSource
+import ru.souz.backend.execution.model.AgentExecutionStatus
 import ru.souz.backend.http.BackendHttpRoutes
+import ru.souz.backend.llm.withNamedLlmConfig
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.http.ProviderHttpClients
 import ru.souz.llms.http.providerHttpClientDefaults
@@ -36,6 +38,44 @@ import ru.souz.runtime.sandbox.DefaultRuntimeSandboxFactory
 import ru.souz.runtime.sandbox.RuntimeSandboxModeResolver
 
 class BackendImageEditingE2eTest {
+    @Test
+    fun `ViewImage uses its own connection and parameters without S3`() = withNamedLlmConfig("""{
+        "openaiConnections":{"vision":{"baseUrl":"https://vision.test/v1","apiKeyEnv":"VISION_KEY"}},
+        "models":{"reader":{"connection":"vision","modelId":"image-reader","parameters":{"reasoning":{"effort":"low"}}}}
+    }""", environment = mapOf("SOUZ_ATTACHMENTS_VISION_MODEL" to "reader", "VISION_KEY" to "vision-key")) { source ->
+        val pixels = png(0x123456)
+        val engine = MockEngine { request ->
+            assertEquals("https://vision.test/v1/chat/completions", request.url.toString())
+            assertEquals("Bearer vision-key", request.headers[HttpHeaders.Authorization])
+            val body = restJsonMapper.readTree(request.body.toByteArray())
+            assertEquals("image-reader", body["model"].asText())
+            assertEquals("low", body["reasoning"]["effort"].asText())
+            val content = body["messages"].single()["content"]
+            assertEquals("read the label", content.first()["text"].asText())
+            assertEquals(List(2) { dataUrl(pixels) }, content.drop(1).map { it["image_url"]["url"].asText() })
+            respond("""{"choices":[{"index":0,"message":{"role":"assistant","content":"READ_LABEL"},"finish_reason":"stop"}],"created":1}""",
+                headers = headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val http = HttpClient(engine) { providerHttpClientDefaults() }
+        backendE2eTest("vision_tool", settingsSource = source, providerClients = ProviderHttpClients(http, http)) {
+            val user = UUID.randomUUID().toString()
+            val chat = createPublicChat(user)
+            val fs = backend.sandboxFileSystem(user)
+            val file = fs.resolvePath("vision-label.png")
+            fs.writeBytes(file, pixels)
+            llm.requestSkill("ViewImage", mapOf("imagePaths" to listOf(file.path, file.path), "question" to "read the label"))
+            client.patch(BackendHttpRoutes.SETTINGS) {
+                trusted(user); jsonBody("""{"enabledTools":["ViewImage"]}""")
+            }
+            val turn = backend.dependencies.executionService.executeChatTurn(user, UUID.fromString(chat), "look at the labels").execution
+            backend.awaitExecution(turn.id)
+            assertEquals(AgentExecutionStatus.COMPLETED, backend.executionRepository.get(user, turn.id)!!.status)
+            assertTrue(llm.requests.all { it.model == E2E_MODEL.alias })
+            assertTrue("READ_LABEL" in llm.requests.last().messages.last().content)
+            assertEquals(1, engine.requestHistory.size)
+        }
+    }
+
     @Test
     fun `both image tools edit original sources and attachment edits cache by ordered files and accept previous results`() {
         for (codex in listOf(true, false)) {

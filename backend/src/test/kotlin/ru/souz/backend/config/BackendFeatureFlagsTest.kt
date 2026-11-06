@@ -114,6 +114,7 @@ class BackendAppConfigTest {
                     "SOUZ_BACKEND_HOST" to " 0.0.0.0 ",
                     "SOUZ_BACKEND_PORT" to "9090",
                     "SOUZ_ATTACHMENTS_HISTORY_LIMIT" to "7",
+                    "SOUZ_ATTACHMENTS_VISION_MODEL" to "  named-vision  ",
                     "SOUZ_BACKEND_PROXY_TOKEN" to " proxy-secret ",
                     "SOUZ_MASTER_KEY" to "test-master-key",
                 ),
@@ -152,6 +153,9 @@ class BackendAppConfigTest {
             propertyConfig.server,
         )
         assertNull(blankTokenConfig.server.proxyToken)
+        assertNull(defaultConfig.visionModel)
+        assertEquals("named-vision", envConfig.visionModel)
+        assertNull(envConfig.attachments, "ViewImage selection must not require S3")
         assertEquals(20, defaultConfig.attachmentHistoryLimit)
         assertEquals(7, envConfig.attachmentHistoryLimit)
         assertEquals(3, propertyConfig.attachmentHistoryLimit)

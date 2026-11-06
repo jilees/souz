@@ -13,6 +13,11 @@ class BackendAttachmentInput(
     private val config: AttachmentStorageConfig,
     private val media: AttachmentMedia? = null,
 ) {
+    internal val visionModel: String? get() = config.visionModel
+
+    internal fun acceptsImages(request: LLMRequest.Chat, modelName: String?): Boolean =
+        "${request.provider?.name}:${modelName.orEmpty()}:${request.model}" in config.imageRoutes
+
     internal suspend fun toolImage(userId: String, fileId: String): String =
         toolImageDataUrl(storage.read(userId, attachmentId(fileId)))
 
@@ -23,8 +28,7 @@ class BackendAttachmentInput(
         val selected = request.messages.flatMapIndexed { index, message ->
             message.images.map { index to it.file }
         }.distinct().takeLast(5).toSet()
-        val route = "${request.provider?.name}:${modelName.orEmpty()}:${request.model}"
-        val canSee = route in config.imageRoutes
+        val canSee = acceptsImages(request, modelName)
         return request.copy(messages = request.messages.mapIndexed { index, message ->
             if (message.files.isEmpty() && message.images.isEmpty()) return@mapIndexed message
             val notes = mutableListOf<String>()

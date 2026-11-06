@@ -26,7 +26,7 @@ Set these variables on the backend process, never in a Skill or the user's sandb
 | `SOUZ_ATTACHMENTS_MAX_CONCURRENT_UPLOADS` | `16`; shared save/read concurrency limit |
 | `SOUZ_ATTACHMENTS_MAX_FILE_BYTES` | `20000000` |
 | `SOUZ_ATTACHMENTS_VISION_ROUTES` | Comma-separated exact `PROVIDER:modelName:modelId` routes; modelName is the public named selection, empty for built-in models; defaults to CODEX Sol 6.1, 6 and 5.6 with an empty connection ID |
-| `SOUZ_ATTACHMENTS_VISION_MODEL` | Optional explicit fallback model selector |
+| `SOUZ_ATTACHMENTS_VISION_MODEL` | Optional independent vision model or cascade for attachments, MCP images and `ViewImage`; OpenAI-compatible or Codex routes |
 | `SOUZ_ATTACHMENTS_MEDIA_API_KEY` | STT-only platform API key; never used for image generation |
 | `SOUZ_ATTACHMENTS_STT_ENDPOINT`, `SOUZ_ATTACHMENTS_STT_MODEL` | OpenAI `/v1/audio/transcriptions`, `gpt-transcribe` |
 | `SOUZ_IMAGE_MODEL` / `souz.image.model` | Shared image model selector: `gpt-image-1` (default), `gpt-image-2.5-flare`, a Codex enum name/alias such as `CodexGpt61Sol`, or a configured named OpenAI connection model |

@@ -35,7 +35,7 @@ class ToolViewImage(
 
     override val name: String = NAME
     override val description: String =
-        "Analyze one image or up to five images together with the current multimodal model. " +
+        "Analyze one image or up to five images together with the configured vision model. " +
             "Use imagePaths for a batch of PDF pages instead of separate calls per page."
 
     override val fewShotExamples: List<FewShotExample> = listOf(

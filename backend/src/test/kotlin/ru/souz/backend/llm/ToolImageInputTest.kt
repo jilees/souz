@@ -63,16 +63,16 @@ class ToolImageInputTest {
     @Test
     fun `later result without image never reuses an earlier tool image`() = runTest {
         val request = LLMRequest.Chat(messages = listOf(tool, tool.copy(content = "capture failed", attachments = null)))
-        assertEquals(listOf(null, null), request.inlineToolImages(::downloadToolImage).messages.map { it.attachments })
+        assertEquals(listOf(null, null), request.inlineToolImages(download = ::downloadToolImage).messages.map { it.attachments })
         assertEquals(listOf("file:old-image"), request.messages.first().attachments)
         val nextTurn = LLMRequest.Chat(messages = listOf(tool, LLMRequest.Message(LLMMessageRole.user, "new request")))
-        assertNull(nextTurn.inlineToolImages(::downloadToolImage).messages.first().attachments)
+        assertNull(nextTurn.inlineToolImages(download = ::downloadToolImage).messages.first().attachments)
     }
 
     @Test
     fun `summarization omits tool images and preserves ordinary user attachments`() = runTest {
         val user = tool.copy(role = LLMMessageRole.user)
-        val prepared = LLMRequest.Chat(messages = listOf(user, tool), isSummarization = true).inlineToolImages(::downloadToolImage)
+        val prepared = LLMRequest.Chat(messages = listOf(user, tool), isSummarization = true).inlineToolImages(download = ::downloadToolImage)
         assertEquals(user, prepared.messages.first())
         assertNull(prepared.messages.last().attachments)
     }
@@ -81,7 +81,7 @@ class ToolImageInputTest {
     fun `invalid current tool image stops dispatch`() = runTest {
         for (url in listOf("http://example.com/image.png", "https://user:password@example.com/image.png", "file:///image.png")) {
             assertFailsWith<IllegalArgumentException> {
-                LLMRequest.Chat(messages = listOf(tool.copy(attachments = listOf(url)))).inlineToolImages(::downloadToolImage)
+                LLMRequest.Chat(messages = listOf(tool.copy(attachments = listOf(url)))).inlineToolImages(download = ::downloadToolImage)
             }
         }
     }
