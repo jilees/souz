@@ -17,6 +17,10 @@ import ru.souz.backend.execution.model.AgentExecutionStatus
 import ru.souz.backend.execution.model.isActive
 import ru.souz.backend.execution.repository.AgentExecutionRepository
 import ru.souz.backend.execution.service.AgentExecutionService
+import ru.souz.backend.attachments.AttachmentStorage
+import ru.souz.backend.attachments.AttachmentException
+import ru.souz.backend.attachments.toContent
+import ru.souz.llms.FilePresentation
 
 internal data class HookAccepted(val receiptId: UUID, val duplicate: Boolean)
 internal data class HookStatus(
@@ -38,6 +42,7 @@ internal class HookService(
     private val executionService: AgentExecutionService,
     private val messages: MessageRepository,
     private val verifier: HookVerifier,
+    private val attachmentStorage: AttachmentStorage? = null,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val mutex = Mutex()
@@ -90,10 +95,36 @@ internal class HookService(
         } catch (_: Exception) { throw hookError(400, "invalid_hook_payload") }
         val eventId = verified?.eventId ?: key
         if (eventId != null && !validHookEventId(eventId)) throw hookError(400, "invalid_idempotency_key")
-        mutex.withLock {
-            if (hooks[hook.definition.hookId]?.singleOrNull() !== hook || !hook.definition.enabled) throw hookError(503, "hook_configuration_changed")
-        }
+        checkCurrent(hook)
         return store.accept(hook, payload, eventId)
+    }
+
+    suspend fun acceptMultipart(hook: LoadedHook, multipart: HookMultipart, key: String?): HookAccepted {
+        if (key != null && !validHookEventId(key)) throw hookError(400, "invalid_idempotency_key")
+        checkCurrent(hook)
+        val hash = multipart.hash
+        store.duplicate(hook, hash, key)?.let { return it }
+        val storage = attachmentStorage ?: throw hookError(503, "hook_attachments_unavailable")
+        val delivery = sha256((key ?: UUID.randomUUID().toString()).toByteArray())
+        val files = try {
+            multipart.files.mapIndexed { index, upload ->
+                val source = "hook:${hook.definition.hookId}:$delivery:$hash:$index"
+                val saved = storage.save(hook.definition.ownerUserId, source, upload.name, upload.bytes.inputStream())
+                saved.toContent(if (saved.mimeType.startsWith("image/")) FilePresentation.image else FilePresentation.document)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (known: AttachmentException) {
+            throw hookError(if (known.code == "attachment_too_large") 413 else 503, "hook_${known.code}")
+        } catch (_: Exception) {
+            throw hookError(503, "hook_attachment_upload_failed")
+        }
+        checkCurrent(hook)
+        return store.accept(hook, multipart.payload, key, files, hash)
+    }
+
+    private suspend fun checkCurrent(hook: LoadedHook) = mutex.withLock {
+        if (hooks[hook.definition.hookId]?.singleOrNull() !== hook || !hook.definition.enabled) throw hookError(503, "hook_configuration_changed")
     }
 
     suspend fun status(owner: String, id: UUID): HookStatus {
@@ -134,6 +165,7 @@ internal class HookService(
                 executionService.executeChatTurn(
                     userId = receipt.userId, chatId = receipt.chatId, executionId = receipt.id,
                     content = hookInput(hook.prompt, receipt.payload),
+                    attachments = receipt.attachments,
                 )
             } catch (cancelled: CancellationException) {
                 throw cancelled

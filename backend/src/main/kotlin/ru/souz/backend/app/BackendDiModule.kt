@@ -278,7 +278,7 @@ fun backendDiModule(
     bindSingleton { HookStore(instance<HikariDataSource>(), appConfig.hooks) }
     bindSingleton { HookDefinitions(instance(), appConfig.hooks) }
     bindSingleton { HookVerifier(appConfig.hooks, instance()) }
-    bindSingleton { HookService(appConfig.hooks, instance(), instance(), instance(), instance(), instance(), instance()) }
+    bindSingleton { HookService(appConfig.hooks, instance(), instance(), instance(), instance(), instance(), instance(), instanceOrNull()) }
     bindSingleton<ProviderCredentialResolver> {
         StoredProviderCredentialResolver(
             baseSettingsProvider = instance(),

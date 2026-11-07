@@ -154,11 +154,17 @@ class AttachmentMigrationTest {
             .locations("classpath:db/migration").schemas(config.schema).defaultSchema(config.schema)
             .target("24").load().migrate()
         val ids = listOf("ready", "pending", "deleting", "deleted").associateWith { UUID.randomUUID() }
+        val hookChat = UUID.randomUUID()
+        val hookReceipt = UUID.randomUUID()
         val created = Instant.parse("2026-10-01T00:00:00Z")
         DriverManager.getConnection(config.jdbcUrl(), config.user, config.password).use { connection ->
             connection.schema = config.schema
             connection.createStatement().use {
                 it.execute("insert into users(id, created_at, last_seen_at) values ('alice', now(), now())")
+                it.execute("""insert into chats(id,user_id,client_type,request_id,payload_hash)
+                    values ('$hookChat','alice','hook','legacy-hook','legacy-chat')""")
+                it.execute("""insert into hook_receipts(id,hook_id,user_id,chat_id,event_key,payload_hash,payload,revision)
+                    values ('$hookReceipt','legacy','alice','$hookChat','event','kept-hash','{}','revision')""")
                 it.execute("""insert into user_settings(user_id, settings_json, created_at, updated_at, personality_prompt, personality_revision)
                     values ('alice', '{}'::jsonb, now(), now(), 'Be brief', 7)""")
             }
@@ -202,7 +208,13 @@ class AttachmentMigrationTest {
                         statement.executeQuery("select discovered_client_tools from chats limit 0").close()
                         statement.executeQuery("select count(*) from flyway_schema_history where success and version is not null").use { rows ->
                             assertTrue(rows.next())
-                            assertEquals(29, rows.getInt(1))
+                            assertEquals(30, rows.getInt(1))
+                        }
+                        statement.executeQuery("select attachments::text,payload_hash,status from hook_receipts where id = '$hookReceipt'").use { rows ->
+                            assertTrue(rows.next())
+                            assertEquals("[]", rows.getString(1))
+                            assertEquals("kept-hash", rows.getString(2))
+                            assertEquals("pending", rows.getString(3))
                         }
                     }
                 }

@@ -4,6 +4,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.openapi.JsonSchema
 import io.ktor.openapi.JsonType
+import io.ktor.openapi.ReferenceOr
 import io.ktor.server.application.call
 import io.ktor.server.request.contentType
 import io.ktor.server.request.receiveChannel
@@ -22,6 +23,8 @@ import ru.souz.backend.hooks.HookRequest
 import ru.souz.backend.hooks.HookService
 import ru.souz.backend.hooks.HookStatus
 import ru.souz.backend.hooks.hookError
+import ru.souz.backend.hooks.MAX_HOOK_MULTIPART_BYTES
+import ru.souz.backend.hooks.parseHookMultipart
 import ru.souz.backend.http.describePublic
 import ru.souz.backend.http.describeV1
 import ru.souz.backend.http.jsonBody
@@ -35,17 +38,23 @@ internal fun Route.hookRoutes(service: HookService) {
         val authorization = call.request.headers.getAll("Authorization")?.singleOrNull()
         val accepted = service.withRequest(call.parameters["hookId"].orEmpty(), authorization) { definition ->
             val isBearer = definition.definition.auth != null
-            if (isBearer && !call.request.contentType().match(ContentType.Application.Json)) throw hookError(400, "hook_json_required")
+            val contentType = call.request.contentType()
+            val multipart = contentType.match(ContentType.MultiPart.FormData)
+            if (multipart && !isBearer) throw hookError(415, "hook_multipart_requires_bearer")
+            if (isBearer && !multipart && !contentType.match(ContentType.Application.Json)) throw hookError(400, "hook_json_required")
             val headers = call.request.headers.entries().associate { it.key.lowercase() to it.value }
             if (headers.size > 32 || headers.entries.sumOf { (name, values) -> name.length + values.sumOf(String::length) } > 16_384) {
                 throw hookError(400, "hook_headers_too_large")
             }
-            val body = withTimeoutOrNull(5_000) {
-                call.receiveChannel().readRemaining(HookDefinitions.MAX_BODY_BYTES + 1L).use { it.readByteArray() }
+            val limit = if (multipart) MAX_HOOK_MULTIPART_BYTES else HookDefinitions.MAX_BODY_BYTES
+            val body = withTimeoutOrNull(if (multipart) 15_000 else 5_000) {
+                call.receiveChannel().readRemaining(limit + 1L).use { it.readByteArray() }
             } ?: throw hookError(408, "hook_body_timeout")
-            if (body.size > HookDefinitions.MAX_BODY_BYTES) throw hookError(413, "hook_payload_too_large")
+            if (body.size > limit) throw hookError(413, "hook_payload_too_large")
             val keys = call.request.headers.getAll("Idempotency-Key")
             if (isBearer && keys != null && keys.size != 1) throw hookError(400, "invalid_idempotency_key")
+            if (multipart) return@withRequest service.acceptMultipart(definition,
+                parseHookMultipart(body, contentType.toString()), keys?.singleOrNull())
             service.accept(definition, HookRequest(
                 call.request.local.method.value, call.request.path(),
                 headers.filterKeys { it != "host" && it != "x-user-id" && it != "x-souz-proxy-auth" }, body,
@@ -58,11 +67,20 @@ internal fun Route.hookRoutes(service: HookService) {
             path("hookId") { schema = JsonSchema(type = JsonType.STRING) }
             header("Idempotency-Key") { required = false; schema = JsonSchema(type = JsonType.STRING, maxLength = 200) }
         }
-        requestBody { jsonBody<Map<String, Any?>>("External JSON event, at most 64 KiB; interpreted as untrusted data.") }
+        requestBody {
+            jsonBody<Map<String, Any?>>("JSON event up to 64 KiB, or Bearer-only multipart with one payload JSON field and 1–5 files; total body up to 10000000 bytes. Files require configured attachment storage.")
+            ContentType.MultiPart.FormData {
+                schema = JsonSchema(type = JsonType.OBJECT, required = listOf("payload", "files"), properties = mapOf(
+                    "payload" to ReferenceOr.Value(JsonSchema(type = JsonType.STRING, description = "JSON event, at most 65536 UTF-8 bytes.")),
+                    "files" to ReferenceOr.Value(JsonSchema(type = JsonType.ARRAY, minItems = 1, maxItems = 5,
+                        items = ReferenceOr.Value(JsonSchema(type = JsonType.STRING, format = "binary")))),
+                ))
+            }
+        }
         responses {
             jsonResponse<HookAccepted>(HttpStatusCode.Accepted, "Durable receipt.")
             jsonResponse<HookAccepted>(HttpStatusCode.OK, "Previously accepted receipt.")
-            v1ErrorResponses(HttpStatusCode.BadRequest, HttpStatusCode.NotFound, HttpStatusCode.Conflict, HttpStatusCode.RequestTimeout, HttpStatusCode.PayloadTooLarge, HttpStatusCode.TooManyRequests, HttpStatusCode.ServiceUnavailable)
+            v1ErrorResponses(HttpStatusCode.BadRequest, HttpStatusCode.NotFound, HttpStatusCode.Conflict, HttpStatusCode.RequestTimeout, HttpStatusCode.PayloadTooLarge, HttpStatusCode.UnsupportedMediaType, HttpStatusCode.TooManyRequests, HttpStatusCode.ServiceUnavailable)
         }
     }
     post("/v1/hooks/reload") {

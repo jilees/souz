@@ -75,6 +75,25 @@ Verifier запускается через `SandboxCommandExecutor` в LOCAL/DOC
 
 Для Bearer-хука передайте `Content-Type: application/json`, `Authorization: Bearer <secret>` и JSON-тело до 64 КиБ. Необязательный `Idempotency-Key` имеет те же ограничения формы, что `eventId`. Для verifier допускаются произвольные исходные байты до 64 КиБ; ключ берётся из проверенного `eventId`, а `Idempotency-Key` игнорируется.
 
+### Вложения Bearer-хука
+
+Bearer-хук принимает `multipart/form-data`: одно текстовое поле `payload` с JSON до 65 536 UTF-8 байт и от одного до пяти файлов в повторяемом поле `files`. Общий размер тела, включая MIME-разметку, ограничен 10 000 000 байт; чтение тела — 15 секундами. Пустые файлы, лишние поля и повторное поле `payload` отклоняются. Multipart не поддерживается Python verifier: ответ `415 hook_multipart_requires_bearer`.
+
+```bash
+curl "$BASE_URL/hooks/$HOOK_ID" \
+  -H "Authorization: Bearer $HOOK_TOKEN" \
+  -H "Idempotency-Key: camera-event-123" \
+  -F 'payload={"camera_id":"living_room","timestamp":"2026-11-07T12:00:00Z"}' \
+  -F 'files=@frame-1.jpg' \
+  -F 'files=@frame-2.jpg'
+```
+
+Нужно настроенное [файловое хранилище](../backend/docs/s3-storage.md); без него multipart возвращает `503 hook_attachments_unavailable`. Файлы сохраняются от имени владельца хука, MIME определяется по байтам. Изображения получают presentation `image`, остальные файлы — `document`. Действуют лимит размера файла и срок хранения этого хранилища. JSON события остаётся отдельными недоверенными данными; файлы передаются штатному агентному выполнению как вложения, изображения обрабатываются существующим [vision-механизмом](../backend/docs/attachments.md).
+
+Квитанция сохраняет упорядоченные ссылки на файлы до `202`; очередь читает их из PostgreSQL. Ключ дедупликации учитывает JSON, нормализованные имена, порядок и содержимое файлов, независимо от MIME boundary. Повтор возвращает прежнюю квитанцию даже после истечения файлов; изменение данных под тем же ключом даёт `409`. Без ключа каждый запрос создаёт отдельное событие. Одновременный повтор во время загрузки может получить `503 hook_attachment_not_ready`; повторите с тем же ключом и данными. Не повторяйте действие по тайм-ауту его исполнения.
+
+S3-загрузка предшествует транзакции приёма события. При последующем отказе или частичном сбое уже сохранённые файлы остаются до штатного удаления по retention; `202` выдаётся только после успешного сохранения файлов и квитанции. Ссылки и метаданные дополнительно проверяются на владение и срок доступности при приёме и запуске агента.
+
 | Ответ | Значение |
 |---|---|
 | `202` | Квитанция записана в PostgreSQL; работа выполняется асинхронно |
@@ -102,8 +121,8 @@ Verifier запускается через `SandboxCommandExecutor` в LOCAL/DOC
 ```nginx
 location /hooks/ {
     auth_basic off;
-    client_max_body_size 64k;
-    client_body_timeout 5s;
+    client_max_body_size 10000000;
+    client_body_timeout 15s;
     proxy_pass http://127.0.0.1:8080;
     proxy_set_header Authorization $http_authorization;
     proxy_set_header X-Souz-Proxy-Auth "";

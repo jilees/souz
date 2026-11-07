@@ -8,6 +8,9 @@ import javax.sql.DataSource
 import ru.souz.backend.http.BackendV1Exception
 import ru.souz.backend.storage.postgres.read
 import ru.souz.backend.storage.postgres.write
+import ru.souz.backend.storage.postgres.postgresStorageMapper
+import ru.souz.backend.storage.postgres.validateAttachments
+import ru.souz.llms.FileContent
 
 internal data class HookReceipt(
     val id: UUID,
@@ -20,24 +23,23 @@ internal data class HookReceipt(
     val errorCode: String?,
     val llmCalls: Int,
     val totalTokens: Long,
+    val attachments: List<FileContent>,
 )
 
 internal class HookStore(private val dataSource: DataSource, private val config: HookConfig) {
-    suspend fun accept(snapshot: LoadedHook, payload: String, key: String?): HookAccepted = dataSource.write { c ->
+    suspend fun duplicate(snapshot: LoadedHook, hash: String, key: String?): HookAccepted? = dataSource.read { c ->
+        c.duplicate(snapshot.definition, hash, key)
+    }
+
+    suspend fun accept(snapshot: LoadedHook, payload: String, key: String?, attachments: List<FileContent> = emptyList(),
+        hash: String = sha256(payload.toByteArray())): HookAccepted = dataSource.write { c ->
         val hook = snapshot.definition
         // Serialize admission for this owner without blocking foreign-key checks on users.
         c.prepare("select id from users where id = ? for no key update", hook.ownerUserId).use { s ->
             s.executeQuery().use { if (!it.next()) throw hookError(503, "hook_owner_unavailable") }
         }
-        val hash = sha256(payload.toByteArray())
-        if (key != null) c.prepare("select id, user_id, payload_hash from hook_receipts where hook_id = ? and event_key = ?", hook.hookId, key).use { s ->
-            s.executeQuery().use { rows ->
-                if (rows.next()) {
-                    if (rows.getString("user_id") != hook.ownerUserId || rows.getString("payload_hash") != hash) throw hookError(409, "idempotency_conflict")
-                    return@write HookAccepted(rows.getObject("id", UUID::class.java), duplicate = true)
-                }
-            }
-        }
+        c.duplicate(hook, hash, key)?.let { return@write it }
+        c.validateAttachments(hook.ownerUserId, attachments)
         c.prepare("""
             select
               (select count(*) from hook_receipts where hook_id = ? and status in ('pending', 'running')) as pending,
@@ -59,9 +61,10 @@ internal class HookStore(private val dataSource: DataSource, private val config:
             s.executeUpdate()
         }
         c.prepare("""
-            insert into hook_receipts(id, hook_id, user_id, chat_id, event_key, payload_hash, payload, revision)
-            values (?, ?, ?, ?, ?, ?, ?, ?) returning id
-        """, UUID.randomUUID(), hook.hookId, hook.ownerUserId, chatId, key, hash, payload, snapshot.revision).use { s ->
+            insert into hook_receipts(id, hook_id, user_id, chat_id, event_key, payload_hash, payload, revision, attachments)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb) returning id
+        """, UUID.randomUUID(), hook.hookId, hook.ownerUserId, chatId, key, hash, payload, snapshot.revision,
+            postgresStorageMapper.writeValueAsString(attachments)).use { s ->
             s.executeQuery().use { it.next(); HookAccepted(it.getObject("id", UUID::class.java), duplicate = false) }
         }
     }
@@ -113,6 +116,17 @@ internal class HookStore(private val dataSource: DataSource, private val config:
     }
 }
 
+private fun Connection.duplicate(hook: HookDefinition, hash: String, key: String?): HookAccepted? {
+    if (key == null) return null
+    return prepare("select id, user_id, payload_hash from hook_receipts where hook_id = ? and event_key = ?", hook.hookId, key).use { s ->
+        s.executeQuery().use { rows ->
+            if (!rows.next()) return@use null
+            if (rows.getString("user_id") != hook.ownerUserId || rows.getString("payload_hash") != hash) throw hookError(409, "idempotency_conflict")
+            HookAccepted(rows.getObject("id", UUID::class.java), duplicate = true)
+        }
+    }
+}
+
 private fun Connection.prepare(sql: String, vararg values: Any?) = prepareStatement(sql.trimIndent()).apply {
     values.forEachIndexed { index, value -> setObject(index + 1, value) }
 }
@@ -123,6 +137,8 @@ private fun ResultSet.receipt() = HookReceipt(
     revision = getString("revision"), status = getString("status"),
     errorCode = getString("error_code"),
     llmCalls = getInt("llm_calls"), totalTokens = getLong("total_tokens"),
+    attachments = postgresStorageMapper.readValue(getString("attachments"),
+        postgresStorageMapper.typeFactory.constructCollectionType(List::class.java, FileContent::class.java)),
 )
 
 internal fun hookError(status: Int, code: String) = BackendV1Exception(HttpStatusCode.fromValue(status), code, code.replace('_', ' ') + ".")

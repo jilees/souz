@@ -15,6 +15,9 @@ import io.ktor.client.request.header
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
+import io.ktor.http.Headers
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
@@ -49,6 +52,10 @@ import org.junit.jupiter.api.io.TempDir
 import ru.souz.backend.hooks.HookConfig
 import ru.souz.backend.hooks.hookInput
 import ru.souz.backend.hooks.sha256
+import ru.souz.backend.attachments.AttachmentMinio
+import ru.souz.backend.attachments.AttachmentStorageConfig
+import ru.souz.llms.LLMMessageRole
+import kotlin.test.assertContentEquals
 import ru.souz.backend.http.BackendHttpRoutes
 import ru.souz.backend.storage.postgres.PostgresDataSourceFactory
 import ru.souz.backend.storage.postgres.postgresAppConfig
@@ -63,6 +70,86 @@ class BackendHooksE2eTest {
     private val owner = UUID.randomUUID().toString()
     private val other = UUID.randomUUID().toString()
     private val secret = "a".repeat(64)
+
+    @Test
+    fun `multipart files are owned durable visible to vision and deduplicated by content`() {
+        writeHook()
+        val base = AttachmentMinio.config()
+        val storage = AttachmentStorageConfig(base.endpoint, base.bucket, base.accessKey, base.secretKey,
+            imageRoutes = setOf("QWEN::qwen-max"))
+        val image = java.io.ByteArrayOutputStream().also { output ->
+            javax.imageio.stream.MemoryCacheImageOutputStream(output).use {
+                javax.imageio.ImageIO.write(java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", it)
+            }
+        }.toByteArray()
+        val files = listOf("frame.png" to image, "notes.md" to "# Event notes".toByteArray())
+        runHooks(attachments = storage) {
+            setupOwner()
+            val accepted = multipart(files, key = "camera-event")
+            assertEquals(202, accepted.status.value)
+            val id = accepted.jsonBody()["receiptId"].asText()
+            val status = awaitStatus(id, "completed")
+            val input = llm.requests.single().messages.last { it.role == LLMMessageRole.user }
+            assertTrue(input.attachments.orEmpty().single().startsWith("data:image/png;base64,"))
+            val chat = status["execution"]["chatId"].asText()
+            val messages = client.get(BackendHttpRoutes.chatMessages(chat)) { trusted(owner) }.jsonBody()["items"]
+            val attachments = messages.first()["attachments"]
+            assertEquals(listOf("frame.png", "notes.md"), attachments.map { it["name"].asText() })
+            assertEquals(listOf("image", "document"), attachments.map { it["presentation"].asText() })
+            val fileId = UUID.fromString(attachments[0]["fileId"].asText())
+            assertContentEquals(image, backend.attachmentStorage.read(owner, fileId))
+            kotlin.test.assertFailsWith<ru.souz.backend.attachments.AttachmentException> {
+                backend.attachmentStorage.read(other, fileId)
+            }
+            val receipt = sql { connection ->
+                connection.prepareStatement("select attachments::text from hook_receipts where id = ?").use { statement ->
+                    statement.setObject(1, UUID.fromString(id))
+                    statement.executeQuery().use { it.next(); json.readTree(it.getString(1)) }
+                }
+            }
+            assertEquals(attachments, receipt)
+            assertEquals(200, multipart(files, key = "camera-event").status.value)
+            assertEquals(409, multipart(files.reversed(), key = "camera-event").status.value)
+            assertEquals(409, multipart(listOf("frame.png" to image, "notes.md" to "changed".toByteArray()), key = "camera-event").status.value)
+            assertEquals(409, invoke(key = "camera-event").status.value)
+            assertEquals(1, llm.requests.size)
+            // A committed receipt remains acknowledgeable even after its evidence expires.
+            sql { c -> c.createStatement().use { it.executeUpdate("update stored_attachments set expires_at = now() - interval '1 day'") } }
+            val duplicate = multipart(files, key = "camera-event")
+            assertEquals(200, duplicate.status.value)
+            assertEquals(id, duplicate.jsonBody()["receiptId"].asText())
+        }
+    }
+
+    @Test
+    fun `multipart rejects unauthenticated malformed oversized and unconfigured requests before execution`() {
+        writeHook()
+        runHooks {
+            setupOwner()
+            val file = listOf("frame.jpg" to byteArrayOf(1))
+            assertEquals(401, multipart(file, token = "bad").status.value)
+            assertEquals(503, multipart(file).status.value)
+            assertEquals(400, multipart(file, payload = "invalid").status.value)
+            assertEquals(400, multipart(emptyList()).status.value)
+            assertEquals(400, multipart(List(6) { "frame$it.jpg" to byteArrayOf(1) }).status.value)
+            assertEquals(400, multipart(listOf("empty.jpg" to byteArrayOf())).status.value)
+            assertEquals(413, multipart(file, payload = "\"${"x".repeat(65_536)}\"").status.value)
+            assertEquals(413, multipart(listOf("large.jpg" to ByteArray(10_000_000))).status.value)
+            for (raw in listOf(
+                "not a multipart body",
+                "--test\r\nContent-Disposition: form-data; name=\"payload\"\r\n\r\n{}",
+                "--test\r\nContent-Disposition: form-data; name=\"payload\"\r\n\r\n{}\r\n" +
+                    "--test\r\nContent-Disposition: form-data; name=\"payload\"\r\n\r\n{}\r\n--test--\r\n",
+            )) assertEquals(400, withTimeout(5_000) {
+                client.post("/hooks/check") {
+                    header("Authorization", "Bearer $secret")
+                    header(HttpHeaders.ContentType, "multipart/form-data; boundary=test")
+                    setBody(raw)
+                }.status.value
+            })
+            assertTrue(llm.requests.isEmpty())
+        }
+    }
 
     @Test
     fun `bearer ingress is isolated durable idempotent and reloadable without a user chat`() {
@@ -236,6 +323,7 @@ class BackendHooksE2eTest {
         """.trimIndent())
         runHooks {
             setupOwner()
+            assertEquals(415, multipart(listOf("frame.jpg" to byteArrayOf(1))).status.value)
             assertEquals(401, invoke(token = "bad", payload = "raw bytes").status.value)
             assertTrue(llm.requests.isEmpty())
             val first = invoke(payload = "raw bytes", key = "ignored").jsonBody()["receiptId"].asText()
@@ -387,12 +475,12 @@ class BackendHooksE2eTest {
     @Test
     fun `restart resumes pending receipts and repairs terminal events without replaying interrupted work`() {
         writeHook()
-        runHooks(llm = E2eLlmApi().apply { pauseUntilReleased() }) {
+        runHooks(llm = E2eLlmApi().apply { pauseUntilReleased() }, attachments = AttachmentMinio.config()) {
             setupOwner()
             val interrupted = UUID.fromString(invoke().jsonBody()["receiptId"].asText())
             eventually("provider call in progress") { llm.requests.singleOrNull() }
             val chatId = UUID.fromString(awaitStatus(interrupted.toString(), "running")["execution"]["chatId"].asText())
-            val pending = UUID.fromString(invoke().jsonBody()["receiptId"].asText())
+            val pending = UUID.fromString(multipart(listOf("queued.md" to "# Queued evidence".toByteArray())).jsonBody()["receiptId"].asText())
             PostgresDataSourceFactory.create(postgresAppConfig(sql { it.schema }).postgres).use { db ->
                 backend.close()
                 val restartedLlm = E2eLlmApi()
@@ -425,6 +513,7 @@ class BackendHooksE2eTest {
                         }
                         peer.awaitExecution(pending)
                         assertEquals(1, restartedLlm.requests.size, "Interrupted work must not be replayed")
+                        assertTrue(restartedLlm.requests.single().conversationPrompt().contains("queued.md"))
                     }
                 }
             }
@@ -446,9 +535,11 @@ class BackendHooksE2eTest {
         """.trimIndent())
     }
 
-    private fun runHooks(config: HookConfig = HookConfig(setOf(owner)), llm: E2eLlmApi = E2eLlmApi(), runner: BackendConversationTurnRunner? = null, block: suspend BackendE2eScope.() -> Unit) =
+    private fun runHooks(config: HookConfig = HookConfig(setOf(owner)), llm: E2eLlmApi = E2eLlmApi(), runner: BackendConversationTurnRunner? = null,
+        attachments: AttachmentStorageConfig? = null, block: suspend BackendE2eScope.() -> Unit) =
         backendE2eTest("e2e_hooks", hookConfig = config, llm = llm, turnRunnerOverride = runner,
-            featureFlags = BackendFeatureFlags(wsEvents = true, options = runner != null), sandboxFactory = ::localSandbox, block = block)
+            featureFlags = BackendFeatureFlags(wsEvents = true, options = runner != null), sandboxFactory = ::localSandbox,
+            attachments = attachments, block = block)
 
     private fun localSandbox(settings: SettingsProvider) =
         DefaultRuntimeSandboxFactory(settings, RuntimeSandboxModeResolver { "local" }, workspace, workspace.resolve("state"), workspace)
@@ -469,6 +560,17 @@ class BackendHooksE2eTest {
             if (key != null) header("Idempotency-Key", key)
             jsonBody(payload)
         }
+
+    private suspend fun BackendE2eScope.multipart(files: List<Pair<String, ByteArray>>, payload: String = "{}",
+        key: String? = null, token: String = secret) = client.post("/hooks/check") {
+        header("Authorization", "Bearer $token")
+        if (key != null) header("Idempotency-Key", key)
+        setBody(MultiPartFormDataContent(formData {
+            append("payload", payload)
+            files.forEach { (name, bytes) -> append("files", bytes,
+                Headers.build { append(HttpHeaders.ContentDisposition, "filename=\"$name\"") }) }
+        }))
+    }
 
     private suspend fun BackendE2eScope.awaitStatus(id: String, expected: String): JsonNode =
         eventually("hook $id $expected") {
