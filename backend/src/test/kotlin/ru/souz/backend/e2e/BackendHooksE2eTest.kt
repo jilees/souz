@@ -79,9 +79,13 @@ class BackendHooksE2eTest {
             imageRoutes = setOf("QWEN::qwen-max"))
         val image = java.io.ByteArrayOutputStream().also { output ->
             javax.imageio.stream.MemoryCacheImageOutputStream(output).use {
-                javax.imageio.ImageIO.write(java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", it)
+                val frame = java.awt.image.BufferedImage(640, 360, java.awt.image.BufferedImage.TYPE_INT_RGB)
+                val random = java.util.Random(42)
+                for (y in 0 until frame.height) for (x in 0 until frame.width) frame.setRGB(x, y, random.nextInt())
+                javax.imageio.ImageIO.write(frame, "png", it)
             }
         }.toByteArray()
+        assertTrue(image.size > 131_072, "A detailed camera-sized PNG must exceed the text request budget")
         val files = listOf("frame.png" to image, "notes.md" to "# Event notes".toByteArray())
         runHooks(attachments = storage) {
             setupOwner()

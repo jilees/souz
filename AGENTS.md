@@ -18,7 +18,7 @@ Backend [personality settings](backend/docs/personality-settings.md) are separat
 
 Backend [attachment contracts](backend/docs/attachments.md) carry owner-scoped flat `fileId` references through messages, tools and sessions; V29 converts stored nested metadata while public WebSocket attachment contracts remain stable. Trusted HTTP message reads expose flat attachment metadata.
 
-Bearer [workspace hooks](docs/hooks.md) accept JSON events or bounded multipart payloads with up to five files. V30 persists ordered attachment metadata in durable receipts; dispatch uses ordinary owner-scoped message and vision handling. Python verifier hooks retain their raw-body contract.
+Bearer [workspace hooks](docs/hooks.md) accept JSON events or bounded multipart payloads with up to five files. V30 persists ordered attachment metadata in durable receipts; dispatch uses ordinary owner-scoped message and vision handling. Hook LLM requests bound control JSON to 128 KiB and prepared inline PNG data URLs separately to 14,000,000 UTF-8 bytes per request. Python verifier hooks retain their raw-body contract.
 
 - Read and maintain this file before changing the repository. Before editing a module, read its linked `AGENTS.md`, any applicable nested instructions, and relevant topics linked in its `Pain points` section.
 - Keep runtime documentation and `docs/public-souz-contract/` concise and current-state only. Do not write change-history phrases such as “now we do”.
