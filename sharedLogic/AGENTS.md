@@ -18,7 +18,7 @@
 - Skill lookups and invocations resolve a host-provided catalog snapshot. Composite steps use that same filtered snapshot; children retain only the capabilities selected at spawn, independently of parent refreshes.
 - Use sandbox filesystem abstractions for tool and skill IO whenever they are available.
 
-- Composite tool steps may request transient client delivery through invocation metadata; only the backend interprets the transport flag. Stable mutable Skill state belongs in the owner-and-Skill-scoped `SOUZ_SKILL_STATE_DIR`, outside bundle contents.
+- Composite tool steps may request transient client delivery through invocation metadata; only the backend interprets the transport flag. Script `parseJsonOutput` enables strict structured intermediate values; default stdout remains text. Stable mutable Skill state belongs in the owner-and-Skill-scoped `SOUZ_SKILL_STATE_DIR`, outside bundle contents.
 
 ## Pain points
 

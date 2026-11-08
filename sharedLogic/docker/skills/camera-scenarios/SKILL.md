@@ -141,21 +141,25 @@
     "activate": {
       "inputs": [
         "scenarioId",
-        "channelId",
-        "target",
-        "cameraId",
-        "condition",
-        "cooldownMs",
-        "prompt",
         "detectorRevision"
       ],
       "steps": [
         {
+          "id": "config",
+          "script": "scripts/state.py",
+          "runtime": "PYTHON",
+          "args": [
+            "config",
+            "${inputs.scenarioId}"
+          ],
+          "parseJsonOutput": true
+        },
+        {
           "id": "capabilities",
           "tool": "device.mcp.call_tool",
           "arguments": {
-            "channelId": "${inputs.channelId}",
-            "target": "${inputs.target}",
+            "channelId": "${config.channelId}",
+            "target": "${config.target}",
             "name": "camera_detector_rules_list",
             "arguments": {}
           }
@@ -167,8 +171,8 @@
           "args": [
             "preflight",
             "${capabilities}",
-            "${inputs.cameraId}",
-            "${inputs.condition}"
+            "${config.cameraId}",
+            "${config.condition}"
           ]
         },
         {
@@ -176,14 +180,8 @@
           "script": "scripts/state.py",
           "runtime": "PYTHON",
           "args": [
-            "prepare",
-            "${inputs.scenarioId}",
-            "${inputs.channelId}",
-            "${inputs.target}",
-            "${inputs.cameraId}",
-            "${inputs.condition}",
-            "${inputs.cooldownMs}",
-            "${inputs.prompt}"
+            "token",
+            "${inputs.scenarioId}"
           ]
         },
         {
@@ -224,17 +222,17 @@
           "id": "detector",
           "tool": "device.mcp.call_tool",
           "arguments": {
-            "channelId": "${inputs.channelId}",
-            "target": "${inputs.target}",
+            "channelId": "${config.channelId}",
+            "target": "${config.target}",
             "name": "camera_detector_rule_set",
             "arguments": {
               "expected_revision": "${inputs.detectorRevision}",
               "rule": {
                 "rule_id": "${inputs.scenarioId}",
-                "camera_id": "${inputs.cameraId}",
+                "camera_id": "${config.cameraId}",
                 "enabled": true,
-                "condition": "${inputs.condition}",
-                "cooldown_ms": "${inputs.cooldownMs}",
+                "condition": "${config.condition}",
+                "cooldown_ms": "${config.cooldownMs}",
                 "webhook": {
                   "url": "${hook.url}",
                   "bearer_token": "${credential}"
@@ -263,11 +261,11 @@
           "id": "status",
           "tool": "device.mcp.call_tool",
           "arguments": {
-            "channelId": "${inputs.channelId}",
-            "target": "${inputs.target}",
+            "channelId": "${config.channelId}",
+            "target": "${config.target}",
             "name": "camera_detector_rules_list",
             "arguments": {
-              "camera_id": "${inputs.cameraId}"
+              "camera_id": "${config.cameraId}"
             }
           }
         },
@@ -370,8 +368,10 @@ Core hook tools own webhooks; the local MCP owns rules. There is no camera workf
    A device connected only to a different Souz instance is not reachable through this instance;
    explain the missing connection rather than inventing a channel or webhook route.
 2. Discover the device MCP tools through `device.mcp.list_tools`; the camera setup, rule set,
-   rule delete and rules list tools must exist. Use `target` from device discovery, or the
-   empty string for the provider's own device. Run composite `inspect` to read cameras and
+   rule delete and rules list tools must exist. For standalone device MCP calls, omit
+   `target` for the provider's own device; an explicit empty target is not a device ID.
+   Composite inputs require `target`: use the discovered target or an empty string, which
+   the composite executor omits from tool arguments. Run composite `inspect` to read cameras and
    **active_classes/runtime_state**. Never hardcode supported classes from COCO.
 3. Translate the user's request into the local prefilter and cloud instruction. Use only
    available classes, normalized ROI, confidence, optional motion, dwell and cooldown.
@@ -399,7 +399,8 @@ as JSON strings, which the composite executor decodes. Keep all inputs unchanged
 2. Check both the hook status and the MCP result, including outer client status,
    MCP isError and nested native ok. MCP data may be in structuredContent or JSON in
    content[0].text. Obtain the rule revision from the returned native rule.
-3. Run `activate` with the same inputs and detectorRevision (JSON integer). It enables
+3. Run `activate` with only scenarioId and detectorRevision (JSON integer). It reads
+   the original private configuration and credential; do not repeat or rewrite the prompt. It enables
    the hook, enables the rule using revision checking, waits briefly and reads status.
 4. Report scenarioId, webhook URL, condition and actual application state. `monitoring`
    requires a real observation; awaiting_frame is pending, not proof of monitoring.

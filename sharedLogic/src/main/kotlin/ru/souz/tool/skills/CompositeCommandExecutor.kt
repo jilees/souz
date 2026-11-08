@@ -84,7 +84,11 @@ internal suspend fun SkillCommandExecutor.executeComposite(
                         if (result.exitCode != 0 || result.timedOut) {
                             return@withTimeoutOrNull result.copy(stderr = "$location: ${result.stderr}")
                         }
-                        TextNode(result.stdout)
+                        if (step.parseJsonOutput) {
+                            runCatching { compositeJsonReader.readTree(result.stdout) }
+                                .getOrNull()?.takeUnless { it.isMissingNode }
+                                ?: error("Invalid JSON script output.")
+                        } else TextNode(result.stdout)
                     }
                     else -> {
                         delay(step.waitMs!!)

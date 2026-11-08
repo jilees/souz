@@ -20,6 +20,7 @@ data class CompositeStepSpec(
     val arguments: Map<String, Any?> = emptyMap(),
     val args: List<String> = emptyList(),
     val transientClientCall: Boolean = false,
+    val parseJsonOutput: Boolean = false,
 )
 
 /** Shared traversal and reference syntax for manifest validation and execution. */
@@ -77,6 +78,7 @@ internal fun CompositeCommandSpec.validate(name: String) {
         check(step.tool == null || (step.tool.isNotBlank() && !step.tool.contains("\${")), "tool names must be static and nonblank.")
         check(step.waitMs == null || step.waitMs >= 0, "waitMs must not be negative.")
         check(!step.transientClientCall || step.tool != null, "transientClientCall requires a tool step.")
+        check(!step.parseJsonOutput || step.script != null, "parseJsonOutput requires a script step.")
         if (step.script != null) {
             SkillPathNormalizer.normalize(step.script)
             check(!step.script.contains("\${"), "scripts need a static path.")

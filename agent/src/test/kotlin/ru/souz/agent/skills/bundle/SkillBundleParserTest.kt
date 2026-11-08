@@ -49,6 +49,7 @@ class SkillBundleParserTest {
             "[{id: done, script: ../read.py, runtime: PYTHON}]",
             "[{id: done, waitMs: -1}]",
             "[{id: done, waitMs: 0, transientClientCall: true}]",
+            "[{id: done, waitMs: 0, parseJsonOutput: true}]",
             "[{id: done, waitMs: 0}, {id: done, waitMs: 0}]",
             "[{id: inputs, waitMs: 0}]",
             "[{id: 'bad-id', waitMs: 0}]",

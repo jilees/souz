@@ -109,7 +109,7 @@ class BackendCameraScenariosE2eTest {
                 val created = command("create", base)
                 assertEquals("configured_disabled", created["state"].asText())
                 assertFalse(rule!!["enabled"].asBoolean())
-                val active = command("activate", base + ("detectorRevision" to revision.toString()))
+                val active = command("activate", mapOf("scenarioId" to scenario, "detectorRevision" to revision.toString()))
                 assertTrue(rule!!["enabled"].asBoolean())
                 val deleting = base.filterKeys { it == "scenarioId" || it == "channelId" || it == "target" } + mapOf(
                     "detectorRevision" to revision.toString(), "hookRevision" to active["hook"]["revision"].asText())

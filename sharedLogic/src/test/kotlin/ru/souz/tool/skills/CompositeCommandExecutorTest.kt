@@ -162,6 +162,34 @@ class CompositeCommandExecutorTest {
     }
 
     @Test
+    fun `structured script output feeds typed arguments and invalid JSON stops without echoing stdout`() = runTest {
+        val command = bundle("""
+            steps:
+              - {id: config, script: scripts/config.py, runtime: PYTHON, parseJsonOutput: true}
+              - id: consume
+                tool: consume
+                arguments: {condition: '${'$'}{config.condition}', revision: '${'$'}{config.revision}'}
+            returns: '${'$'}{consume}'
+        """)
+        val consume = tool("consume") { call, _ ->
+            assertEquals(mapOf("condition" to mapOf("classes" to listOf("cat")), "revision" to 7), call.arguments)
+            "ok"
+        }
+        val executor = runner(command, listOf(consume))
+        coEvery { scripts.execute(any(), any(), any(), any()) } returns
+            SandboxCommandResult(0, """{"condition":{"classes":["cat"]},"revision":7}""", "")
+        assertEquals(0, executor.run().exitCode)
+        for (raw in listOf("private-credential", "{broken private-credential", "{} private-credential", "")) {
+            coEvery { scripts.execute(any(), any(), any(), any()) } returns SandboxCommandResult(0, raw, "")
+            val result = executor.run()
+            assertEquals(1, result.exitCode)
+            assertContains(result.stderr, "Invalid JSON script output")
+            assertTrue("private-credential" !in result.stderr && result.stdout.isEmpty())
+        }
+        coVerify(exactly = 1) { consume.invoke(any(), any()) }
+    }
+
+    @Test
     fun `composite forwards its last tool image and drops it after a later failure or imageless result`() = runTest {
         val screen = tool("screen") { _, _ -> "frame" }
         coEvery { screen.invoke(any(), meta) } returns LLMRequest.Message(

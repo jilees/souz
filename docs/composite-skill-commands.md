@@ -37,7 +37,7 @@ Each step has a unique identifier and exactly one of `tool`, `script`, or nonneg
 
 Inputs are required string values. Valid JSON strings are decoded, so `"{\"x\":1}"` supplies an object and `"true"` supplies a boolean. Quote a JSON-looking value again to preserve it as text. References such as `${inputs.device}` and `${state.content[0].uri}` may target declared inputs or earlier steps. Input and step identifiers use letters, digits, and underscores, beginning with a letter or underscore; `inputs` is reserved as a step ID.
 
-A value consisting entirely of a reference preserves its JSON type. Embedded references and script arguments use text, with objects and arrays encoded as JSON. Null and empty-string object fields are omitted. Tool message content is decoded as JSON when possible; script stdout always stays text, including whitespace. `returns` uses the same reference syntax and becomes the result's `stdout`.
+A value consisting entirely of a reference preserves its JSON type. Embedded references and script arguments use text, with objects and arrays encoded as JSON. Null and empty-string object fields are omitted. Tool message content is decoded as JSON when possible; script stdout stays text, including whitespace, unless the script step sets `parseJsonOutput: true`. `returns` uses the same reference syntax and becomes the result's `stdout`.
 
 File tools return references and sandbox paths that later steps can use, for example `${prepared.path}` and `${saved.fileId}`. Structured `files` from completed steps remain available after failure. Explicit `replyFiles` additions and `detachedReplyFiles` removals are combined in step order and published only on success; failure or timeout leaves the caller's previous selection intact. Stored files and other side effects are not rolled back. The combined change is checked against the reply limits as one tool result. Legacy image attachments from the last tool step are forwarded only on success; a failed command or an imageless final tool does not return an earlier image. See [attachment contracts](../backend/docs/attachments.md).
 
@@ -56,3 +56,8 @@ Bundled scripts receive `SOUZ_SKILL_STATE_DIR` when the sandbox has a state root
 It is a stable owner-and-Skill-scoped directory outside the immutable bundle;
 scripts create/manage their own bounded private records there. Backend LOCAL
 execution retains its documented shared-process/filesystem trust boundary.
+
+Script steps can opt into `parseJsonOutput: true` for strict JSON stdout. This exposes
+structured references such as `${config.condition}` to later steps without a model
+copying stored configuration. The default is text; malformed JSON stops the command
+with a static error that does not echo stdout. Tool and wait steps cannot set this flag.

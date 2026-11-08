@@ -9,7 +9,9 @@ camera and detector rules. The backend has no camera-specific Kotlin workflow.
 The MCP provider and the hook owner must be available to the same Souz instance.
 The parent discovers the intended provider with the existing lazy client discovery
 flow, then selects `channelId` explicitly and discovers its MCP tools. `inspect`
-returns cameras and actual detector capabilities. Supported classes come from
+returns cameras and actual detector capabilities. Standalone MCP calls omit `target`
+for the provider itself; composite input `target=""` is omitted by the executor.
+Supported classes come from
 `active_classes` of a ready runtime, not a hardcoded catalogue.
 
 The Skill supports the local rule's classes, confidence, normalized ROI, optional
@@ -27,7 +29,9 @@ user-authorized action, including the exact channel when a notification is neede
 | `delete` | Disable/remove the hook, remove the device rule, then remove private state |
 
 One stable `cam-<UUID>` identifies the scenario, hook and rule. The parent supplies
-JSON-encoded condition/numeric values through composite inputs. The Skill reads
+JSON-encoded condition/numeric values when creating the scenario. Activation needs only
+`scenarioId` and `detectorRevision`; it reads the saved configuration itself, including
+the exact original prompt. The Skill reads
 native results from either structuredContent or text-only MCP content; read the
 returned rule revision between create and activate. `monitoring`, saved configuration,
 HTTP receipt acceptance, agent completion and delivered notifications are distinct.

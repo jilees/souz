@@ -136,6 +136,9 @@ def run(args):
         token = read_private(token_path)
         require(32 <= len(token) <= 512 and not any(c.isspace() for c in token), "invalid_private_credential")
         sys.stdout.write(token)
+    elif command == "config":
+        value = json.loads(read_private(scenario_dir(args[1]) / "scenario.json"))
+        print(json.dumps(value["config"], ensure_ascii=False))
     elif command == "token":
         sys.stdout.write(read_private(scenario_dir(args[1]) / "token"))
     elif command == "record":
