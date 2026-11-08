@@ -9,6 +9,7 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
+import java.net.URI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
@@ -28,12 +29,20 @@ data class HookConfig(
     val executionTimeoutMillis: Long = 300_000,
     val verifierTimeoutMillis: Long = 5_000,
     val concurrentRequestsPerOwner: Int = 2,
+    val publicBaseUrl: String? = null,
 ) {
     init {
         require(owners.all { it.isNotBlank() && it.length <= 200 })
         require(listOf(queuePerHook, eventsPerUserPerDay, llmCallsPerEvent, llmCallsPerUserPerDay, concurrentExecutions).all { it > 0 })
         require(executionTimeoutMillis > 0)
         require(verifierTimeoutMillis in 100..30_000 && concurrentRequestsPerOwner in 1..16)
+        publicBaseUrl?.let {
+            val uri = URI(it)
+            require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null &&
+                uri.query == null && uri.fragment == null && !it.endsWith("/")) {
+                "Hook public base URL must be an HTTPS base without userinfo, query, fragment or trailing slash."
+            }
+        }
     }
 }
 
@@ -67,7 +76,7 @@ internal data class HookDefinition(
 }
 
 /** Bytes are captured on reload and never reread while handling a public request. */
-internal class LoadedHook(val definition: HookDefinition, val files: Map<String, ByteArray> = emptyMap()) {
+internal class LoadedHook(val definition: HookDefinition, val files: Map<String, ByteArray> = emptyMap(), val sourcePath: String? = null) {
     val revision: String = if (definition.verify == null) definition.revision else sha256(buildString {
         append(definition.revision).append('\n').append(definition.verify)
         files.toSortedMap().forEach { (path, bytes) -> append('\n').append(path).append(':').append(sha256(bytes)) }
@@ -82,6 +91,16 @@ internal class HookDefinitions(private val sandboxes: RuntimeSandboxFactory, pri
         .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
         .enable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+
+    fun serialize(definition: HookDefinition): String = yaml.writeValueAsString(buildMap {
+        put("version", definition.version)
+        put("hookId", definition.hookId)
+        put("ownerUserId", definition.ownerUserId)
+        put("enabled", definition.enabled)
+        definition.auth?.let { put("auth", it) }
+        definition.verify?.let { put("verify", it) }
+        put("prompt", definition.prompt)
+    }).also { require(it.toByteArray().size <= MAX_BODY_BYTES) { "Hook definition is too large." } }
 
     suspend fun load(owner: String): List<LoadedHook> = withContext(Dispatchers.IO) {
         require(owner in config.owners)
@@ -116,7 +135,7 @@ internal class HookDefinitions(private val sandboxes: RuntimeSandboxFactory, pri
                 require(verify.parameters.isObject && verify.parameters.toString().toByteArray().size <= 8192)
                 snapshotHookFiles(fs, directory).also { require(verify.script in it) { "Missing verifier script." } }
             }.orEmpty()
-            LoadedHook(definition, snapshot)
+            LoadedHook(definition, snapshot, path.path)
         }
     }
 

@@ -28,8 +28,14 @@ internal suspend fun BackendE2eScope.scheduledTaskTool(
     operation: String,
     arguments: Map<String, Any> = emptyMap(),
 ): JsonNode {
-    val prompt = "scheduled-task.$operation ${UUID.randomUUID()}"
-    llm.requestSkillForPrompt(prompt, "scheduled-task.$operation", arguments)
+    return invokeCompiledSkill(userId, chatId, "scheduled-task.$operation", arguments)
+}
+
+internal suspend fun BackendE2eScope.invokeCompiledSkill(
+    userId: String, chatId: String, skillId: String, arguments: Map<String, Any> = emptyMap(),
+): JsonNode {
+    val prompt = "$skillId ${UUID.randomUUID()}"
+    llm.requestSkillForPrompt(prompt, skillId, arguments)
     val sent = client.post(BackendHttpRoutes.chatMessages(chatId)) {
         trusted(userId)
         jsonBody("""{"content":"$prompt"}""")

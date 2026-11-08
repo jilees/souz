@@ -230,6 +230,7 @@ data class BackendAppConfig(
                 hooks = HookConfig(
                     owners = source.value("SOUZ_HOOK_OWNERS", "souz.hooks.owners")
                         ?.split(',')?.map(String::trim)?.filter(String::isNotEmpty)?.toSet().orEmpty(),
+                    publicBaseUrl = source.value("SOUZ_HOOK_PUBLIC_BASE_URL", "souz.hooks.publicBaseUrl")?.trim()?.trimEnd('/'),
                 ),
                 server = BackendServerConfig(
                     host = source.value(

@@ -44,3 +44,15 @@ File tools return references and sandbox paths that later steps can use, for exa
 Tool steps can access only the invoking `RunSkillCommand` catalog. For a child, select the file-backed Skill and all required tools explicitly in `SpawnSubagent.skillIds`. Core discovery, command, and spawn tools cannot be called from a composite. Ordinary script execution retains its existing sandbox behavior.
 
 Unavailable tools and missing inputs fail before any steps run. A thrown tool error, failed script, or unresolved reference stops the sequence; tool content describing an error remains ordinary result data. Completed side effects are not rolled back or retried. The usual command result (`exitCode`, `stdout`, `stderr`, `timedOut`) identifies failures by step. Cancellation propagates. `timeoutMillis` bounds the entire sequence, defaults to 60 seconds, and is capped at five minutes. Other process arguments are ignored when `composite` is set; script steps take their runtime, path, and arguments from the manifest.
+
+A tool step may set `transientClientCall: true` for credential provisioning. The
+backend still validates provider ownership, discovered definitions, arguments and
+availability, then uses live-only RPC even on the source channel. It does not store
+raw client arguments/results in durable replay. Use intermediate values and return
+only a sanitized summary; the flag does not sanitize a secret supplied in the outer
+composite inputs or explicitly included in its result. Script/wait steps reject it.
+
+Bundled scripts receive `SOUZ_SKILL_STATE_DIR` when the sandbox has a state root.
+It is a stable owner-and-Skill-scoped directory outside the immutable bundle;
+scripts create/manage their own bounded private records there. Backend LOCAL
+execution retains its documented shared-process/filesystem trust boundary.

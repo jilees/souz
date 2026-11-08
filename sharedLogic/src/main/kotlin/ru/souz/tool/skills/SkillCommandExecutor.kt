@@ -1,6 +1,7 @@
 package ru.souz.tool.skills
 
 import java.nio.file.Path
+import java.security.MessageDigest
 import kotlin.io.path.invariantSeparatorsPathString
 import ru.souz.agent.skills.SkillId
 import ru.souz.agent.skills.bundle.SkillBundle
@@ -109,7 +110,11 @@ class SkillCommandExecutor(
                         .map { it.normalizedPath }
                         .filterNot { it == SKILL_MARKDOWN_PATH }
                         .joinToString(","),
-                ) + arguments.environment,
+                ) + sandbox.runtimePaths.stateRootPath?.let {
+                    val key = MessageDigest.getInstance("SHA-256")
+                        .digest("${meta.userId}\n${bundle.skillId.value}".toByteArray()).toHexString()
+                    mapOf("SOUZ_SKILL_STATE_DIR" to "$it/skill-data/$key")
+                }.orEmpty() + arguments.environment,
                 stdin = arguments.stdin,
                 timeoutMillis = arguments.timeoutMillis.coerceIn(1L, MAX_TIMEOUT_MILLIS),
             )

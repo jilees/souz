@@ -75,6 +75,14 @@ internal class HookService(
             .filter { it.ownerUserId == owner && it.enabled }.map { it.hookId }
     }
 
+    suspend fun definition(owner: String, id: String): HookDefinition? = mutex.withLock {
+        hooks[id]?.singleOrNull()?.definition?.takeIf { it.ownerUserId == owner }
+    }
+
+    suspend fun availableToOwner(owner: String, id: String): Boolean = mutex.withLock {
+        hooks[id].orEmpty().all { it.definition.ownerUserId == owner }
+    }
+
     /** Only configured owners allocate capacity; reload never resets an owner's permits. */
     suspend fun <T> withRequest(id: String, authorization: String?, receive: suspend (LoadedHook) -> T): T {
         val hook = mutex.withLock { hooks[id]?.singleOrNull() } ?: throw hookError(404, "hook_not_found")

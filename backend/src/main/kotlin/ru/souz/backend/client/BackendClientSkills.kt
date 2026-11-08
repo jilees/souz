@@ -230,7 +230,9 @@ private class ClientWebSocketSkill(
         }
         val arguments = restJsonMapper.valueToTree<JsonNode>(functionCall.arguments - "channelId")
         clientArgumentsError(fn.parameters, arguments)?.let { return failed("mcp_invalid_arguments", it) }
-        if (meta.conversationId != chat.id.toString()) return invokeOnChannel(chat, functionCall, meta)
+        if (meta.conversationId != chat.id.toString() || meta.attributes["souz.clientToolDelivery"] == "transient") {
+            return invokeOnChannel(chat, functionCall, meta)
+        }
         val threadId = meta.requestId?.let { raw -> runCatching { UUID.fromString(raw) }.getOrNull() }
             ?: return failed("client_context_missing", "Thread ID is unavailable.")
         val chatId = chat.id

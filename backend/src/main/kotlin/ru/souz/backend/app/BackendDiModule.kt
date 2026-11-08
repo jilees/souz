@@ -26,6 +26,9 @@ import ru.souz.agent.knowledge.ConversationKnowledgeStore
 import ru.souz.backend.personality.PersonalitySync
 import ru.souz.backend.hooks.HookDefinitions
 import ru.souz.backend.hooks.HookService
+import ru.souz.backend.hooks.HookWorkspaceFiles
+import ru.souz.backend.hooks.HookManagement
+import ru.souz.backend.hooks.HookManagementTools
 import ru.souz.backend.hooks.HookStore
 import ru.souz.backend.hooks.HookVerifier
 import ru.souz.backend.storage.postgres.PostgresConversationKnowledgeStore
@@ -277,6 +280,8 @@ fun backendDiModule(
     bindSingleton { ExecutionQuotaManager(appConfig.llmLimits) }
     bindSingleton { HookStore(instance<HikariDataSource>(), appConfig.hooks) }
     bindSingleton { HookDefinitions(instance(), appConfig.hooks) }
+    bindSingleton { HookWorkspaceFiles(instance(), appConfig.hooks, instance(), hooks = { instance<HookService>() }) }
+    bindSingleton { HookManagement(instance(), appConfig.hooks) }
     bindSingleton { HookVerifier(appConfig.hooks, instance()) }
     bindSingleton { HookService(appConfig.hooks, instance(), instance(), instance(), instance(), instance(), instance(), instanceOrNull()) }
     bindSingleton<ProviderCredentialResolver> {
@@ -575,6 +580,7 @@ fun backendDiModule(
         AgentToolCatalog.compose(
             instance<RuntimeToolsFactory>().catalog,
             instance<BackendChannelToolCatalog>().catalog,
+            HookManagementTools { instance<HookManagement>() }.catalog,
             instanceOrNull<BackendAttachmentAccess>()?.let(::attachmentToolCatalog) ?: AgentToolCatalog(),
             instanceOrNull<ru.souz.backend.attachments.AttachmentMediaTools>()?.catalog ?: AgentToolCatalog(),
             instanceOrNull<ru.souz.tool.files.DocumentMediaTools>()?.catalog ?: AgentToolCatalog(),

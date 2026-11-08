@@ -19,3 +19,10 @@ Reserve provider attempts transactionally before calling the provider, including
 Admission serializes an owner's deduplication and limit checks with `FOR NO KEY UPDATE`, allowing concurrent foreign-key checks on that user. Daily and per-event LLM reservations use conditional writes in one transaction; a rejected event reservation must also roll back the daily increment. Keep admission counts restricted to the active queue and current UTC day. Dispatch checks the saved revision before using the loaded prompt, so receipts need no duplicate prompt snapshot. Registry locks protect configuration checks, not database admission or execution startup. Bearer authentication precedes owner intake acquisition. Arbitrary hook IDs allocate no quota state; ingress owns per-IP rate limits.
 
 Run `./gradlew :backend:test --tests 'ru.souz.backend.hooks.HookVerifierTest'` with local Python for verifier changes. Run `./gradlew :backend:test --tests 'ru.souz.backend.e2e.BackendHooksE2eTest'` with Docker, followed by the backend suite when changing lifecycle or LLM integration.
+
+Core hook tools reuse owner-scoped workspace mutation and reload. They use trusted
+`HookConfig.publicBaseUrl` for external addresses; caller metadata supplies ownership.
+Mutation serializes the process-wide hook ID namespace, rejects other owners' active
+IDs, and rechecks source identity/definition/revision before replacement or removal.
+The version-1 hook manifest is unchanged. Generated tokens are returned only by create;
+caller-supplied credentials are omitted from results. List/get never return credentials.

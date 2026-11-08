@@ -27,6 +27,8 @@ Before changing this module, read the relevant pain-point topics below.
 - Backend owns execution, capacity, LLM, and tool metrics; `:job-impl` owns queue metrics and binds them to the shared registry at composition. Restrict `/metrics` at ingress; its [metric reference](docs/metrics.md) defines accounting and replica semantics.
 - Keep [personality](docs/personality-settings.md) independent of system prompts and ordinary settings writes. Before mutation, require parent discovery of an unknown connected source even with a known fallback; otherwise discover an unknown connected channel when no provider declares synchronization support. Return `client_tool_discovery_required` without saving; known absence and offline channels do not require discovery.
 
+- Core hook tools use trusted external URL configuration, owner-scoped workspace mutations and revision checks. Secret provisioning composite steps force transient client RPC, including on the source channel, while retaining normal provider/capability validation.
+
 ## Pain points
 
 - [LLM gateway](docs/llm-gateway.md) — service-authenticated OpenAI-compatible named-model and Codex calls, explicit cascades, and SSE boundaries.

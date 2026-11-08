@@ -63,7 +63,10 @@ internal suspend fun SkillCommandExecutor.executeComposite(
                     tool != null -> {
                         val target = tools.getValue(tool)
                         val call = LLMResponse.FunctionCall(target.fn.name, restJsonMapper.convertValue(resolve(step.arguments)))
-                        val message = target.invoke(call, meta)
+                        val stepMeta = if (step.transientClientCall) meta.copy(
+                            attributes = meta.attributes + ("souz.clientToolDelivery" to "transient"),
+                        ) else meta
+                        val message = target.invoke(call, stepMeta)
                         attachments.clear()
                         attachments.addAll(message.attachments.orEmpty())
                         files.addAll(message.files)

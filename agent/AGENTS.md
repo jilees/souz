@@ -21,6 +21,8 @@ Before changing this module, read the relevant pain-point topics below.
 - `AgentSettings.routing` is pending complexity routing for a turn's first LLM call: with a `TaskComplexityClassifier`, `NodesLLM` runs it on the simple or the complex model and keeps the choice for the rest of the turn. Routing reuses inventory descriptions as untrusted hints; simple execution retains context but has no advertised or executable tools. See [model routing](docs/execution-lifecycle.md#model-routing).
 - `SubagentTool` constructs one isolated context from host-supplied `Setup` and awaits a fresh `Agent` from an injected factory in the caller's coroutine. `ToolLoopGraphBasedAgent` provides the default model/tool loop. Share host APIs, invocation identity, and the invoking execution's runtime event sink; keep agent instances, history, and side-effect flows private. See [subagent execution](docs/subagents.md).
 
+- Composite tool steps may declare `transientClientCall`; scripts and waits cannot. The manifest describes the request, while hosts enforce transport and ownership. `HOOKS` is a host-supplied tool category, not a camera workflow in the kernel.
+
 ## Pain points
 
 - [Execution lifecycle](docs/execution-lifecycle.md) — cancellation, session ownership, continuation, and request-scoped kernels.

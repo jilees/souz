@@ -24,6 +24,7 @@ object BackendToolCapabilityPolicy {
         ToolCategory.CHANNEL_MESSAGING,
         ToolCategory.OAUTH,
         ToolCategory.SCHEDULING,
+        ToolCategory.HOOKS,
     )
 
     /** Advertised tools whose LLM dependency is bound per execution, so no process catalog holds them. */

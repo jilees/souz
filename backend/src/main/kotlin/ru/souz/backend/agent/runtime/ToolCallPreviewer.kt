@@ -106,6 +106,7 @@ private val SENSITIVE_KEYS = setOf(
     "apikey",
     "token",
     "accesstoken",
+    "bearertoken",
     "refreshtoken",
     "authorization",
     "auth",
