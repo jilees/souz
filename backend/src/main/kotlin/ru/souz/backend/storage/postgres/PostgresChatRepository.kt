@@ -12,6 +12,7 @@ import javax.sql.DataSource
 import ru.souz.backend.chat.model.Chat
 import ru.souz.backend.chat.repository.ChatRequestConflictException
 import ru.souz.backend.chat.repository.ChatRepository
+import ru.souz.backend.settings.model.PersonalitySnapshot
 
 class PostgresChatRepository(
     private val dataSource: DataSource,
@@ -19,8 +20,9 @@ class PostgresChatRepository(
     // JDBC's non-suspending after-commit callback publishes freshness to this host's readers.
     // Keep persisted definitions rollback-compatible; another instance must rediscover them.
     private val freshDiscoveryChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<UUID>()
-    override suspend fun create(chat: Chat, tools: List<ClientToolDefinition>): Chat =
-        checkNotNull(insert(chat, tools, ignoreDuplicate = false))
+    override suspend fun create(chat: Chat, tools: List<ClientToolDefinition>,
+        initialPersonality: PersonalitySnapshot?): Chat =
+        checkNotNull(insert(chat, tools, ignoreDuplicate = false, initialPersonality))
 
     override suspend fun getOrCreate(chat: Chat): Chat =
         insert(chat, emptyList(), ignoreDuplicate = true) ?: get(chat.userId, chat.id)
@@ -47,15 +49,16 @@ class PostgresChatRepository(
         chat: Chat,
         tools: List<ClientToolDefinition>,
         ignoreDuplicate: Boolean,
+        initialPersonality: PersonalitySnapshot? = null,
     ): Chat? = dataSource.write { connection ->
         try {
             connection.prepareStatement(
                 """
                 insert into chats(
                   id, user_id, client_type, request_id, payload_hash,
-                  title, archived, created_at, updated_at, client_tools
+                  title, archived, created_at, updated_at, client_tools, your_name
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)
                 ${if (ignoreDuplicate) "on conflict do nothing" else ""}
                 returning $CHAT_COLUMNS
                 """.trimIndent()
@@ -70,8 +73,13 @@ class PostgresChatRepository(
                 statement.setInstant(8, chat.createdAt)
                 statement.setInstant(9, chat.updatedAt)
                 statement.setString(10, restJsonMapper.writeValueAsString(tools))
+                statement.setString(11, chat.yourName)
                 statement.executeQuery().use { resultSet ->
-                    if (resultSet.next()) resultSet.toChat() else null
+                    if (resultSet.next()) {
+                        val created = resultSet.toChat()
+                        if (initialPersonality != null) initializePersonality(connection, chat.userId, initialPersonality)
+                        created
+                    } else null
                 }
             }
         } catch (error: java.sql.SQLException) {
@@ -261,4 +269,26 @@ class PostgresChatRepository(
     }
 }
 
-private const val CHAT_COLUMNS = "id, user_id, client_type, request_id, payload_hash, title, archived, created_at, updated_at"
+private const val CHAT_COLUMNS = "id, user_id, client_type, request_id, payload_hash, title, archived, created_at, updated_at, your_name"
+
+private fun initializePersonality(connection: java.sql.Connection, userId: String,
+    snapshot: PersonalitySnapshot) {
+    connection.prepareStatement("""
+        insert into user_settings(user_id, settings_json) values (?, '{}'::jsonb) on conflict do nothing
+    """.trimIndent()).use { statement ->
+        statement.setString(1, userId)
+        statement.executeUpdate()
+    }
+    connection.prepareStatement("""
+        update user_settings set personality_prompt = ?, personality_voice = ?, personality_appeal = ?,
+            personality_style = ?, personality_initialized = true, updated_at = now()
+        where user_id = ? and not personality_initialized
+    """.trimIndent()).use { statement ->
+        statement.setString(1, snapshot.prompt)
+        statement.setString(2, snapshot.voice)
+        statement.setString(3, snapshot.appeal)
+        statement.setString(4, snapshot.style)
+        statement.setString(5, userId)
+        statement.executeUpdate()
+    }
+}

@@ -35,6 +35,7 @@ import ru.souz.backend.telegram.TelegramBotBinding
 import ru.souz.backend.vk.VkBotBinding
 import ru.souz.llms.FileContent
 import ru.souz.llms.restJsonMapper
+import ru.souz.backend.settings.model.PersonalitySnapshot
 
 internal data class BackendV1SettingsResponse(
     val settings: BackendV1SettingsDto,
@@ -77,6 +78,7 @@ data class BackendV1SettingsDto(
     val systemPrompt: String?,
     val personalityPrompt: String?,
     val personalityRevision: Long,
+    val personalityParameters: Map<String, String>,
     val enabledTools: List<String>,
     val showToolEvents: Boolean,
     val streamingMessages: Boolean,
@@ -291,6 +293,8 @@ internal fun EffectiveUserSettings.toDto(): BackendV1SettingsDto =
         systemPrompt = systemPrompt,
         personalityPrompt = personalityPrompt,
         personalityRevision = personalityRevision,
+        personalityParameters = PersonalitySnapshot(
+            personalityPrompt, personalityRevision, personalityVoice, personalityAppeal, personalityStyle).parameters(),
         enabledTools = enabledTools.toList(),
         showToolEvents = showToolEvents,
         streamingMessages = streamingMessages,

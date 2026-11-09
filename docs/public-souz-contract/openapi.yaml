@@ -107,6 +107,40 @@ components:
           type: [string, "null"]
         tools:
           $ref: "#/components/schemas/ClientToolCatalogue"
+        parameters:
+          $ref: "#/components/schemas/PersonalityParameters"
+    PersonalityParameters:
+      type: object
+      maxProperties: 128
+      propertyNames:
+        maxLength: 256
+      additionalProperties:
+        type: string
+        maxLength: 16384
+      description: >-
+        Free string dictionary. Persist only user-wide voice, appeal, style, personality and
+        chat-local your_name (unmodified activation word). Unknown keys are ignored for storage.
+        Initialize user settings once; later chats and retries cannot overwrite them.
+      properties:
+        voice:
+          type: string
+          enum: [sber, afina, joy]
+          default: joy
+        appeal:
+          type: string
+          enum: [official, no_official]
+          default: no_official
+        style:
+          type: string
+          enum: [informal, neutral, formal]
+          default: informal
+        your_name:
+          type: string
+          maxLength: 16384
+        personality:
+          type: string
+          maxLength: 16384
+          default: ""
     ClientToolCatalogue:
       type: array
       maxItems: 256
@@ -355,6 +389,8 @@ components:
               type: [string, "null"]
             tools:
               $ref: "#/components/schemas/ClientToolCatalogue"
+            parameters:
+              $ref: "#/components/schemas/PersonalityParameters"
     ChatSubscribe:
       description: Acknowledges before replay and live delivery. Explicit afterSeq replaces this chat subscription on the same socket and returns duplicate=false. Without afterSeq, an existing subscription is kept with duplicate=true. Does not execute input; requestId is for correlation only.
       type: object
@@ -1139,11 +1175,13 @@ components:
     PersonalitySetArguments:
       type: object
       additionalProperties: false
-      required: [prompt, revision]
+      required: [parameters, revision]
       properties:
-        prompt:
-          type: string
-          description: Complete style, at most 16384 UTF-16 units. Empty clears the preference.
+        parameters:
+          allOf:
+            - $ref: "#/components/schemas/PersonalityParameters"
+            - required: [voice, appeal, style, personality]
+          description: Full user snapshot plus the destination chat's unmodified your_name when known.
         revision:
           type: integer
           minimum: 1

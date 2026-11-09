@@ -18,7 +18,7 @@ A **chat** stores history; a **thread** is a task inside it. A **subscription** 
 
 | Kind | Purpose |
 | --- | --- |
-| `chat.create` | Create or retrieve a chat with `requestId` and `payload:{userId,title?,tools?}`. ACK returns `chatId`; `clientType` comes from the socket. |
+| `chat.create` | Create or retrieve a chat with `requestId` and `payload:{userId,title?,tools?,parameters?}`. ACK returns `chatId`; `clientType` comes from the socket. |
 | `chat.subscribe` | Replay and receive live events using `chatId`, `requestId` and optional `afterSeq`. |
 | `chat.unsubscribe` | Close this socket's subscription to `chatId`, with a correlated `requestId` ACK. |
 | `message.submit` | Submit user input. Explicit `threadId` continues that thread; omission selects the active thread or creates one. |
@@ -31,6 +31,18 @@ History, tool results and cancellation neither require nor initiate subscription
 Assistant tool history uses `content: {"type":"tool_call","name":"weather","arguments":{},"result":{"temperature_c":25.1}}`. Both `arguments` and `result` are required JSON objects; history content has no `toolCallId` or `target`. Send memory retrieval results through this same shape, preserving the tool name, arguments and result. Do not copy tool results into text history: text is eligible for memory extraction.
 
 With `HINDSIGHT_API_URL` configured and `SOUZ_FEATURE_WS_AUTOMATIC_MEMORY_RECALL=true`, Souz retrieves memory once before the first LLM call of each new thread. The flag defaults to `false` and controls all backend executions. Client-supplied memory history remains available in either mode. Tool loops, duplicate submits, reconnects and active-thread continuation do not repeat automatic recall. The agent can invoke `SearchMemory` explicitly in either mode. With Hindsight enabled, accepted text history also enters background memory capture. See [external memory](../../backend/docs/external-memory.md) for retention, acknowledgement timing, attribution, privacy and recovery rules.
+
+## Personality parameters
+
+Creation accepts optional `parameters`, a free dictionary of strings (128 entries, keys up to 256
+UTF-16 units and values up to 16,384). Only user-wide `voice`, `appeal`, `style`, `personality` and
+chat-local `your_name` are stored. Unknown keys still participate in creation idempotency. The
+first public chat initializes user parameters; later chats preserve them. `your_name` is an
+unmodified activation word recorded once, not an assistant name. Unknown spotters are omitted.
+Snapshots use `{parameters:{voice,appeal,style,personality,your_name?},revision}`. Supported voices:
+`sber`, `afina`, `joy`; appeals: `official` (вы), `no_official` (ты); styles: `informal`, `neutral`,
+`formal`. Defaults are `joy`, `no_official`, `informal`, and empty custom personality.
+See the [complete personality exchange](examples/personality.jsonl).
 
 ## Attachments
 

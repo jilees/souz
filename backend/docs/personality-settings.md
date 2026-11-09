@@ -1,14 +1,39 @@
 # Personality settings
 
-`personalityPrompt` and `personalityRevision` are user settings exposed in settings GET and bootstrap.
-Ordinary settings PATCH cannot change them. The enabled `personality.update` Skill accepts a whole
-`request` and an optional `action`: `update` (default) replaces the style, `append` preserves unrelated
-preferences only for explicit additions, and `reset` clears it without a request.
+User settings expose `personalityParameters` (`voice`, `appeal`, `style`, `personality`),
+`personalityRevision`, and the compatible `personalityPrompt` read field. Ordinary settings PATCH
+cannot change them. `personality.update` accepts a whole `request` and an optional `action`:
+`update` replaces the custom style, `append` preserves unrelated preferences only for explicit
+additions, and `reset` clears the prompt and restores Joy defaults. Every successful mutation
+saves all four user parameters under one revision.
 
-A separate call through the execution model validates the entire wish and normalizes a style suitable
+Supported voices are `sber` (male, calm, restrained, confident), `afina` (female, calm, composed,
+businesslike), and `joy` (female, lively, light, playful). These descriptions guide voice selection;
+all three support either appeal and every style. SberKot is excluded. `appeal` is `official` (вы)
+or `no_official` (ты); `style` is `informal` (friendly), `neutral`, or `formal` (businesslike/strict).
+Defaults are `joy`, `no_official`, `informal`, and empty custom personality. An explicit voice
+request takes priority; otherwise the validator selects delivery matching the requested persona.
+It never derives the voice from the human user's gender.
+
+HTTP `POST /v1/chats` and WS `chat.create.payload` accept optional `parameters`, a free dictionary
+of strings. Unknown keys are accepted but not stored. Keys are at most 256 UTF-16 units, values
+at most 16,384, with at most 128 entries; nulls and nonstrings are rejected. Known voice/appeal/style
+values must be supported. Omission and `{}` are equivalent. The entire dictionary participates
+in creation idempotency, including unknown keys. A changed payload under the same request ID conflicts.
+Creation initializes a new user's four settings once, in the chat insertion transaction; later
+chats and creation retries never overwrite them. Legacy user prompts/revisions survive migration,
+with Joy defaults for missing fields.
+
+`your_name` is an activation word, not the assistant's name. Store it unchanged only on the created
+chat, including whitespace/empty strings, and include it only when known for the selected delivery
+chat. It is never exposed to the validator or conversation instructions, changed by the tool, reset,
+or copied from another chat. Legacy chats leave it unknown. Subsequent physical spotter changes
+remain authoritative on Orion; this contract has no spotter-update operation.
+
+A separate call through the execution model validates the entire wish and selects all four coherent parameters suitable
 for both text and voice. Rejection or malformed output leaves settings unchanged. The call uses the
 execution's credentials, context limit and usage accounting. Only conversational requests receive the
-latest saved style, including subsequent calls in the same turn; base prompts, persisted history,
+latest saved voice, appeal, standard style and custom prompt, including subsequent calls in the same turn; base prompts, persisted history,
 classification, summaries and subagents remain independent.
 
 Personality instructions count toward conversational context budgeting before every model call.
@@ -23,7 +48,7 @@ UTF-16 units. Validation runs outside transactions; a competing write triggers r
 three attempts. After commit, delivery belongs to the application scope and survives turn cancellation.
 
 Orion receives `prompt.personality.set` through live `tool.call.started` / `tool.result` transport, with
-`seq:null` and exactly `{"prompt":"...","revision":2}` as arguments. Empty prompt clears the style.
+`seq:null` and exactly `{"parameters":{"voice":"joy","appeal":"no_official","style":"informal","personality":"..."},"revision":2}` as arguments. An empty `parameters.personality` disables the custom style. The optional `parameters.your_name` is copied from the destination chat.
 Before validation or mutation, `personality.update` checks connected channels for synchronization
 support. An unknown connected source requires discovery even when another channel declares the
 command, so user-scoped storage synchronization does not bypass the originating speaker. Otherwise,

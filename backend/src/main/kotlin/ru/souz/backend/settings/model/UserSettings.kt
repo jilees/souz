@@ -30,6 +30,9 @@ data class UserSettings(
     val systemPrompt: String? = null,
     val personalityPrompt: String? = null,
     val personalityRevision: Long = 1,
+    val personalityVoice: String = "joy",
+    val personalityAppeal: String = "no_official",
+    val personalityStyle: String = "informal",
     /**
      * Null enables every tool the backend advertises, including tools added later; a selection of
      * every advertised tool is stored as null. A set enables exactly those tools; empty enables none.
