@@ -230,6 +230,89 @@ class BackendPersonalityE2eTest {
         }
     }
 
+    @Test
+    fun `creation initializes a user once and passes each chat spotter without modification`() =
+        backendE2eTest("personality_parameters", llm = personalityApi()) {
+            suspend fun create(requestId: String, parameters: Map<String, String>) = client.post(BackendHttpRoutes.CHATS) {
+                jsonBody(json.writeValueAsString(mapOf("userId" to owner, "requestId" to requestId, "clientType" to "backend",
+                    "parameters" to parameters, "tools" to json.readTree(clientToolsJson(PERSONALITY_SYNC_COMMAND)))))
+            }
+            val parameters = mapOf("voice" to "sber", "appeal" to "official", "style" to "neutral",
+                "personality" to "Initial style", "your_name" to "  Коржик  ", "future" to "ignored")
+            val response = create("first", parameters)
+            assertEquals(201, response.status.value)
+            val first = response.jsonBody()["chat"]["id"].asText()
+            assertEquals(200, create("first", parameters).status.value)
+            assertEquals(409, create("first", parameters + ("future" to "different")).status.value)
+            assertEquals("Initial style", settings()["personalityParameters"]["personality"].asText())
+            assertEquals("sber", settings()["personalityParameters"]["voice"].asText())
+            val second = create("second", mapOf("voice" to "joy", "personality" to "Do not overwrite", "your_name" to "Пятница"))
+                .jsonBody()["chat"]["id"].asText()
+            assertEquals("sber", settings()["personalityParameters"]["voice"].asText())
+            withPublicSocket(first) { socket ->
+                val frame = snapshot(socket)
+                val values = frame["payload"]["arguments"]["parameters"]
+                assertEquals("  Коржик  ", values["your_name"].asText())
+                assertFalse(values.has("future"))
+                acknowledge(socket, frame, "Initial style", 1)
+            }
+            withPublicSocket(second) { socket ->
+                val initial = snapshot(socket)
+                assertEquals("Пятница", initial["payload"]["arguments"]["parameters"]["your_name"].asText())
+                acknowledge(socket, initial, "Initial style", 1)
+                coroutineScope {
+                    val changing = async { turn(second, "formal") }
+                    val updated = snapshot(socket)
+                    val values = updated["payload"]["arguments"]["parameters"]
+                    assertEquals("afina", values["voice"].asText())
+                    assertEquals("official", values["appeal"].asText())
+                    assertEquals("formal", values["style"].asText())
+                    assertEquals("Пятница", values["your_name"].asText())
+                    acknowledge(socket, updated, "formal", 2)
+                    changing.await()
+                }
+            }
+            assertEquals(200, create("first", parameters).status.value)
+            assertEquals("formal", settings()["personalityPrompt"].asText())
+            turn(second, "reset")
+            assertEquals(mapOf("voice" to "joy", "appeal" to "no_official", "style" to "informal", "personality" to ""),
+                json.convertValue(settings()["personalityParameters"], Map::class.java))
+            withPublicSocket(first) { socket ->
+                val frame = snapshot(socket)
+                assertEquals("  Коржик  ", frame["payload"]["arguments"]["parameters"]["your_name"].asText())
+                acknowledge(socket, frame, null, 3)
+            }
+            for (invalid in listOf("null", "{\"voice\":12}", "{\"future\":null}", "{\"future\":{}}", "{\"voice\":\"sberkot\"}")) {
+                assertEquals(400, client.post(BackendHttpRoutes.CHATS) {
+                    jsonBody("""{"userId":"$owner","requestId":"bad","clientType":"backend","parameters":$invalid}""")
+                }.status.value)
+            }
+        }
+
+    @Test
+    fun `WebSocket creation shares parameter idempotency with HTTP and never uses a spotter as persona name`() =
+        backendE2eTest("personality_ws_parameters", llm = personalityApi()) {
+            val parameters = mapOf("voice" to "joy", "appeal" to "official", "style" to "neutral",
+                "your_name" to "private-activation-word", "extra" to "ignored")
+            withMultiChatSocket { socket ->
+                socket.send(Frame.Text(json.writeValueAsString(mapOf("kind" to "chat.create", "requestId" to "ws",
+                    "payload" to mapOf("userId" to owner, "parameters" to parameters)))))
+                val ack = readRawJson(socket)
+                assertEquals("accepted", ack["status"].asText())
+                val chat = ack["chatId"].asText()
+                val retry = client.post(BackendHttpRoutes.CHATS) {
+                    jsonBody(json.writeValueAsString(mapOf("userId" to owner, "requestId" to "ws",
+                        "clientType" to "backend", "parameters" to parameters)))
+                }
+                assertEquals(200, retry.status.value)
+                assertEquals(chat, retry.jsonBody()["chat"]["id"].asText())
+                turn(chat, "formal") // An unknown connected source first requires discovery; no style mutation.
+                assertFalse(llm.requests.any { request -> request.messages.any { "private-activation-word" in it.content } })
+                val conversational = llm.requests.first().messages.first().content
+                assertTrue("вы" in conversational && "neutral" in conversational)
+            }
+        }
+
     private suspend fun BackendE2eScope.discover(socket: DefaultClientWebSocketSession, chat: String, tools: String) =
         withTimeout(15_000) {
             coroutineScope {
@@ -261,8 +344,8 @@ class BackendPersonalityE2eTest {
     private suspend fun BackendE2eScope.acknowledge(socket: DefaultClientWebSocketSession, frame: JsonNode, prompt: String?, revision: Long, failed: Boolean = false) {
         assertTrue(frame.has("seq") && frame["seq"].isNull)
         val arguments = frame["payload"]["arguments"]
-        assertEquals(setOf("prompt", "revision"), arguments.fieldNames().asSequence().toSet())
-        assertEquals(prompt.orEmpty(), arguments["prompt"].asText())
+        assertEquals(setOf("parameters", "revision"), arguments.fieldNames().asSequence().toSet())
+        assertEquals(prompt.orEmpty(), arguments["parameters"]["personality"].asText())
         assertEquals(revision, arguments["revision"].asLong())
         socket.send(Frame.Text(toolResultFrame(frame, if (failed) "failed" else "succeeded",
             if (failed) mapOf("code" to "client_tool_failed", "message" to "retry") else mapOf("outcome" to "applied", "revision" to revision))))
@@ -273,17 +356,20 @@ private fun personalityApi(before: suspend (String, String) -> Unit = { _, _ -> 
     if (body.isSummarization) reply(body, "Earlier conversation summarized.")
     else if (body.messages.first().content == PERSONALITY_VALIDATION_PROMPT) {
         val input = restJsonMapper.readTree(body.messages.last().content)
-        val current = input["currentPersonality"].asText()
+        val current = input["currentParameters"]["personality"].asText()
         val wish = input["request"].asText()
         assertTrue(body.functions.isEmpty())
         assertTrue(body.maxTokens > 0)
         if (input["mode"].asText() == "replace") assertTrue(current.isEmpty())
         before(current, wish)
         reply(body, when (wish) {
-            "reject" -> """{"accepted":false,"prompt":"","reason":"Incompatible with voice"}"""
+            "reject" -> """{"accepted":false,"parameters":{},"reason":"Incompatible with voice"}"""
             "malformed" -> """{"accepted":true,"prompt":"bad","reason":""} trailing"""
-            else -> restJsonMapper.writeValueAsString(mapOf("accepted" to true, "reason" to "", "prompt" to
-                if (wish.startsWith("also ")) listOf(current, wish.removePrefix("also ")).filter(String::isNotEmpty).joinToString("; ") else wish))
+            else -> restJsonMapper.writeValueAsString(mapOf("accepted" to true, "reason" to "", "parameters" to mapOf(
+                "voice" to (if (wish == "formal") "afina" else "joy"),
+                "appeal" to (if (wish == "formal") "official" else "no_official"),
+                "style" to (if (wish == "formal") "formal" else "informal"),
+                "personality" to if (wish.startsWith("also ")) listOf(current, wish.removePrefix("also ")).filter(String::isNotEmpty).joinToString("; ") else wish)))
         })
     } else {
         val wish = body.conversationPrompt()

@@ -42,20 +42,24 @@ class PostgresUserSettingsRepository(
         }
     }
 
-    override suspend fun compareAndSetPersonality(userId: String, revision: Long, prompt: String?): PersonalitySnapshot? {
-        require(prompt == null || prompt.isNotBlank() && prompt.length <= PersonalitySnapshot.MAX_PROMPT_LENGTH)
+    override suspend fun compareAndSetPersonality(userId: String, revision: Long, snapshot: PersonalitySnapshot): PersonalitySnapshot? {
+        PersonalitySnapshot.fromParameters(snapshot.parameters())
         return dataSource.write { connection ->
             connection.prepareStatement("""
                 update user_settings
-                set personality_prompt = ?, personality_revision = personality_revision + 1, updated_at = now()
+                set personality_prompt = ?, personality_voice = ?, personality_appeal = ?, personality_style = ?,
+                    personality_initialized = true, personality_revision = personality_revision + 1, updated_at = now()
                 where user_id = ? and personality_revision = ? and personality_revision < 9007199254740991
                 returning personality_revision
             """.trimIndent()).use { statement ->
-                statement.setString(1, prompt)
-                statement.setString(2, userId)
-                statement.setLong(3, revision)
+                statement.setString(1, snapshot.prompt)
+                statement.setString(2, snapshot.voice)
+                statement.setString(3, snapshot.appeal)
+                statement.setString(4, snapshot.style)
+                statement.setString(5, userId)
+                statement.setLong(6, revision)
                 statement.executeQuery().use { rows ->
-                    if (rows.next()) PersonalitySnapshot(prompt, rows.getLong(1)) else null
+                    if (rows.next()) snapshot.copy(revision = rows.getLong(1)) else null
                 }
             }
         }

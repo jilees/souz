@@ -8,9 +8,9 @@ interface UserSettingsRepository {
     suspend fun save(settings: UserSettings): UserSettings
 
     suspend fun personality(userId: String): PersonalitySnapshot = get(userId)?.let {
-        PersonalitySnapshot(it.personalityPrompt, it.personalityRevision)
+        PersonalitySnapshot(it.personalityPrompt, it.personalityRevision, it.personalityVoice, it.personalityAppeal, it.personalityStyle)
     } ?: PersonalitySnapshot()
 
     /** Returns null if another update won. Validation and delivery stay outside the transaction. */
-    suspend fun compareAndSetPersonality(userId: String, revision: Long, prompt: String?): PersonalitySnapshot?
+    suspend fun compareAndSetPersonality(userId: String, revision: Long, snapshot: PersonalitySnapshot): PersonalitySnapshot?
 }

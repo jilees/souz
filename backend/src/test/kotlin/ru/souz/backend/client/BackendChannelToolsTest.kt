@@ -110,7 +110,7 @@ class BackendChannelToolsTest {
                         val snapshot = assertIs<PublicToolCallStartedPayload>(snapshotEvent.payload)
                         assertTrue(testScheduler.currentTime > started, "The full source queue must trigger a retry.")
                         assertEquals(PERSONALITY_SYNC_COMMAND, snapshot.name)
-                        assertEquals("brief", snapshot.arguments["prompt"].asText())
+                        assertEquals("brief", snapshot.arguments["parameters"]["personality"].asText())
                         assertEquals(2L, snapshot.arguments["revision"].asLong())
                         service.handleToolResult(receivingChat, ToolResultFrame("tool.result", receivingChat.id.toString(),
                             snapshotEvent.executionId.toString(), snapshot.toolCallId, "succeeded",

@@ -13,6 +13,7 @@ import ru.souz.backend.chat.repository.MessageRepository
 import ru.souz.backend.common.normalizePositiveLimit
 import ru.souz.backend.http.BackendV1Exception
 import ru.souz.backend.http.invalidV1Request
+import ru.souz.backend.settings.model.PersonalitySnapshot
 
 data class ChatSummary(
     val chat: Chat,
@@ -62,7 +63,16 @@ class ChatService(
         clientType: String,
         title: String?,
         tools: List<ClientToolDefinition> = emptyList(),
+        parameters: Map<String, String> = emptyMap(),
     ): CreateClientChatResult {
+        if (parameters.size > 128 || parameters.any { (key, value) -> key.length > 256 || value.length > 16_384 }) {
+            throw invalidV1Request("parameters exceed the supported size.")
+        }
+        val initial = try {
+            PersonalitySnapshot.fromParameters(parameters)
+        } catch (_: IllegalArgumentException) {
+            throw invalidV1Request("Invalid voice, appeal, style or personality parameter.")
+        }
         val normalizedTitle = title?.trim()?.takeIf { it.isNotEmpty() }
         val normalizedTools = tools.normalizeClientTools(serverToolNames)
         // Preserve creation receipts for legacy chats with no catalogue.
@@ -70,6 +80,7 @@ class ChatService(
             put("clientType", clientType)
             put("title", normalizedTitle)
             if (normalizedTools.isNotEmpty()) put("tools", normalizedTools)
+            if (parameters.isNotEmpty()) put("parameters", parameters)
         })
         var existing = chatRepository.findByRequestId(userId, requestId)
         if (existing == null) {
@@ -84,9 +95,10 @@ class ChatService(
                 clientType = clientType,
                 requestId = requestId,
                 payloadHash = payloadHash,
+                yourName = parameters["your_name"],
             )
             try {
-                return CreateClientChatResult(chatRepository.create(chat, normalizedTools), duplicate = false)
+                return CreateClientChatResult(chatRepository.create(chat, normalizedTools, initial), duplicate = false)
             } catch (conflict: ChatRequestConflictException) {
                 if (conflict.userId != userId || conflict.requestId != requestId) throw conflict
                 existing = chatRepository.findByRequestId(userId, requestId) ?: throw conflict

@@ -208,7 +208,7 @@ class AttachmentMigrationTest {
                         statement.executeQuery("select discovered_client_tools from chats limit 0").close()
                         statement.executeQuery("select count(*) from flyway_schema_history where success and version is not null").use { rows ->
                             assertTrue(rows.next())
-                            assertEquals(30, rows.getInt(1))
+                            assertEquals(31, rows.getInt(1))
                         }
                         statement.executeQuery("select attachments::text,payload_hash,status from hook_receipts where id = '$hookReceipt'").use { rows ->
                             assertTrue(rows.next())
