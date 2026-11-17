@@ -62,13 +62,13 @@ internal class AgentExecutionRequestFactory(
             throw unsupportedBackendModel()
         }
         val normalizedClientMessageId = clientMessageId?.trim()?.takeIf { it.isNotEmpty() }
-        // A saved user model serves both branches; an explicit request model bypasses routing.
+        // A saved user model overrides the complex target; an explicit request model bypasses routing.
         val routing = modelRouting?.takeIf { requestOverrides.defaultModel == null }?.let { configured ->
             if (effectiveSettings.defaultModel == effectiveSettingsResolver.defaultModel()) {
                 configured
             } else {
                 val selected = RoutedModel(effectiveSettings.defaultModel, provider)
-                ModelRouting(simple = selected, complex = selected)
+                configured.copy(complex = selected)
             }
         }?.takeIf { routing ->
             listOf(routing.simple, routing.complex).all { effectiveSettingsResolver.isSelectableDefaultModel(userId, it.model) }

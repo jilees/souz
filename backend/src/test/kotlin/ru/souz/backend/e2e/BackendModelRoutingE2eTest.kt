@@ -31,7 +31,7 @@ import ru.souz.llms.LLMModel
 
 class BackendModelRoutingE2eTest {
     @Test
-    fun `turns route with server targets or a saved user model and explicit request models bypass routing`() = withNamedLlmConfig(
+    fun `saved user models replace the complex routing target and request models bypass routing`() = withNamedLlmConfig(
         ROUTING_CONFIG, environment = mapOf("OPENAI_MODEL" to "legacy-user-model"),
     ) { source ->
         val children = CopyOnWriteArrayList<String>()
@@ -89,13 +89,13 @@ class BackendModelRoutingE2eTest {
             assertEquals(listOf("strong-model"), children)
 
             assertEquals("default-model answer" to "default-chat", turn("Explicit", ""","options":{"model":"default-chat"}"""))
-            client.patch(BackendHttpRoutes.SETTINGS) { trusted(userId); jsonBody("""{"defaultModel":"route-strong"}""") }
+            client.patch(BackendHttpRoutes.SETTINGS) { trusted(userId); jsonBody("""{"defaultModel":"route-user"}""") }
             verdict = { false }
-            assertEquals("strong-model without tools answer" to "route-strong", turn("Chosen simple"))
+            assertEquals("lite-model without tools answer" to "route-lite", turn("Chosen simple"))
             verdict = { true }
-            assertEquals("strong-model with tools answer" to "route-strong", turn("Chosen complex"))
+            assertEquals("user-model with tools answer" to "route-user", turn("Chosen complex"))
             verdict = { error("Jev unavailable") }
-            assertEquals("strong-model with tools answer" to "route-strong", turn("Chosen fallback"))
+            assertEquals("user-model with tools answer" to "route-user", turn("Chosen fallback"))
             assertEquals("default-model answer" to "default-chat", turn("Explicit over saved", ""","options":{"model":"default-chat"}"""))
             assertEquals(7, classified.get())
 
@@ -108,7 +108,7 @@ class BackendModelRoutingE2eTest {
             val custom = LLMModel.OpenAICompatibleCustom.alias
             client.patch(BackendHttpRoutes.SETTINGS) { trusted(userId); jsonBody("""{"defaultModel":"$custom"}""") }
             verdict = { false }
-            assertEquals("legacy-user-model without tools answer" to custom, turn("Chosen legacy simple"))
+            assertEquals("lite-model without tools answer" to "route-lite", turn("Chosen legacy simple"))
             verdict = { true }
             assertEquals("legacy-user-model with tools answer" to custom, turn("Chosen legacy complex"))
             assertEquals(10, classified.get())
@@ -174,6 +174,7 @@ class BackendModelRoutingE2eTest {
           "models": {
             "default-chat": {"connection":"router", "modelId":"default-model"},
             "route-lite": {"connection":"router", "modelId":"lite-model"},
+            "route-user": {"connection":"router", "modelId":"user-model"},
             "strong-primary": {"connection":"router", "modelId":"strong-model"}
           },
           "cascades": {"route-strong":["strong-primary","default-chat"]},
