@@ -9,6 +9,7 @@
 - OpenAI base URLs are normalized by `OpenAIEndpoint`. Only the semantically official HTTPS endpoint sends `stream_options.include_usage`; compatible custom endpoints omit that request option but still parse usage chunks they return.
 
 - `CodexResponsesTransport` is the common HTTP/SSE path for native chat, external completions and images. `CodexCompletionClient` owns Chat Completions/Responses conversion for both chat entry points; `CodexChatAPI` only adapts the native DTOs using the shared OpenAI codec. Exact Codex model IDs are forwarded without enum lookup. Truncated streams are errors, including streams with collected output items.
+- Explicit Codex service tiers carry a request-local `x-codex-routing-hint` with the same model and tier as the body, matching the Codex client transport. Unset tiers omit the hint.
 - Codex Responses requests map `LLMRequest.Chat.reasoningEffort` to `reasoning.effort`; omit the object when unset. Backend user settings persist the optional effort and pass it into each turn's agent settings.
 - Hosts supply one immutable `CodexEndpoints` configuration to chat, image generation and OAuth adapters. [Base URL overrides](../../README.md#codex-endpoint-routing) preserve fixed API paths; OAuth client ID and redirect identity remain provider-defined.
 

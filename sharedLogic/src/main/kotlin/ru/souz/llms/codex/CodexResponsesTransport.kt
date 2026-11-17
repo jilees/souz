@@ -45,6 +45,9 @@ class CodexResponsesTransport(
             header(HttpHeaders.Authorization, "Bearer $token")
             header("Chatgpt-Account-Id", settings.codexAccountId.orEmpty())
             header("originator", "codex_cli_rs")
+            request.get("service_tier")?.takeIf { it.isTextual }?.asText()?.let { tier ->
+                header("x-codex-routing-hint", "model=${request.path("model").asText()};tier=$tier")
+            }
             header("OpenAI-Beta", "responses=experimental")
             setBody(request.toString())
         }.execute { response ->

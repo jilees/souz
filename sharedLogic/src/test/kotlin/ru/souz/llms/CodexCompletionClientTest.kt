@@ -40,7 +40,10 @@ class CodexCompletionClientTest {
         ).joinToString("") { (event, data) -> "event: $event\ndata: $data\n\n" }
         val captured = mutableListOf<ObjectNode>()
         HttpClient(MockEngine { request ->
-            captured += restJsonMapper.readTree(request.body.toByteArray()) as ObjectNode
+            val body = restJsonMapper.readTree(request.body.toByteArray()) as ObjectNode
+            captured += body
+            assertEquals(if (body.has("service_tier")) "model=future-model;tier=priority" else null,
+                request.headers["x-codex-routing-hint"])
             respond(stream)
         }).use { client ->
             val native = assertIs<LLMResponse.Chat.Ok>(CodexChatAPI(settings, oauth, client).message(
