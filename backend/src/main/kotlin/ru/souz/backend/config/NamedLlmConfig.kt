@@ -22,6 +22,7 @@ class NamedLlmModel(
     val parameters: String? = null,
     val provider: LlmProvider = LlmProvider.OPENAI,
     val timeoutMillis: Long? = null,
+    val serviceTier: String? = null,
 )
 
 class NamedLlmConfig(
@@ -64,7 +65,7 @@ internal fun BackendConfigSource.loadNamedModels(): NamedLlmConfig {
     }
     val models = root.entries("models").mapValues { (name, node) ->
         require(resolveChatModel(name) is ModelResolution.Unknown) { "Model name $name conflicts with a built-in model." }
-        node.fieldsOnly("connection", "modelId", "parameters", "provider", "timeoutMs")
+        node.fieldsOnly("connection", "modelId", "parameters", "provider", "timeoutMs", "serviceTier")
         require(name != value("OPENAI_MODEL", "OPENAI_MODEL")?.trim()) { "OPENAI_MODEL must not overlap named model selections." }
         val provider = when (node.get("provider")?.let { node.text("provider") }) {
             null, "openai" -> LlmProvider.OPENAI
@@ -88,7 +89,15 @@ internal fun BackendConfigSource.loadNamedModels(): NamedLlmConfig {
             }
             it.asLong()
         }
-        NamedLlmModel(node.text("modelId"), connection?.first, connection?.second, parameters, provider, timeout)
+        val serviceTier = node.get("serviceTier")?.let {
+            require(provider == LlmProvider.CODEX) { "serviceTier is only supported for Codex models; use parameters for OpenAI-compatible models." }
+            when (val tier = node.text("serviceTier")) {
+                "fast" -> "priority"
+                "default", "priority", "ultrafast" -> tier
+                else -> throw IllegalArgumentException("Unsupported Codex serviceTier.")
+            }
+        }
+        NamedLlmModel(node.text("modelId"), connection?.first, connection?.second, parameters, provider, timeout, serviceTier)
     }
     val cascades = root.entries("cascades").mapValues { (name, targets) ->
         require(name !in models && resolveChatModel(name) is ModelResolution.Unknown) { "Cascade name conflicts with a model." }

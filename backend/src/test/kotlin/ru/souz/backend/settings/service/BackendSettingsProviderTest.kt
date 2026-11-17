@@ -43,6 +43,25 @@ class BackendSettingsProviderTest {
     }
 
     @Test
+    fun `Codex service tiers validate at startup independently of reasoning effort`() {
+        fun config(value: String) = NAMED_LLM_CONFIG.replace("\"models\": {",
+            "\"models\": {\"sol-fast\":{\"provider\":\"codex\",\"modelId\":\"gpt-6.1-sol\",\"serviceTier\":$value},")
+        for (tier in listOf("default", "priority", "fast", "ultrafast")) {
+            withNamedLlmConfig(config("\"$tier\"")) { source ->
+                val models = source.loadNamedModels().models
+                assertEquals(if (tier == "fast") "priority" else tier, models.getValue("sol-fast").serviceTier)
+                assertNull(models.getValue("tv-agent").serviceTier)
+            }
+        }
+        for (value in listOf("null", "1", "true", "{}", "\"\"", "\" priority\"", "\"unknown\"")) {
+            withNamedLlmConfig(config(value)) { source -> assertFailsWith<IllegalArgumentException> { source.loadNamedModels() } }
+        }
+        withNamedLlmConfig(NAMED_LLM_CONFIG.replace("\"connection\":\"router\"", "\"serviceTier\":\"priority\",\"connection\":\"router\"")) { source ->
+            assertFailsWith<IllegalArgumentException> { source.loadNamedModels() }
+        }
+    }
+
+    @Test
     fun `region compatibility honors nonblank canonical values before legacy deployment settings`() {
         assertEquals("en", provider(env = mapOf("SOUZ_BACKEND_REGION_PROFILE" to " en ")).regionProfile)
         assertEquals("en", provider(properties = mapOf("souz.backend.regionProfile" to "en")).regionProfile)

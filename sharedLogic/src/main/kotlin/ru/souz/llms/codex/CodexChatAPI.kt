@@ -19,6 +19,7 @@ class CodexChatAPI(
     oauthService: CodexOAuthService,
     client: HttpClient,
     endpoints: CodexEndpoints = CodexEndpoints(),
+    private val serviceTier: String? = null,
 ) : LLMChatAPI {
     private val codec = OpenAiChatCodec(LlmProvider.CODEX)
     private val completions = CodexCompletionClient(CodexResponsesTransport(client, settingsProvider, oauthService, endpoints))
@@ -29,7 +30,7 @@ class CodexChatAPI(
         body.reasoningEffort?.let { request.put("reasoning_effort", it) }
         if (body.maxTokens > 0) request.put("max_completion_tokens", body.maxTokens)
         codec.parseCompletionsResponse(completions.completion(request, body.model,
-            timeoutMillis = settingsProvider.requestTimeoutMillis).single(), body.model)
+            timeoutMillis = settingsProvider.requestTimeoutMillis, serviceTier = serviceTier).single(), body.model)
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (failure: CodexFailure) {

@@ -68,7 +68,7 @@ Only these direct production project dependencies are allowed. Standard test-sou
 
 ## Optional backend capabilities
 
-- [LLM gateway](backend/docs/llm-gateway.md) exposes configured models and Codex through a stateless, service-authenticated OpenAI-compatible endpoint with explicit cascades.
+- [LLM gateway](backend/docs/llm-gateway.md) exposes configured models and Codex through a stateless, service-authenticated OpenAI-compatible endpoint with explicit cascades. Named Codex profiles can select an independent `serviceTier`, including Fast (`priority`), through the existing server OAuth session.
 
 - [Voice memory](docs/voice-memory.md) uses per-speaker Hindsight banks and durable JEV routing alongside household memory. Fact forgetting routes exact bank-prefixed IDs within the trusted account; confirmed full forgetting includes all of its personal banks.
 - [Channel attachments](docs/channel-attachments.md) use owner-scoped metadata and persisted S3 `object_key` addresses, import opaque bucket keys through WebSocket with independent internal UUIDs, and support explicit file selection for Telegram/VK and public-client replies.
