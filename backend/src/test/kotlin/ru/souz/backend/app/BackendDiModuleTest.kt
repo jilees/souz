@@ -93,7 +93,7 @@ import ru.souz.jobs.impl.PostgresJobService
 class BackendDiModuleTest {
     @Test
     fun `hindsight uses user ID banks for recall search and capture without a token`() = runTest {
-        val config = testAppConfig().copy(hindsightApiUrl = "http://hindsight.test/").validate()
+        val config = testAppConfig().copy(hindsightApiUrl = "http://hindsight.test/", hindsightRecallLean = true).validate()
         val userId = "76c4ddee-bfb3-4e8a-89cb-d81f6771493b"
         val mapper = jacksonObjectMapper()
         val engine = MockEngine { request ->
@@ -131,6 +131,12 @@ class BackendDiModuleTest {
             val bankUrl = "http://hindsight.test/v1/default/banks/$userId/memories"
             assertEquals(listOf("$bankUrl/recall", "$bankUrl/recall", bankUrl),
                 engine.requestHistory.map { it.url.toString() })
+            for (request in engine.requestHistory.take(2)) {
+                val recall = mapper.readTree(request.body.toByteArray())
+                assertEquals("low", recall["budget"].asText())
+                assertEquals(setOf("entities", "chunks", "source_facts"), recall["include"].fieldNames().asSequence().toSet())
+                assertTrue(recall["include"].all { it.isNull })
+            }
             val item = mapper.readTree(engine.requestHistory.last().body.toByteArray())["items"].single()
             assertEquals(
                 listOf("user" to "Remember that I like tea. token=[redacted-secret]", "assistant" to "Noted. token=[redacted-secret]"),

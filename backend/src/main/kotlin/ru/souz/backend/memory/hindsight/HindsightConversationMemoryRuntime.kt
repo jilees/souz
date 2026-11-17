@@ -37,6 +37,7 @@ import ru.souz.memory.MemoryContext
 import ru.souz.memory.MemoryPromptFact
 import ru.souz.memory.MemoryRetrievalRequest
 import ru.souz.memory.MemoryRetrievalResult
+import ru.souz.llms.restJsonMapper
 import ru.souz.memory.MemorySanitizer
 import ru.souz.memory.MemorySearchPolicy
 import ru.souz.memory.parseExplicitMemoryIntent
@@ -58,6 +59,7 @@ internal class HindsightConversationMemoryRuntime(
     private val clock: Clock = Clock.systemUTC(),
     private val retainAsync: Boolean = true,
     private val captureRepository: PostgresHistoryMemoryRepository? = null,
+    private val recallLean: Boolean = false,
 ) : ConversationMemoryRuntime {
     private val baseUrl = baseUrl.trimEnd('/')
     private val logger = LoggerFactory.getLogger(HindsightConversationMemoryRuntime::class.java)
@@ -319,6 +321,11 @@ internal class HindsightConversationMemoryRuntime(
                 buildMap<String, Any> {
                     put("query", query)
                     put("max_tokens", maxTokens)
+                    if (recallLean) {
+                        put("budget", "low")
+                        put("include", restJsonMapper.createObjectNode()
+                            .putNull("entities").putNull("chunks").putNull("source_facts"))
+                    }
                     put("types", listOf("world", "experience"))
                     val chatTags = if (personal) emptyList() else context.chatTags()
                     put("tags", chatTags)

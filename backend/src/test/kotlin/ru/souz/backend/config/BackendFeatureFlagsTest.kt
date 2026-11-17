@@ -431,6 +431,16 @@ class BackendAppConfigTest {
     }
 
     @Test
+    fun `lean hindsight recall is explicitly enabled`() {
+        assertFalse(BackendAppConfig.load(MapBackendConfigSource()).hindsightRecallLean)
+        assertTrue(BackendAppConfig.load(MapBackendConfigSource(env = mapOf("HINDSIGHT_RECALL_LEAN" to "true"))).hindsightRecallLean)
+        assertTrue(BackendAppConfig.load(MapBackendConfigSource(properties = mapOf("souz.hindsight.recallLean" to "true"))).hindsightRecallLean)
+        assertFailsWith<BackendConfigurationException> {
+            BackendAppConfig.load(MapBackendConfigSource(env = mapOf("HINDSIGHT_RECALL_LEAN" to "sometimes")))
+        }
+    }
+
+    @Test
     fun `policy prompt is unset unless configured`() {
         assertNull(BackendAppConfig.load(MapBackendConfigSource()).policyPrompt)
         assertNull(BackendAppConfig.load(MapBackendConfigSource(env = mapOf("SOUZ_BACKEND_POLICY_PROMPT" to "  "))).policyPrompt)
