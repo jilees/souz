@@ -151,6 +151,7 @@ data class BackendAppConfig(
     val hindsightApiUrl: String? = null,
     val hindsightApiToken: String? = null,
     val hindsightRetainAsync: Boolean = true,
+    val hindsightRecallLean: Boolean = false,
     val jevWaitCategoryThreshold: Double = 0.5,
     val llmLimits: BackendLlmLimits = BackendLlmLimits(),
     val providerRetryPolicy: BackendProviderRetryPolicy = BackendProviderRetryPolicy(),
@@ -305,6 +306,11 @@ data class BackendAppConfig(
                     envKey = "HINDSIGHT_RETAIN_ASYNC",
                     propertyKey = "souz.hindsight.retainAsync",
                     default = true,
+                ),
+                hindsightRecallLean = source.booleanValue(
+                    envKey = "HINDSIGHT_RECALL_LEAN",
+                    propertyKey = "souz.hindsight.recallLean",
+                    default = false,
                 ),
                 llmLimits = BackendLlmLimits(
                     perUserConcurrentExecutions = source.intValue(

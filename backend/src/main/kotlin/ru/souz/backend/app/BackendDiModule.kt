@@ -338,6 +338,7 @@ fun backendDiModule(
                 apiToken = appConfig.hindsightApiToken,
                 clock = instance(),
                 retainAsync = appConfig.hindsightRetainAsync,
+                recallLean = appConfig.hindsightRecallLean,
                 captureRepository = instance(),
             )
         } else {

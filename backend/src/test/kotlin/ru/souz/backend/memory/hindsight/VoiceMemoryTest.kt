@@ -58,6 +58,35 @@ class VoiceMemoryTest {
     }
 
     @Test
+    fun `lean recall applies to personal and household searches while preserving scope and token budget`() = runTest {
+        for (lean in listOf(false, true)) {
+            val bodies = java.util.Collections.synchronizedList(mutableListOf<Pair<Boolean, com.fasterxml.jackson.databind.JsonNode>>())
+            HttpClient(MockEngine { request ->
+                bodies.add(request.url.encodedPath.decodeURLPart().contains("person:") to restJsonMapper.readTree(request.body.toByteArray()))
+                respond("""{"results":[]}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
+            }) { providerHttpClientDefaults() }.use { client ->
+                val memory = HindsightConversationMemoryRuntime(client, "http://memory.test", metrics, recallLean = lean)
+                val context = MemoryContext(MemoryOwnerId("owner"), ConversationId("chat"), null, null, "voice")
+                memory.retrieveMemory(MemoryRetrievalRequest(context, "tea", maxPromptTokens = 200))
+                assertEquals(2, bodies.size)
+                assertEquals(200, bodies.sumOf { it.second["max_tokens"].intValue() })
+                assertEquals("exact", bodies.single { it.first }.second["tags_match"].asText())
+                assertEquals(listOf("chat:chat"), bodies.single { !it.first }.second["tags"].map { it.asText() })
+                for ((_, body) in bodies) {
+                    assertEquals(listOf("world", "experience"), body["types"].map { it.asText() })
+                    assertEquals(lean, body.has("budget"))
+                    assertEquals(lean, body.has("include"))
+                    if (lean) {
+                        assertEquals("low", body["budget"].asText())
+                        assertEquals(setOf("entities", "chunks", "source_facts"), body["include"].fieldNames().asSequence().toSet())
+                        assertTrue(body["include"].all { it.isNull })
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     fun `missing personal bank preserves household recall without borrowing an identity`() = runTest {
         for (failure in listOf(HttpStatusCode.NotFound, HttpStatusCode.ServiceUnavailable)) {
             HttpClient(MockEngine { request ->
