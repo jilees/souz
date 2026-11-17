@@ -6,6 +6,8 @@ The optional [LLM gateway](llm-gateway.md) exposes these models and server-manag
 
 Register a Codex model with `{"provider":"codex","modelId":"<upstream-id>"}` in `models`. IDs are forwarded exactly and need no enum entry. The server OAuth session supplies credentials; `connection` and OpenAI `parameters` are not accepted for Codex registrations. `reasoningEfforts` accepts their configured names. Named Codex models work in agent and subagent selections, complexity routing, image generation, and cascades.
 
+Named Codex models may set `serviceTier` to `default`, `priority` (Fast), `fast` (alias for `priority`), or `ultrafast`. Omission preserves upstream defaults. Tier availability and usage multipliers depend on the server OAuth account. For example, register `"sol-6.1-low-fast":{"provider":"codex","modelId":"gpt-6.1-sol","serviceTier":"priority"}` in `models` and `"sol-6.1-low-fast":"low"` in `reasoningEfforts`. Agent and gateway calls use the profile's tier independently of reasoning effort; failure cooldowns separate tiers. Gateway requests may override the profile with `service_tier`; completions expose the actual upstream tier when supplied, including the final streaming choice chunk. OpenAI-compatible profiles use their existing `parameters` field for service tiers.
+
 ```json
 {
   "openaiConnections": {

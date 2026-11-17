@@ -225,6 +225,82 @@ class BackendLlmGatewayE2eTest {
         }
     }
     @Test
+    fun `Fast and standard Codex profiles stay isolated in gateway and native calls`() {
+        val calls = CopyOnWriteArrayList<JsonNode>()
+        val rejectFast = java.util.concurrent.atomic.AtomicBoolean(false)
+        val upstream = HttpClient(MockEngine { request ->
+            val body = restJsonMapper.readTree(request.body.toByteArray())
+            calls.add(body)
+            val tier = body.path("service_tier").asText("default")
+            if (rejectFast.get() && tier == "priority") return@MockEngine respond("{}", HttpStatusCode.Forbidden)
+            respond("event: response.completed\ndata: {\"response\":{\"service_tier\":\"$tier\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"OK\"}]}]}}\n\n",
+                headers = headersOf("Content-Type", "text/event-stream"))
+        }) { providerHttpClientDefaults() }
+        val env = GATEWAY_ENV + mapOf("CODEX_BASE_URL" to "https://codex.test", "CODEX_ACCESS_TOKEN" to "codex-access",
+            "CODEX_REFRESH_TOKEN" to "codex-refresh", "CODEX_ACCOUNT_ID" to "codex-account", "CODEX_EXPIRES_AT" to "9999999999")
+        val config = NAMED_LLM_CONFIG.replace("\"models\": {", """"cascades":{"sol-resilient":["sol-fast","sol-standard"]},"reasoningEfforts":{"sol-fast":"low","sol-standard":"low"},"models": {
+            "sol-fast":{"provider":"codex","modelId":"gpt-6.1-sol","serviceTier":"fast"},
+            "sol-standard":{"provider":"codex","modelId":"gpt-6.1-sol"},""")
+        withNamedLlmConfig(config, env) { source ->
+            backendE2eTest("e2e_codex_tiers", settingsSource = source, providerClients = ProviderHttpClients(upstream, upstream)) {
+                for (name in listOf("sol-fast", "sol-standard", "sol-fast")) {
+                    val tier = if (name == "sol-fast") "priority" else "default"
+                    for (stream in listOf(false, true)) {
+                        val result = client.post(COMPLETIONS) {
+                            header("Authorization", "Bearer $GATEWAY_KEY")
+                            jsonBody("""{"model":"$name","stream":$stream,"messages":[{"role":"user","content":"Hi"}]}""")
+                        }
+                        assertEquals(HttpStatusCode.OK, result.status)
+                        assertTrue(result.bodyAsText().contains("\"service_tier\":\"$tier\""))
+                    }
+                    val owner = UUID.randomUUID().toString()
+                    val chat = createPublicChat(owner)
+                    assertEquals(HttpStatusCode.OK, client.post(BackendHttpRoutes.chatMessages(chat)) {
+                        trusted(owner); jsonBody("""{"content":"Hi","options":{"model":"$name"}}""")
+                    }.status)
+                    eventually("native answer using $name") {
+                        client.get(BackendHttpRoutes.chatMessages(chat)) { trusted(owner) }.jsonBody()["items"]
+                            .takeIf { it.last()["content"].asText() == "OK" }
+                    }
+                    assertEquals(if (tier == "default") null else tier, calls.last().get("service_tier")?.asText())
+                }
+                val override = client.post(COMPLETIONS) {
+                    header("Authorization", "Bearer $GATEWAY_KEY")
+                    jsonBody("""{"model":"sol-fast","service_tier":"default","messages":[{"role":"user","content":"Hi"}]}""")
+                }
+                assertEquals("default", override.jsonBody()["service_tier"].asText())
+                assertTrue(calls.all { it["model"].asText() == "gpt-6.1-sol" && it["reasoning"]["effort"].asText() == "low" })
+                for (value in listOf("null", "true", "\"invalid\"")) {
+                    assertEquals(HttpStatusCode.BadRequest, client.post(COMPLETIONS) {
+                        header("Authorization", "Bearer $GATEWAY_KEY")
+                        jsonBody("""{"model":"sol-fast","service_tier":$value,"messages":[{"role":"user","content":"Hi"}]}""")
+                    }.status)
+                }
+                calls.clear()
+                rejectFast.set(true)
+                repeat(4) {
+                    assertEquals(HttpStatusCode.OK, client.post(COMPLETIONS) {
+                        header("Authorization", "Bearer $GATEWAY_KEY")
+                        jsonBody("""{"model":"sol-resilient","messages":[{"role":"user","content":"Hi"}]}""")
+                    }.status)
+                }
+                assertEquals(listOf("priority", "default", "priority", "default", "priority", "default", "default"),
+                    calls.map { it.path("service_tier").asText("default") })
+                val owner = UUID.randomUUID().toString()
+                val chat = createPublicChat(owner)
+                assertEquals(HttpStatusCode.OK, client.post(BackendHttpRoutes.chatMessages(chat)) {
+                    trusted(owner); jsonBody("""{"content":"Hi","options":{"model":"sol-resilient"}}""")
+                }.status)
+                eventually("native fallback between tiers of the same model") {
+                    client.get(BackendHttpRoutes.chatMessages(chat)) { trusted(owner) }.jsonBody()["items"]
+                        .takeIf { it.last()["content"].asText() == "OK" }
+                }
+                assertFalse(calls.last().has("service_tier"))
+            }
+        }
+    }
+
+    @Test
     fun `missing Codex model advances the same configured chain in gateway and native agent`() {
         val calls = CopyOnWriteArrayList<String>()
         val upstream = HttpClient(MockEngine { request ->

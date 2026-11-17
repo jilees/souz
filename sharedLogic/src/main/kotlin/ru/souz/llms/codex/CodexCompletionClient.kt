@@ -15,9 +15,10 @@ class CodexCompletionClient(private val transport: CodexResponsesTransport) {
         model: String,
         effort: String? = null,
         timeoutMillis: Long,
+        serviceTier: String? = null,
         onUsage: (LLMResponse.Usage) -> Unit = {},
     ): Flow<String> = flow {
-        val request = codexCompletionRequest(chat, model, effort)
+        val request = codexCompletionRequest(chat, model, effort, serviceTier)
         val output = CodexCompletionOutput(model, chat.path("stream").asBoolean(),
             chat.path("stream_options").path("include_usage").asBoolean())
         transport.events(request, timeoutMillis).collect { event ->
@@ -79,22 +80,23 @@ private class CodexCompletionOutput(private val model: String, private val strea
             "completion_tokens" to rawUsage.path("output_tokens").asInt(), "total_tokens" to rawUsage.path("total_tokens").asInt(rawUsage.path("input_tokens").asInt() + rawUsage.path("output_tokens").asInt()),
             "prompt_tokens_details" to rawUsage.path("input_tokens_details"),
             "completion_tokens_details" to rawUsage.path("output_tokens_details"))
+        val tier = response.get("service_tier")?.takeIf { it.isTextual }?.asText()
         if (!streaming) return listOf(codexObject("id" to id, "object" to "chat.completion", "created" to created,
             "model" to model, "choices" to listOf(codexObject("index" to 0, "message" to message, "finish_reason" to finish)),
-            "usage" to usage).toString())
+            "usage" to usage).also { result -> tier?.let { result.put("service_tier", it) } }.toString())
         return buildList {
             if (!emitted) add(chunk(message))
-            add(chunk(codexObject(), finish))
+            add(chunk(codexObject(), finish, tier))
             if (includeUsage) add(codexObject("id" to id, "object" to "chat.completion.chunk", "created" to created,
                 "model" to model, "choices" to emptyList<Any>(), "usage" to usage).toString())
             add("[DONE]")
         }
     }
 
-    private fun chunk(delta: ObjectNode, finish: String? = null): String {
+    private fun chunk(delta: ObjectNode, finish: String? = null, tier: String? = null): String {
         if (!emitted) delta.put("role", "assistant")
         emitted = true
         return codexObject("id" to id, "object" to "chat.completion.chunk", "created" to created, "model" to model,
-            "choices" to listOf(codexObject("index" to 0, "delta" to delta, "finish_reason" to finish))).toString()
+            "choices" to listOf(codexObject("index" to 0, "delta" to delta, "finish_reason" to finish))).also { result -> tier?.let { result.put("service_tier", it) } }.toString()
     }
 }

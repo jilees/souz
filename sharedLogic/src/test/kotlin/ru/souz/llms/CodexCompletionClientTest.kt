@@ -36,7 +36,7 @@ class CodexCompletionClientTest {
             "response.function_call_arguments.delta" to """{"output_index":1,"delta":"{\"ids\":["}""",
             "response.function_call_arguments.delta" to """{"output_index":1,"delta":"1,2]}"}""",
             "response.output_text.delta" to """{"delta":"Working"}""",
-            "response.completed" to """{"response":{"status":"completed","output":[$tool,$message],"usage":{"input_tokens":3,"output_tokens":2,"input_tokens_details":{"cached_tokens":1}}}}""",
+            "response.completed" to """{"response":{"status":"completed","service_tier":"default","output":[$tool,$message],"usage":{"input_tokens":3,"output_tokens":2,"input_tokens_details":{"cached_tokens":1}}}}""",
         ).joinToString("") { (event, data) -> "event: $event\ndata: $data\n\n" }
         val captured = mutableListOf<ObjectNode>()
         HttpClient(MockEngine { request ->
@@ -55,13 +55,16 @@ class CodexCompletionClientTest {
             val raw = restJsonMapper.readTree("""{"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"help"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"ids":{"type":"array","items":{"type":"integer"}}}}}}]}""") as ObjectNode
             val usages = mutableListOf<LLMResponse.Usage>()
             val chunks = CodexCompletionClient(CodexResponsesTransport(client, settings, oauth))
-                .completion(raw, "future-model", timeoutMillis = 1_000, onUsage = { usages += it }).toList()
+                .completion(raw, "future-model", timeoutMillis = 1_000, serviceTier = "fast", onUsage = { usages += it }).toList()
+            assertEquals("priority", captured.last().path("service_tier").asText())
+            assertTrue(!captured.first().has("service_tier"))
             assertEquals("[DONE]", chunks.last())
             val parsed = chunks.dropLast(1).map { restJsonMapper.readTree(it) }
             val deltas = parsed.flatMap { it.path("choices").toList() }.map { it.path("delta") }
             assertEquals("Working", deltas.joinToString("") { it.path("content").asText() })
             assertEquals("{\"ids\":[1,2]}", deltas.flatMap { it.path("tool_calls").toList() }
                 .joinToString("") { it.path("function").path("arguments").asText() })
+            assertEquals("default", parsed.single { it.path("choices").firstOrNull()?.path("finish_reason")?.asText() == "tool_calls" }["service_tier"].asText())
             assertEquals(listOf(native.usage), usages)
             assertEquals(5, parsed.last().path("usage").path("total_tokens").asInt())
             assertEquals("integer", captured.last().path("tools").first().path("parameters").path("properties").path("ids").path("items").path("type").asText())
