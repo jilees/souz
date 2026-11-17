@@ -4,9 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.ObjectNode
 
 /** Chat Completions to Responses conversion, preserving nested tool and structured-output schemas. */
-internal fun codexCompletionRequest(chat: ObjectNode, model: String, effort: String?): ObjectNode {
+internal fun codexCompletionRequest(chat: ObjectNode, model: String, effort: String?, serviceTier: String?): ObjectNode {
     val supported = setOf("model", "messages", "stream", "stream_options", "tools", "tool_choice", "parallel_tool_calls",
-        "response_format", "reasoning_effort", "max_tokens", "max_completion_tokens", "temperature", "top_p", "n", "user")
+        "response_format", "reasoning_effort", "service_tier", "max_tokens", "max_completion_tokens", "temperature", "top_p", "n", "user")
     val unsupported = chat.fieldNames().asSequence().firstOrNull { it !in supported }
     if (unsupported != null || chat.path("n").asInt(1) != 1) {
         throw CodexFailure(400, "unsupported_parameter", "Unsupported Codex parameter: ${unsupported ?: "n"}.")
@@ -36,6 +36,17 @@ internal fun codexCompletionRequest(chat: ObjectNode, model: String, effort: Str
     }
     val result = codexObject("model" to model, "stream" to true, "store" to false, "input" to input,
         "instructions" to instructions.joinToString("\n\n"))
+    val tier = chat.get("service_tier")?.let {
+        if (!it.isTextual) throw CodexFailure(400, "invalid_service_tier", "service_tier must be a string.")
+        it.asText()
+    } ?: serviceTier
+    if (tier != null) {
+        result.put("service_tier", when (tier) {
+            "fast" -> "priority"
+            "default", "priority", "ultrafast" -> tier
+            else -> throw CodexFailure(400, "invalid_service_tier", "Unsupported Codex service_tier.")
+        })
+    }
     val requestedEffort = chat.path("reasoning_effort").takeIf { it.isTextual }?.asText() ?: effort
     if (requestedEffort != null) result.set<ObjectNode>("reasoning", codexObject("effort" to requestedEffort))
     chat.get("response_format")?.let { format ->

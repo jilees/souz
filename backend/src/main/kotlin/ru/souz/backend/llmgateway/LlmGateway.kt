@@ -90,7 +90,7 @@ internal class LlmGateway(
 
     private fun failureKey(name: String): Any {
         val named = models.models[name]
-        return if (named?.provider == LlmProvider.OPENAI) named else "codex:${named?.modelId ?: findLLMModel(name)?.alias}"
+        return if (named?.provider == LlmProvider.OPENAI) named else Triple(LlmProvider.CODEX, named?.modelId ?: findLLMModel(name)?.alias, named?.serviceTier)
     }
 
     // Classify the metric before rethrowing cancellation; the catch performs no suspending work.
@@ -107,7 +107,7 @@ internal class LlmGateway(
         var outcome = "error"
         try {
             val source = if (provider == LlmProvider.OPENAI) compatible(requireNotNull(named), request) else {
-                codex.completion(request, upstream, models.reasoningEfforts[name] ?: models.reasoningEfforts[upstream], named?.timeoutMillis ?: config.timeoutMillis) {
+                codex.completion(request, upstream, models.reasoningEfforts[name] ?: models.reasoningEfforts[upstream], named?.timeoutMillis ?: config.timeoutMillis, serviceTier = named?.serviceTier) {
                     metrics.llmUsage(provider, upstream, it)
                 }
             }

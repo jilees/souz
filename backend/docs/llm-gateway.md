@@ -21,6 +21,8 @@ Codex IDs do not need enum entries. Register any upstream ID in the shared `mode
 }
 ```
 
+Named Codex models may set `serviceTier` to `default`, `priority` (Fast), `fast` (alias for `priority`), or `ultrafast`. Omission preserves upstream defaults. Tier availability and usage multipliers depend on the server OAuth account. For example, register `"sol-6.1-low-fast":{"provider":"codex","modelId":"gpt-6.1-sol","serviceTier":"priority"}` in `models` and `"sol-6.1-low-fast":"low"` in `reasoningEfforts`. Agent and gateway calls use the profile's tier independently of reasoning effort; failure cooldowns separate tiers. Gateway requests may override the profile with `service_tier`; completions expose the actual upstream tier when supplied, including the final streaming choice chunk. OpenAI-compatible profiles use their existing `parameters` field for service tiers.
+
 The selection works in the agent, subagents, complexity routing, gateway and image generation through the existing server OAuth session. New IDs require a configuration edit and backend restart, not a source change or rebuild. Codex registrations do not take `connection` or OpenAI-specific `parameters`; set default effort through `reasoningEfforts` using the registered name. Legacy enum selectors remain accepted. Dedicated summarization requires its existing OpenAI-compatible connection.
 
 The optional top-level `cascades` map registers virtual model names shared by the agent and gateway:

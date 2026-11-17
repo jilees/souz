@@ -254,6 +254,7 @@ internal class BackendExecutionLlmChatApi(
                     codexOAuthService,
                     httpClients.standard,
                     codexEndpoints,
+                    serviceTier = namedModel?.serviceTier,
                 )
                 LlmProvider.GIGA -> error(BackendLlmSupport.GIGA_UNSUPPORTED_MESSAGE)
             }
@@ -435,7 +436,7 @@ internal class BackendExecutionLlmChatApi(
 private sealed interface ChatRoute {
     data class Ready(val provider: LlmProvider, val request: LLMRequest.Chat, val namedModel: NamedLlmModel? = null, val modelName: String? = null) : ChatRoute {
         /** The upstream model and connection this route reaches; named connections are shared, process-wide instances. */
-        val target = Triple(provider, namedModel.takeUnless { provider == LlmProvider.CODEX }, request.model)
+        val target = Triple(provider, if (provider == LlmProvider.CODEX) namedModel?.serviceTier else namedModel, request.model)
     }
     data class Rejected(val error: LLMResponse.Chat.Error) : ChatRoute
 }
