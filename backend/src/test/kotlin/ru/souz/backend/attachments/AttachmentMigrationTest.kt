@@ -5,6 +5,7 @@ import java.time.Instant
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
@@ -200,9 +201,12 @@ class AttachmentMigrationTest {
                 dataSource.connection.use { connection ->
                     connection.createStatement().use { statement ->
                         statement.executeQuery("select discovered_client_tools from chats limit 0").close()
-                        statement.executeQuery("select count(*) from flyway_schema_history where success and version is not null").use { rows ->
-                            assertTrue(rows.next())
-                            assertEquals(30, rows.getInt(1))
+                        statement.executeQuery("""
+                            select table_name from information_schema.tables
+                            where table_schema = current_schema()
+                              and table_name in ('telegram_bot_bindings', 'vk_bot_bindings', 'attachment_delivery_parts')
+                        """.trimIndent()).use { rows ->
+                            assertFalse(rows.next())
                         }
                     }
                 }
