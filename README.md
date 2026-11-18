@@ -4,7 +4,7 @@
 
 Souz is a backend-only Kotlin/JVM AI assistant. A Ktor HTTP server runs request-scoped graph agents over cloud LLM providers, sandboxed tools, Skills, and PostgreSQL-backed conversations.
 
-The backend supports public Client-Souz HTTP/WebSocket integrations, trusted-proxy APIs, event replay, streaming, cancellation, subagents, scheduled jobs, workspace hooks, Telegram and VK bot bindings, encrypted provider credentials, and optional Hindsight memory. Client tools and device capabilities are delegated through the external client contract.
+The backend supports public Client-Souz HTTP/WebSocket integrations, trusted-proxy APIs, event replay, streaming, cancellation, subagents, scheduled jobs, workspace hooks, encrypted provider credentials, and optional Hindsight memory. The external Telegram and VK bot service connects over the public WebSocket. Client tools and device capabilities are delegated through the external client contract.
 
 ## Local backend
 
@@ -118,8 +118,6 @@ Supported chat providers are Qwen, AiTunnel, Anthropic, OpenAI-compatible APIs, 
 ### Storage
 
 PostgreSQL is the backend's only structured-data store. JDBC, HikariCP, and Flyway provide durable event replay, per-chat message/event sequence numbers, one active execution per chat, optimistic locking for `agent_conversation_state`, and durable tool-call audit rows.
-Telegram bot tokens are encrypted at rest via `TELEGRAM_TOKEN_ENCRYPTION_KEY`, pending links use one-time `/start <secret>` commands with only the secret hash stored server-side, and binding setup drops pending Telegram updates before long polling starts.
-VK community tokens use `VK_TOKEN_ENCRYPTION_KEY`. With `ENABLE_BACKEND_VK_FEATURE=true`, trusted-proxy clients manage bindings through `GET`, `PUT` (`{"token":"..."}`), and `DELETE /v1/chats/{chatId}/vk-bot`. Send the returned `pendingLinkCommand` as a private message to the community to link the account. Enable Bots Long Poll and `message_new` events in the community settings.
 Runtime sandbox workspaces remain filesystem-backed and are independent from backend database persistence.
 
 ### Configuration
@@ -148,7 +146,6 @@ SOUZ_FEATURE_WS_AUTOMATIC_MEMORY_RECALL=false
 SOUZ_FEATURE_STREAMING_MESSAGES=true
 SOUZ_FEATURE_TOOL_EVENTS=true
 SOUZ_FEATURE_OPTIONS=true
-ENABLE_BACKEND_TG_FEATURE=true
 
 # Logging
 # One-line JSON logs go to stdout.
@@ -161,17 +158,6 @@ SOUZ_WEB_USER_AGENT=ProxyApprovedClient/1.0
 # Optional system prompts: the default one and operator rules appended to every chat's prompt.
 SOUZ_BACKEND_SYSTEM_PROMPT=...
 SOUZ_BACKEND_POLICY_PROMPT=...
-
-# Telegram bot
-SOUZ_TELEGRAM_POLLING_MAX_CONCURRENCY=4
-# Generate once with: openssl rand -base64 32
-TELEGRAM_TOKEN_ENCRYPTION_KEY=...
-
-# VK bot
-ENABLE_BACKEND_VK_FEATURE=false
-SOUZ_VK_POLLING_MAX_CONCURRENCY=4
-# Required when enabled; Base64 of 32 random bytes
-VK_TOKEN_ENCRYPTION_KEY=...
 
 # Scheduled tasks: planned runs per user per day, concurrent runs per process (one per user), run timeout
 # The daily value also caps launches per user per UTC day.
@@ -197,7 +183,7 @@ SOUZ_BACKEND_DB_MAX_POOL_SIZE=10
 SOUZ_BACKEND_DB_CONNECTION_TIMEOUT_MS=30000
 ```
 
-The server host must not be blank, and the port must be between `1` and `65535`; invalid values fail configuration validation during startup. `POSTGRES_DSN` must be a PostgreSQL JDBC URL and, when set, replaces `SOUZ_BACKEND_DB_HOST`, `SOUZ_BACKEND_DB_PORT`, and `SOUZ_BACKEND_DB_NAME`; user and password still come from `SOUZ_BACKEND_DB_USER` and `SOUZ_BACKEND_DB_PASSWORD`. `SOUZ_MASTER_KEY` is required for backend startup. Backend Logback writes one-line JSON records to stdout, including timestamp, level, logger, thread, message, formatted message, MDC, SLF4J key-value pairs, and throwable details. `LOG_LEVEL` controls the root logger, while `SOUZ_APP_LOG_LEVEL` keeps Souz application diagnostics such as public WebSocket request flow visible even when third-party logging is quieter. `SOUZ_WEB_USER_AGENT` overrides the browser-like default sent by web tools, including the HTTPS CONNECT request when a JVM HTTP proxy is selected. `SOUZ_BACKEND_SYSTEM_PROMPT` replaces the built-in default system prompt, and a prompt from user settings or a request replaces it in turn. `SOUZ_BACKEND_POLICY_PROMPT` follows that prompt in every chat; users cannot replace or remove it through settings or requests. `TELEGRAM_TOKEN_ENCRYPTION_KEY` is required when the Telegram bot feature is enabled and must be Base64 that decodes to exactly 32 bytes; generate one with `openssl rand -base64 32`. Without `SOUZ_BACKEND_PROXY_TOKEN`, public routes remain available but `/v1/**` requests return `backend_misconfigured`.
+The server host must not be blank, and the port must be between `1` and `65535`; invalid values fail configuration validation during startup. `POSTGRES_DSN` must be a PostgreSQL JDBC URL and, when set, replaces `SOUZ_BACKEND_DB_HOST`, `SOUZ_BACKEND_DB_PORT`, and `SOUZ_BACKEND_DB_NAME`; user and password still come from `SOUZ_BACKEND_DB_USER` and `SOUZ_BACKEND_DB_PASSWORD`. `SOUZ_MASTER_KEY` is required for backend startup. Backend Logback writes one-line JSON records to stdout, including timestamp, level, logger, thread, message, formatted message, MDC, SLF4J key-value pairs, and throwable details. `LOG_LEVEL` controls the root logger, while `SOUZ_APP_LOG_LEVEL` keeps Souz application diagnostics such as public WebSocket request flow visible even when third-party logging is quieter. `SOUZ_WEB_USER_AGENT` overrides the browser-like default sent by web tools, including the HTTPS CONNECT request when a JVM HTTP proxy is selected. `SOUZ_BACKEND_SYSTEM_PROMPT` replaces the built-in default system prompt, and a prompt from user settings or a request replaces it in turn. `SOUZ_BACKEND_POLICY_PROMPT` follows that prompt in every chat; users cannot replace or remove it through settings or requests. Without `SOUZ_BACKEND_PROXY_TOKEN`, public routes remain available but `/v1/**` requests return `backend_misconfigured`.
 
 Backend executions snapshot each user's effective `enabledTools`. The snapshot filters compiled tool-backed Skills once and is retained when an execution resumes from an option. Built-in Client-Souz Skills are merged afterward only for public client executions. The backend model sees only Skill core tools and reaches catalog capabilities through inventory, discovery, and `RunSkillCommand`.
 
@@ -230,7 +216,7 @@ Operational references:
 - [Backend testing](backend/docs/testing.md) and [quality gates](docs/quality-gates.md)
 - [External memory](backend/docs/external-memory.md), [conversation Knowledge](backend/docs/conversation-knowledge.md), and [personality settings](backend/docs/personality-settings.md)
 - [Scheduled tasks](backend/docs/scheduled-tasks.md), [workspace hooks](docs/hooks.md), and [file tools](docs/file-tools.md)
-- [Telegram bindings](backend/docs/telegram-bindings.md), [VK bindings](backend/docs/vk-bindings.md), and [S3 file storage](backend/docs/s3-storage.md)
+- [S3 file storage](backend/docs/s3-storage.md)
 - [Metrics](backend/docs/metrics.md) and [trusted proxy](backend/docs/trusted-proxy.md)
 
 Read the owning `AGENTS.md` before changing a module.

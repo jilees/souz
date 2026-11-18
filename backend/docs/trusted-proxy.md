@@ -14,7 +14,7 @@ Allowing the Client-Souz body identity outside creation and execute device metad
 
 - Obtain proxy-route identity through the installed request-identity boundary.
 - On the Client-Souz boundary, validate UUID shape, provision the create-chat `userId`, and require every `message.submit.payload.device.userId` to equal the chat owner.
-- Apply ownership checks to every user resource, including nested chat, execution, option, event, Telegram, and provider-key operations.
+- Apply ownership checks to every user resource, including nested chat, execution, option, event, and provider-key operations.
 - Pass `ToolInvocationMeta.userId` into backend runtime work. Backend sandbox scope is user-scoped and does not currently add conversation scope.
 - Keep `BackendToolCapabilityPolicy` the only place that decides compiled backend tool exposure. It owns the backend-safe categories and execution-bound LLM tool names; bootstrap capabilities, `enabledTools` validation, and execution selection all read it. Exclude compiled web categories and search names from both execution and advertising.
 - Persist `enabledTools` only as the user's own selection. A missing value follows every advertised tool, so storing the advertised set as a default hides every later tool from that user.

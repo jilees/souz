@@ -137,7 +137,7 @@ Souz attempts at most one Russian waiting phrase through `assistant.message` aft
 Delegated subagents use the same progress preference and publish intermediate assistant messages under the parent's `threadId`. Their final answers return to the parent; only the parent produces the terminal thread response.
 
 
-Other progress is opt-in through the trusted settings API: `PATCH /v1/me/settings` with `{"narrateSteps":true}`. Settings responses expose the effective value, defaulting to `false`. The preference controls the additive RU/EN prompt instruction and live WebSocket, Telegram, and VK delivery independently of `streamingMessages` and `showToolEvents`. Each execution snapshots it, including option continuations; settings changes affect subsequent executions.
+Other progress is opt-in through the trusted settings API: `PATCH /v1/me/settings` with `{"narrateSteps":true}`. Settings responses expose the effective value, defaulting to `false`. The preference controls the additive RU/EN prompt instruction and live WebSocket delivery independently of `streamingMessages` and `showToolEvents`. Each execution snapshots it, including option continuations; settings changes affect subsequent executions.
 
 `{"intermediateMessages":false}` on the same API turns off both the waiting phrase and progress for all of the user's chats and connections; `true` turns them back on. It defaults to `true` and does not affect other users. While it is `false`, `narrateSteps` keeps its stored value but has no effect. Final responses, thread status, errors and tool calls are unaffected. Executions snapshot it like `narrateSteps`.
 

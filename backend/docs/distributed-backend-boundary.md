@@ -8,7 +8,7 @@ The separate [job service](../../job-impl/docs/job-ownership.md) uses PostgreSQL
 
 [Scheduled tasks](scheduled-tasks.md) use occurrence IDs and atomic execution insertion: across retries and replicas, an at-most-once task launches an occurrence at most once, and an at-least-once task launches each attempt at most once. Neither provides execution recovery or exactly-once external effects.
 
-Ordinary trusted-proxy HTTP executions, Telegram/VK-triggered executions and scheduled-task occurrences run as process-local background jobs without a renewable runtime lease. Their durable `agent_executions` rows can remain active if the owning process exits while the job is running. `waiting_option` is durable user-wait state and must not be treated as a crashed runtime by lease recovery.
+Ordinary trusted-proxy HTTP executions and scheduled-task occurrences run as process-local background jobs without a renewable runtime lease. Their durable `agent_executions` rows can remain active if the owning process exits while the job is running. `waiting_option` is durable user-wait state and must not be treated as a crashed runtime by lease recovery.
 
 [Workspace hooks](hooks.md) have single-process receipt-based recovery: pending work resumes and interrupted receipt-linked executions fail without replaying side effects. This does not provide distributed ownership or recover unrelated ordinary executions.
 
@@ -33,7 +33,7 @@ Codex refresh tokens can rotate. Without database coordination, two replicas can
 
 ## Verification
 
-Run `./gradlew :backend:test` for changes to execution ownership or recovery. Cover ordinary HTTP execution crash recovery, Telegram/VK-triggered execution crash recovery, Client-Souz expired lease recovery, sticky active-thread routing, cancellation races, option resume from `waiting_option`, and concurrent Codex OAuth refresh when Codex is enabled on multiple replicas.
+Run `./gradlew :backend:test` for changes to execution ownership or recovery. Cover ordinary HTTP execution crash recovery, Client-Souz expired lease recovery, sticky active-thread routing, cancellation races, option resume from `waiting_option`, and concurrent Codex OAuth refresh when Codex is enabled on multiple replicas.
 
 ## VPS configuration compatibility
 

@@ -1,31 +1,25 @@
 package ru.souz.backend.e2e
 
-import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
-import io.ktor.client.request.put
 import io.ktor.http.HttpStatusCode
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.http.BackendHttpRoutes
 import ru.souz.backend.storage.postgres.newPostgresSchema
-import ru.souz.backend.telegram.TelegramChat
-import ru.souz.backend.telegram.TelegramMessage
-import ru.souz.backend.telegram.TelegramUpdate
-import ru.souz.backend.telegram.TelegramUser
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.restJsonMapper
 
 class BackendChannelRoutingE2eTest {
     @Test
-    fun `cached routes refresh explicitly after migration and load lazily after restart`() {
+    fun `cached routes refresh for a new destination and load lazily after restart`() {
         val schema = newPostgresSchema("e2e_channel_routing")
         val owner = UUID.randomUUID().toString()
-        val telegram = FakeTelegramBotApi()
         var source = ""
         var target = ""
         var archived = ""
@@ -38,10 +32,9 @@ class BackendChannelRoutingE2eTest {
                 if (prompt == "remember channels" || prompt == "refresh channels") {
                     if (currentTurn.last().role == LLMMessageRole.function) {
                         val channels = restJsonMapper.readTree(currentTurn.last().content)["channels"]
-                        assertEquals(setOf(source, target), channels.map { it["channelId"].asText() }.toSet())
+                        assertEquals(if (prompt == "remember channels") setOf(source) else setOf(source, target), channels.map { it["channelId"].asText() }.toSet())
                         assertFalse(channels.any { it["channelId"].asText() in setOf(archived, foreign) })
-                        assertEquals(if (prompt == "remember channels") "telegram" else "public_client",
-                            channels.single { it["channelId"].asText() == target }["channelType"].asText())
+                        assertTrue(channels.all { it["channelType"].asText() == "public_client" })
                         reply(request, "Remembered")
                     } else toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "ListActiveChannels", "arguments" to emptyMap<String, Any>()))
                 } else if (currentTurn.last().role == LLMMessageRole.function) {
@@ -54,22 +47,15 @@ class BackendChannelRoutingE2eTest {
                     )))
                 }
             }
-            backendE2eTest("e2e_channel_routing", schema = schema, llm = llm, telegramApi = telegram,
-                featureFlags = BackendFeatureFlags(wsEvents = true, telegramBot = true)) {
+            backendE2eTest("e2e_channel_routing", schema = schema, llm = llm,
+                featureFlags = BackendFeatureFlags(wsEvents = true)) {
                 if (!restarted) {
                     source = createPublicChat(owner, "source")
-                    target = createPublicChat(owner, "telegram")
                     archived = createPublicChat(owner, "archived")
                     foreign = createPublicChat(UUID.randomUUID().toString(), "foreign")
                     assertEquals(HttpStatusCode.OK, client.post(BackendHttpRoutes.archiveChat(archived)) { trusted(owner) }.status)
-                    val link = client.put(BackendHttpRoutes.chatTelegramBot(target)) {
-                        trusted(owner); jsonBody("""{"token":"123456:routing-test"}""")
-                    }.jsonBody()["pendingLinkCommand"].asText()
-                    telegram.enqueue(TelegramUpdate(1, TelegramMessage(1, TelegramUser(701, firstName = "Owner"), TelegramChat(701, "private"), link)))
-                    backend.pollTelegramOnce()
                     assertEquals(HttpStatusCode.OK, sendTurn(source, owner, "remember channels").status)
-                    // Removing the embedded provider leaves this same chat reachable over public WS.
-                    assertEquals(HttpStatusCode.OK, client.delete(BackendHttpRoutes.chatTelegramBot(target)) { trusted(owner) }.status)
+                    target = createPublicChat(owner, "telegram")
                 }
                 if (!restarted) {
                     sendTurn(source, owner, "stale route")

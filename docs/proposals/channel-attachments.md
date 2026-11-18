@@ -51,7 +51,7 @@
 
 | Область | Состояние и точка расширения |
 | --- | --- |
-| Backend-каналы | [ChannelProvider](../../backend/src/main/kotlin/ru/souz/backend/channels/ChannelProvider.kt) принимает только текст. [TelegramBotApi](../../backend/src/main/kotlin/ru/souz/backend/telegram/TelegramBotApi.kt) и [VkBotApi](../../backend/src/main/kotlin/ru/souz/backend/vk/VkBotApi.kt) не предоставляют законченный приём/отправку вложений; polling пропускает сообщения без текста. |
+| Backend-каналы | [ChannelProvider](../../backend/src/main/kotlin/ru/souz/backend/channels/ChannelProvider.kt) принимает только текст. `TelegramBotApi` и `VkBotApi` не предоставляют законченный приём/отправку вложений; polling пропускает сообщения без текста. |
 | История и выполнение | [ChatMessage](../../backend/src/main/kotlin/ru/souz/backend/chat/model/ChatMessage.kt), [BackendConversationTurnRequest](../../backend/src/main/kotlin/ru/souz/backend/agent/model/BackendConversationTurnRequest.kt) и [результат агента](../../agent/src/main/kotlin/ru/souz/agent/Agent.kt) ориентированы на текст. |
 | LLM-контент | [LLMRequest.Message](../../llms/src/main/kotlin/ru/souz/llms/DTO.kt) содержит `attachments: List<String>`, смысл которых зависит от провайдера: URL/data URL, provider file ID или локальный путь. |
 | Sol | Встроенные Sol-модели используют CODEX; [CodexChatAPI](https://github.com/jilees/souz/blob/676abcfa2fdb795128d35e249dcd77e914c6278e/sharedLogic/src/commonJvmMain/kotlin/ru/souz/llms/codex/CodexChatAPI.kt) строит пользовательский контент из строки и не передаёт `attachments`. Конкретный deployment может использовать иной named route; его требуется проверить отдельно. |
@@ -482,7 +482,6 @@ Backend-тестам требуется Docker. При изменении sandbo
 - [Правила репозитория и зависимости модулей](../../AGENTS.md).
 - [Runtime sandbox и Skills](../../sharedLogic/docs/runtime-sandbox-and-skills.md).
 - [Жизненный цикл HTTP-провайдеров](../../sharedLogic/docs/provider-http-lifecycle.md).
-- [Telegram bindings](../../backend/docs/telegram-bindings.md) и [VK bindings](../../backend/docs/vk-bindings.md).
 - [Распределённая граница backend](../../backend/docs/distributed-backend-boundary.md).
 - [Execution и events](../../backend/docs/execution-openapi-and-events.md).
 - [Public client WebSocket](../../backend/docs/public-client-websocket.md): сохраняется text-only scope данного проекта.

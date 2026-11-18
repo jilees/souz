@@ -1,7 +1,6 @@
 package ru.souz.backend.e2e
 
 import io.ktor.client.request.patch
-import io.ktor.client.request.put
 import io.ktor.websocket.Frame
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -22,21 +21,16 @@ import ru.souz.backend.attachments.MAX_TOOL_IMAGE_BYTES
 import ru.souz.backend.attachments.downloadToolImageBytes
 import ru.souz.backend.config.BackendFeatureFlags
 import ru.souz.backend.http.BackendHttpRoutes
-import ru.souz.backend.telegram.TelegramChat
-import ru.souz.backend.telegram.TelegramMessage
-import ru.souz.backend.telegram.TelegramUpdate
-import ru.souz.backend.telegram.TelegramUser
 import ru.souz.llms.LLMMessageRole
 import ru.souz.llms.restJsonMapper
 
 class BackendClientImagesE2eTest {
     @Test
-    fun `resource link is saved once and its file ID delivers image presentation to Telegram`() {
+    fun `resource link is saved once and its file ID forwards the stored image to a socket chat`() {
         val url = "https://screens.example.test/tv/screenshot.webp?token=private-download-token"
         val bytes = Base64.getDecoder().decode("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA")
-        val api = FakeTelegramBotApi()
         var sourceChannel = ""
-        var telegramChat = ""
+        var targetChat = ""
         var fileId = ""
         var step = 0
         val llm = E2eLlmApi { request ->
@@ -53,25 +47,20 @@ class BackendClientImagesE2eTest {
                     toolCallReply(request, "GetSkillByName", mapOf("skillId" to "SendMessageToChannel"))
                 }
                 3 -> toolCallReply(request, "RunSkillCommand", mapOf("skillId" to "SendMessageToChannel",
-                    "arguments" to mapOf("channelType" to "telegram", "channelId" to telegramChat, "text" to "Screenshot", "fileIds" to listOf(fileId))))
+                    "arguments" to mapOf("channelType" to "public_client", "channelId" to targetChat, "text" to "Screenshot", "fileIds" to listOf(fileId))))
                 else -> reply(request, "Sent")
             }
         }
         mockkStatic(::downloadToolImageBytes)
         try {
             coEvery { downloadToolImageBytes(url, MAX_TOOL_IMAGE_BYTES) } returns bytes
-            backendE2eTest("e2e_resource_image", featureFlags = BackendFeatureFlags(wsEvents = true, telegramBot = true),
-                telegramApi = api, attachments = AttachmentMinio.config(), llm = llm,
+            backendE2eTest("e2e_resource_image", featureFlags = BackendFeatureFlags(wsEvents = true),
+                attachments = AttachmentMinio.config(), llm = llm,
             ) {
                 val owner = UUID.randomUUID().toString()
                 val source = createPublicChat(owner, "source", tools = clientToolsJson("device.mcp.call_tool"))
                 sourceChannel = source
-                telegramChat = createPublicChat(owner, "telegram")
-                val link = client.put(BackendHttpRoutes.chatTelegramBot(telegramChat)) {
-                    trusted(owner); jsonBody("""{"token":"123456:resource-image-test"}""")
-                }.jsonBody()["pendingLinkCommand"].asText()
-                api.enqueue(TelegramUpdate(1, TelegramMessage(1, TelegramUser(701, firstName = "Images"), TelegramChat(701, "private"), link)))
-                backend.pollTelegramOnce()
+                targetChat = createPublicChat(owner, "telegram")
                 client.patch(BackendHttpRoutes.SETTINGS) {
                     trusted(owner); jsonBody("""{"enabledTools":["SendMessageToChannel"]}""")
                 }
@@ -84,11 +73,15 @@ class BackendClientImagesE2eTest {
                     socket.send(Frame.Text(frame))
                     assertEquals("accepted", readJson(socket)["status"].asText())
                     assertEquals("thread.completed", readJson(socket)["type"].asText())
-                    assertEquals(fileId, api.sentFiles.single().first.fileId)
-                    assertEquals(ru.souz.llms.FilePresentation.image, api.sentFiles.single().first.presentation)
-                    assertContentEquals(bytes, api.sentFiles.single().second)
                     socket.send(Frame.Text(frame))
                     assertTrue(readJson(socket)["duplicate"].asBoolean())
+                }
+                withPublicSocket(targetChat) { socket ->
+                    val push = readJson(socket)
+                    assertEquals("message.created", push["type"].asText())
+                    val saved = backend.attachmentStorage.get(owner, UUID.fromString(fileId))
+                    assertEquals(saved.objectKey, push["payload"]["attachments"].single()["objectKey"].asText())
+                    assertContentEquals(bytes, backend.attachmentStorage.read(owner, saved.id))
                 }
                 coVerify(exactly = 1) { downloadToolImageBytes(url, MAX_TOOL_IMAGE_BYTES) }
             }

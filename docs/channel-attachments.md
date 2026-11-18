@@ -1,10 +1,10 @@
 # Channel attachments
 
-Backend Telegram and VK accept files in linked private chats and can return files selected by agent tools. The [public Client-Souz WebSocket contract](public-souz-contract/README.md#attachments) imports shared-bucket uploads and carries selected reply files and cross-channel attachments. Attachment support is available to every user when the server's S3 connection is configured.
+The external bot service connects Telegram and VK chats to Souz over WebSocket. The [public Client-Souz WebSocket contract](public-souz-contract/README.md#attachments) imports shared-bucket uploads and carries selected reply files and cross-channel attachments. Attachment support is available to every user when the server's S3 connection is configured.
 
 ## Storage and ownership
 
-The backend uses one private, operator-provisioned bucket per environment, configured with `SOUZ_ATTACHMENTS_S3_BUCKET`. PostgreSQL stores the full bucket key in `object_key`, with an independent internal file UUID. Backend uploads default to `files/<SHA-256 of UTF-8 user ID>/<file UUID>`; external keys are opaque. Owner-scoped PostgreSQL lookups enforce access. See [user file storage](s3-storage.md) for the storage contract. S3 credentials belong to the backend. Buckets are not mounted into containers. PostgreSQL stores file ownership, immutable metadata, SHA-256, input deduplication keys, lifecycle state, message references and delivery-part receipts. Provider download URLs, Telegram file tokens and binary data URLs are not durable file identities.
+The backend uses one private, operator-provisioned bucket per environment, configured with `SOUZ_ATTACHMENTS_S3_BUCKET`. PostgreSQL stores the full bucket key in `object_key`, with an independent internal file UUID. Backend uploads default to `files/<SHA-256 of UTF-8 user ID>/<file UUID>`; external keys are opaque. Owner-scoped PostgreSQL lookups enforce access. See [user file storage](s3-storage.md) for the storage contract. The backend and bot service have access to the shared bucket. Buckets are not mounted into containers. PostgreSQL stores file ownership, immutable metadata, SHA-256, input deduplication keys, lifecycle state and message references. Provider download URLs, Telegram file tokens and binary data URLs are not durable file identities.
 
 Files expire 30 days after successful storage; reads and sends do not extend retention. Pending uploads expire after ten minutes. Cleanup revokes access and leases each deletion for five minutes across replicas; failed deletions retry after the lease. Successful cleanup removes the metadata row and permits source-key reuse. An operator-managed bucket lifecycle beyond retention plus upload grace removes exceptionally late PUTs. Removing or recreating a local user row does not revoke file access or reset retention. Chat deletion does not drive reference counting.
 
@@ -67,20 +67,12 @@ Install PDF dependencies when building the image, not during agent execution. Re
 
 Inputs are limited to 10 files / 100 MB per message and 20 MB per file by default; audio is limited to 10 minutes. Image decoding rejects dimensions above 16,384 pixels or 40 megapixels. Channel/provider limits can be stricter.
 
-Telegram waits for an album to settle for 1.5 seconds, capped at five seconds, while polling the same unacknowledged offset. Consecutive album items from the same sender/chat are one turn. Interleaved or later-arriving items form separate turns. VK keeps a Long Poll message's attachment list together. Account linking and sender ownership checks precede downloads.
-
-Outbound delivery validates and loads all files before sending text. PostgreSQL receipts track each text/file part. Accepted parts are skipped on replay; an uncertain remote outcome is reported rather than blindly resent. Cross-channel history retains accepted parts on partial failure. The public-client channel rejects file delivery before sending any accompanying text.
-
-When the first attachment is a document, Telegram sends it together with accompanying Markdown in one [rich message](https://core.telegram.org/bots/api#inputrichmessagemedia), uploading the file as multipart data. Text exceeding the rich-message budget continues in subsequent messages without truncation; additional files follow separately. File-only replies retain native document delivery. Combined text/document acceptance is recorded as one part; replays of deliveries begun with separate text/file parts preserve their existing layout.
-
-Telegram image presentation uses `sendPhoto` with an in-memory JPEG preview: at most 1280 pixels on the longest side, no upscaling, quality 85%, transparency flattened onto white. The S3 original remains unchanged. `SendMessageToChannel` selects image presentation for PNG/JPEG file IDs sent to Telegram; explicitly selecting document presentation for a reply retains the original bytes. Codex generation requests 1024×1024, but the returned dimensions can differ; the Telegram preview limit is enforced independently.
-
-VK uses HTTPS media-host allowlisting and no redirects for file transfers, `docs.getMessagesUploadServer`/`docs.save` for documents and voice, and `photos.getMessagesUploadServer`/`photos.saveMessagesPhoto` for photos, following the [published VK schema](https://github.com/VKCOM/vk-api-schema). Unsupported upload response variants fail explicitly. Actual photo upload and voice presentation require verification against the configured community before enabling production use.
+The bot service handles platform downloads, uploads and retries. Souz records the selected files in the target chat and publishes their bucket keys, names and presentation over WebSocket.
 
 ## Verification and rollout
 
 The [VPS transition plan](proposals/vps-attachment-storage-migration.md) covers the proposed move from per-user buckets. The transition is manual and has not been executed.
 
-Use the PostgreSQL/MinIO-backed `AttachmentStorageTest` and `BackendAttachmentsE2eTest`, both bot workflow suites, provider image tests, document-media tests and the repository gates. `SOUZ_TEST_DOCKER=1` enables voice conversion through a real user sandbox; build the sandbox image first.
+Use the PostgreSQL/MinIO-backed `AttachmentStorageTest` and `BackendAttachmentsE2eTest`, provider image tests, document-media tests and the repository gates. `SOUZ_TEST_DOCKER=1` enables voice conversion through a real user sandbox; build the sandbox image first.
 
 There is no per-user attachment rollout switch. User tool selections and provider/runtime prerequisites still apply. Image/document acceptance requires private S3 access, the configured Sol route receiving pixels, and actual channel downloads/uploads. Verify STT, image generation and Orion synthesis separately before enabling their tools; TTS readiness does not gate image/document input. OCR, audio conversion and PDF generation also require the updated sandbox image. Keep each capability disabled when its prerequisites are absent. The [proposal](proposals/channel-attachments.md) records the target scope and remaining acceptance work; it is not an implemented public API contract.
