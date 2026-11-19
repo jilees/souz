@@ -43,6 +43,24 @@ class BackendSettingsProviderTest {
     }
 
     @Test
+    fun `model conversation output limit must be a positive integer`() {
+        fun config(value: String) = NAMED_LLM_CONFIG.replace(
+            "\"connection\":\"experiment\"",
+            "\"connection\":\"experiment\",\"maxOutputTokens\":$value",
+        )
+        withNamedLlmConfig(config("8192")) { source ->
+            val models = source.loadNamedModels().models
+            assertEquals(8192, models.getValue("test-chat").maxOutputTokens)
+            assertNull(models.getValue("tv-agent").maxOutputTokens)
+        }
+        for (value in listOf("0", "-1", "1.5", "\"8192\"", "null", "2147483648")) {
+            withNamedLlmConfig(config(value)) { source ->
+                assertFailsWith<IllegalArgumentException> { source.loadNamedModels() }
+            }
+        }
+    }
+
+    @Test
     fun `Codex service tiers validate at startup independently of reasoning effort`() {
         fun config(value: String) = NAMED_LLM_CONFIG.replace("\"models\": {",
             "\"models\": {\"sol-fast\":{\"provider\":\"codex\",\"modelId\":\"gpt-6.1-sol\",\"serviceTier\":$value},")

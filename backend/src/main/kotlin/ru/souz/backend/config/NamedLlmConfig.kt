@@ -23,6 +23,7 @@ class NamedLlmModel(
     val provider: LlmProvider = LlmProvider.OPENAI,
     val timeoutMillis: Long? = null,
     val serviceTier: String? = null,
+    val maxOutputTokens: Int? = null,
 )
 
 class NamedLlmConfig(
@@ -65,7 +66,7 @@ internal fun BackendConfigSource.loadNamedModels(): NamedLlmConfig {
     }
     val models = root.entries("models").mapValues { (name, node) ->
         require(resolveChatModel(name) is ModelResolution.Unknown) { "Model name $name conflicts with a built-in model." }
-        node.fieldsOnly("connection", "modelId", "parameters", "provider", "timeoutMs", "serviceTier")
+        node.fieldsOnly("connection", "modelId", "parameters", "provider", "timeoutMs", "serviceTier", "maxOutputTokens")
         require(name != value("OPENAI_MODEL", "OPENAI_MODEL")?.trim()) { "OPENAI_MODEL must not overlap named model selections." }
         val provider = when (node.get("provider")?.let { node.text("provider") }) {
             null, "openai" -> LlmProvider.OPENAI
@@ -97,7 +98,22 @@ internal fun BackendConfigSource.loadNamedModels(): NamedLlmConfig {
                 else -> throw IllegalArgumentException("Unsupported Codex serviceTier.")
             }
         }
-        NamedLlmModel(node.text("modelId"), connection?.first, connection?.second, parameters, provider, timeout, serviceTier)
+        val maxOutputTokens = node["maxOutputTokens"]?.let {
+            require(it.isIntegralNumber && it.canConvertToInt() && it.asInt() > 0) {
+                "Model $name maxOutputTokens must be a positive integer."
+            }
+            it.asInt()
+        }
+        NamedLlmModel(
+            modelId = node.text("modelId"),
+            baseUrl = connection?.first,
+            apiKey = connection?.second,
+            parameters = parameters,
+            provider = provider,
+            timeoutMillis = timeout,
+            serviceTier = serviceTier,
+            maxOutputTokens = maxOutputTokens,
+        )
     }
     val cascades = root.entries("cascades").mapValues { (name, targets) ->
         require(name !in models && resolveChatModel(name) is ModelResolution.Unknown) { "Cascade name conflicts with a model." }

@@ -196,7 +196,9 @@ internal class BackendExecutionLlmChatApi(
         }
         llmConfig.models[body.model]?.let { model ->
             val effort = body.reasoningEffort ?: llmConfig.reasoningEfforts[body.model]
-            return ChatRoute.Ready(model.provider, body.copy(model = model.modelId, provider = model.provider, reasoningEffort = effort), model, body.model)
+            val maxTokens = model.maxOutputTokens?.takeIf { body.useModelOutputLimit } ?: body.maxTokens
+            val request = body.copy(model = model.modelId, provider = model.provider, reasoningEffort = effort, maxTokens = maxTokens)
+            return ChatRoute.Ready(model.provider, request, model, body.model)
         }
         body.provider?.let { provider ->
             val effort = body.reasoningEffort ?: findLLMModel(body.model)?.takeIf { it.provider == provider }

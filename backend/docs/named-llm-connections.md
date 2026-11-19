@@ -16,7 +16,7 @@ Named Codex models may set `serviceTier` to `default`, `priority` (Fast), `fast`
   },
   "models": {
     "test-chat": {"connection": "test", "modelId": "custom-model", "parameters": {"thinking": {"type": "disabled"}}},
-    "tv-agent": {"connection": "router", "modelId": "provider/model"}
+    "tv-agent": {"connection": "router", "modelId": "provider/model", "maxOutputTokens": 8192}
   },
   "reasoningEfforts": {"gpt-5-mini": "low"},
   "subagentModels": ["tv-agent"],
@@ -43,7 +43,7 @@ The optional `reasoningEfforts` map supplies nonblank effort strings for built-i
 
 Prepared conversation and summary input must fit 80% of `CONTEXT_SIZE`, including instructions and tool schemas. Compaction starts when input exceeds that limit; exactly 80% fits. One summary call includes the full history before the last user message and the summarization prompt. If that request cannot fit, history cannot be compacted, or the rebuilt conversation still exceeds 80%, the conversation is rejected. Empty and length-truncated summaries are rejected. System instructions and the active user/tool exchange stay intact.
 
-`maxTokens` only limits provider output and does not reduce the input budget: conversation uses 4,096 tokens and classification 512. Summary output uses the server environment variable or JVM property `SUMMARIZATION_MAX_OUTPUT_TOKENS` (default `2048`, environment takes precedence). Startup rejects values that are not positive integers. The setting applies to parent and subagent compaction and cannot be overridden by users or execution options. Changes require a backend restart. `OPENAI_SUMMARIZATION_PARAMETERS` controls other provider parameters; the explicit request output limit takes precedence.
+Agent conversation output defaults to 4,096 tokens per model request. Set `models.<name>.maxOutputTokens` to a positive integer to configure a named model, including Codex. Each cascade candidate uses its own limit. Classification uses 512 tokens and the stateless gateway follows the caller’s request. The input budget is independent. Summary output uses the server environment variable or JVM property `SUMMARIZATION_MAX_OUTPUT_TOKENS` (default `2048`, environment takes precedence). Startup rejects values that are not positive integers. The setting applies to parent and subagent compaction and cannot be overridden by users or execution options. Changes require a backend restart. `OPENAI_SUMMARIZATION_PARAMETERS` controls other provider parameters; the explicit request output limit takes precedence.
 
 Names are case-sensitive, nonblank, trimmed and must not collide with built-in selectors, legacy subagent IDs or the trimmed `OPENAI_MODEL` value. These collisions reject startup; shared upstream `modelId` values remain valid. Invalid URLs (including ports outside 1–65535), unknown fields, duplicate JSON keys, missing secrets and unresolved references reject startup. Only environment variable names belong in the JSON file.
 

@@ -240,15 +240,15 @@ class BackendExecutionLlmChatApiTest {
         val codex = LLMModel.CodexGpt61Sol.alias
         for (targets in listOf(listOf("deepseek", codex, "gemini"), listOf(codex, "gemini"), listOf("next-codex", "gemini"))) {
             for (streaming in listOf(false, true)) {
-                val calls = mutableListOf<Pair<LlmProvider, String>>()
+                val calls = mutableListOf<Triple<LlmProvider, String, Int>>()
                 val config = NamedLlmConfig(models = mapOf(
-                    "deepseek" to NamedLlmModel("deepseek-flash", "https://deepseek.test", "key"),
+                    "deepseek" to NamedLlmModel("deepseek-flash", "https://deepseek.test", "key", maxOutputTokens = 8192),
                     "gemini" to NamedLlmModel("gemini-flash", "https://cloud.test", "key"),
                     "next-codex" to NamedLlmModel("future-model-without-enum", provider = LlmProvider.CODEX),
                 ), cascades = mapOf("mixed" to targets))
                 facadeFixture(llmConfig = config, providerApiOverride = { provider ->
                     fun result(body: LLMRequest.Chat): LLMResponse.Chat {
-                        calls += provider to body.model
+                        calls += Triple(provider, body.model, body.maxTokens)
                         return when {
                             body.model == "gemini-flash" -> ok(body.model)
                             provider == LlmProvider.CODEX -> LLMResponse.Chat.Error(400, """{"error":{"code":"model_not_found"}}""")
@@ -257,11 +257,13 @@ class BackendExecutionLlmChatApiTest {
                     }
                     StubChatApi(message = { result(it) }, stream = { flowOf(result(it)) })
                 }).use { fixture ->
-                    val request = chat("mixed").copy(provider = LlmProvider.OPENAI)
+                    val request = chat("mixed").copy(provider = LlmProvider.OPENAI, maxTokens = 4096, useModelOutputLimit = true)
                     val answer = if (streaming) fixture.api.messageStream(request).toList().single() else fixture.api.message(request)
                     assertEquals(ok("gemini-flash"), answer)
                     assertEquals(targets.map { name ->
-                        if (name == codex) LlmProvider.CODEX to codex else config.models.getValue(name).let { it.provider to it.modelId }
+                        if (name == codex) Triple(LlmProvider.CODEX, codex, 4096) else config.models.getValue(name).let {
+                            Triple(it.provider, it.modelId, it.maxOutputTokens ?: 4096)
+                        }
                     }, calls)
                 }
             }
@@ -327,7 +329,7 @@ class BackendExecutionLlmChatApiTest {
     fun `named routes isolate connections and parameters in both modes and summaries`() = withNamedLlmConfig(
         NAMED_LLM_CONFIG
             .replace("\"connection\":\"experiment\"", """"connection":"experiment","parameters":{"thinking":{"type":"disabled"},"reasoning_effort":"low"}""")
-            .replace("\"connection\":\"router\"", """"connection":"router","parameters":{"thinking":{"type":"enabled"},"reasoning_effort":"low"}"""),
+            .replace("\"connection\":\"router\"", """"connection":"router","maxOutputTokens":8192,"parameters":{"thinking":{"type":"enabled"},"reasoning_effort":"low"}"""),
         environment = mapOf("OPENAI_SUMMARIZATION_PARAMETERS" to """{"thinking":{"type":"disabled"},"top_p":0.9}"""),
     ) { source ->
         runTest {
@@ -344,8 +346,9 @@ class BackendExecutionLlmChatApiTest {
                     chat("shared-model").copy(provider = LlmProvider.OPENAI) to "legacy",
                     chat(LLMModel.OpenAICompatibleCustom.alias) to "legacy",
                     chat("test-chat") to "experiment",
-                    chat("tv-agent").copy(reasoningEffort = "high") to "router",
-                    chat("test-chat").copy(isSummarization = true) to "router",
+                    chat("tv-agent").copy(reasoningEffort = "high", maxTokens = 4096, useModelOutputLimit = true) to "router",
+                    chat("tv-agent").copy(maxTokens = 512) to "router",
+                    chat("test-chat").copy(maxTokens = 2048, isSummarization = true) to "router",
                 )) {
                     val before = requests.size
                     assertIs<LLMResponse.Chat.Ok>(fixture.api.message(request))
@@ -359,7 +362,8 @@ class BackendExecutionLlmChatApiTest {
                         val thinking = when (expected) { "experiment" -> "disabled"; "router" -> "enabled"; else -> null }
                         assertEquals(thinking, it.body.path("thinking").path("type").textValue())
                         assertEquals(request.reasoningEffort ?: "low".takeIf { expected != "legacy" }, it.body.path("reasoning_effort").textValue())
-                        assertEquals(request.maxTokens, it.body["max_completion_tokens"].asInt())
+                        val expectedLimit = if (request.useModelOutputLimit) 8192 else request.maxTokens
+                        assertEquals(expectedLimit, it.body["max_completion_tokens"].asInt())
                         if (request.isSummarization) assertEquals(0.9, it.body["top_p"].asDouble())
                         assertTrue(!it.body.has("provider"))
                     }

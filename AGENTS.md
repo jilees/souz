@@ -12,6 +12,8 @@ Orion query-based memory results enter through acknowledged `history.append` too
 
 Backend uses one startup-validated `CONTEXT_SIZE` (minimum 24,000 tokens) for all models, including summaries. Compaction and input validation share an 80% limit independent of output limits; context size is not a user or execution setting.
 
+Conversation output defaults to 4,096 tokens. Named models can set a positive `maxOutputTokens` in `llm.json`, applied independently to each selected cascade candidate.
+
 Summary output uses the startup-validated `SUMMARIZATION_MAX_OUTPUT_TOKENS` server setting (positive integer, default 2,048), independent of the context window.
 
 Backend [personality settings](backend/docs/personality-settings.md) are separate from system prompts and synchronize revisioned snapshots to Orion. Before mutation, an unknown connected source requires `client_tool_discovery_required` even when another channel declares synchronization support; otherwise discovery is required when no connected provider is known. Parent discovery precedes retry without incrementing the revision.

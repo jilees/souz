@@ -231,6 +231,10 @@ object LLMRequest {
         @get:JsonIgnore
         @field:JsonIgnore
         val provider: LlmProvider? = null,
+        /** Allow the host to replace [maxTokens] with the selected model's conversation limit. */
+        @get:JsonIgnore
+        @field:JsonIgnore
+        val useModelOutputLimit: Boolean = false,
     ) {
         /**
          * OpenAI-compatible providers expect function results to provide call IDs, but Giga does not.

@@ -80,7 +80,7 @@ internal class NodesLLM(
     ): AgentContext<LLMResponse.Chat> {
         fun build(history: List<LLMRequest.Message>) =
             ctx.toChatRequest(history, maxOutputTokens = CHAT_MAX_OUTPUT_TOKENS)
-                .copy(messages = renderSpeakerContext(history))
+                .copy(messages = renderSpeakerContext(history), useModelOutputLimit = true)
                 .withConversationInstructions(instructions)
                 .withFileReferences()
 
