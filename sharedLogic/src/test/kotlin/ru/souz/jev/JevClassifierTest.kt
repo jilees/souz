@@ -93,6 +93,7 @@ class JevClassifierTest {
     @Test
     fun `complexity requires confident tool free answers with bounded reference history`() = runTest {
         var simple = 0.0
+        var needsCapability = 0.1
         val capabilities = mapOf("application.action" to "Read or change application state")
         val bounded = request.copy(messages = listOf(LLMRequest.Message(LLMMessageRole.user, "too old")) +
             List(4) { LLMRequest.Message(LLMMessageRole.assistant, "x".repeat(5000)) } + request.messages)
@@ -109,13 +110,16 @@ class JevClassifierTest {
                 assertFalse(previous.contains(excluded))
             }
             assertEquals("noul", payload["questions"]["simple"]["type"].asText())
-            respond("""{"answers":{"simple":{"type":"noul","noul":$simple}}}""")
+            assertEquals("noul", payload["questions"]["needs_capability"]["type"].asText())
+            respond("""{"answers":{"simple":{"type":"noul","noul":$simple},"needs_capability":{"type":"noul","noul":$needsCapability}}}""")
         }
         HttpClient(engine) { providerHttpClientDefaults() }.use { http ->
             val classifier = JevClassifier(JevClient(http, "test-token"))
             assertEquals(listOf(true, false, false), listOf(0.89, 0.9, 1.0).map {
                 simple = it; classifier.classify(bounded, capabilities).complex
             })
+            needsCapability = 0.11
+            assertTrue(classifier.classify(bounded, capabilities).complex)
             val latest = request.messages.last()
             val file = FileReference("file-id")
             for (attached in listOf(
@@ -125,7 +129,7 @@ class JevClassifierTest {
             )) {
                 assertTrue(classifier.classify(request.copy(messages = listOf(attached)), capabilities).complex)
             }
-            assertEquals(3, engine.requestHistory.size)
+            assertEquals(4, engine.requestHistory.size)
         }
     }
 
@@ -136,14 +140,14 @@ class JevClassifierTest {
         val categories = mapOf("travel" to "Trips.", "weather" to "Weather.")
         val engine = MockEngine { httpRequest ->
             val questions = restJsonMapper.readTree(httpRequest.body.toByteArray())["questions"]
-            assertEquals(2, questions.size())
+            assertEquals(3, questions.size())
             assertEquals("noul", questions["simple"]["type"].asText())
             assertEquals("choice", questions["choice"]["type"].asText())
             assertEquals(
                 restJsonMapper.valueToTree<JsonNode>(categories + ("other" to "None of the other options fits.")),
                 questions["choice"]["criteria"],
             )
-            respond("""{"answers":{"simple":{"type":"noul","noul":$simple},"choice":$choice}}""")
+            respond("""{"answers":{"simple":{"type":"noul","noul":$simple},"needs_capability":{"type":"noul","noul":0.02},"choice":$choice}}""")
         }
         HttpClient(engine) { providerHttpClientDefaults() }.use { http ->
             val client = JevClient(http, "test-token")
@@ -176,7 +180,7 @@ class JevClassifierTest {
         val engine = MockEngine { httpRequest ->
             val state = restJsonMapper.readTree(httpRequest.body.toByteArray())["state"]
             assertEquals("user: $boundary", state["current_request"].asText())
-            respond("""{"answers":{"simple":{"type":"noul","noul":1.0}}}""")
+            respond("""{"answers":{"simple":{"type":"noul","noul":1.0},"needs_capability":{"type":"noul","noul":0.0}}}""")
         }
         HttpClient(engine) { providerHttpClientDefaults() }.use { http ->
             val classifier = JevClassifier(JevClient(http, "test-token"))

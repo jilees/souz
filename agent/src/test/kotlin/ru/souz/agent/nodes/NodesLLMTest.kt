@@ -372,6 +372,79 @@ class NodesLLMTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = ["structured", "dsml", "finish-reason"])
+    fun `tool use on the simple route replays only the original input on the complex route`(signal: String) = runTest {
+        for (streaming in listOf(false, true)) {
+            val events = mutableListOf<AgentRuntimeEvent>()
+            val requests = mutableListOf<LLMRequest.Chat>()
+            val rejectedText = "Already done. "
+            val dsml = "<｜｜DSML｜｜ calls>"
+            fun attempt(text: String) = block(0, text, tool = signal == "structured",
+                finishReason = LLMResponse.FinishReason.function_call.takeIf { signal == "finish-reason" })
+
+            val api = mockk<LLMChatAPI> {
+                coEvery { message(any()) } answers {
+                    val request = firstArg<LLMRequest.Chat>().also { requests += it }
+                    if (request.model == "simple") attempt(rejectedText + dsml.takeIf { signal == "dsml" }.orEmpty())
+                    else block(0, "heavy answer")
+                }
+                coEvery { messageStream(any()) } answers {
+                    val request = firstArg<LLMRequest.Chat>().also { requests += it }
+                    flow {
+                        if (request.model == "simple") {
+                            emit(block(0, rejectedText))
+                            if (signal == "dsml") emit(block(0, dsml.take(5)))
+                            emit(attempt(if (signal == "dsml") dsml.drop(5) else ""))
+                        } else emit(block(0, "heavy answer"))
+                    }
+                }
+            }
+            val nodes = NodesLLM(api, mockk { every { useStreaming } returns streaming },
+                complexityClassifier = { _, _ -> TaskClassification(false, "drafting") },
+                routedTools = { listOf(testTool(it.model)) })
+            val ctx = context(listOf(SYSTEM, LLMRequest.Message(LLMMessageRole.user, "Original request")), recordingSink(events))
+            val firstChunk = if (streaming) async(start = CoroutineStart.UNDISPATCHED) { nodes.sideEffects.first() } else null
+            val result = nodes.chat(streamRevision = 7L).execute(ctx.copy(settings = ctx.settings.copy(routing = ROUTING)), runtime())
+
+            assertEquals(listOf("simple", "complex"), requests.map { it.model })
+            assertEquals(listOf(emptyList(), listOf("complex")), requests.map { request -> request.functions.map { it.name } })
+            assertEquals(requests.first().messages, requests.last().messages)
+            assertEquals("complex", result.settings.model)
+            assertEquals(ctx.history.map { it.content } + "heavy answer", result.history.map { it.content })
+            assertEquals(listOfNotNull(AgentRuntimeEvent.InitialWait("drafting"),
+                AgentRuntimeEvent.LlmMessageDelta("heavy answer").takeIf { streaming }), events)
+            if (firstChunk != null) assertEquals(AgentStreamChunk("heavy answer", 7L), firstChunk.await())
+        }
+    }
+
+    @Test
+    fun `graph retries an escalated request with tools and a single wait`() = runTest {
+        val models = mutableListOf<String>()
+        val events = mutableListOf<AgentRuntimeEvent>()
+        val api = mockk<LLMChatAPI> {
+            coEvery { message(any()) } answers {
+                models += firstArg<LLMRequest.Chat>().model
+                when (models.size) {
+                    1 -> block(0, "<｜DSML｜invoke name=\"TestTool\">")
+                    2 -> throw LLMException(LLMResponse.Chat.Error(503, "retry"))
+                    else -> block(0, "answer")
+                }
+            }
+        }
+        val nodes = NodesLLM(api, settings(), complexityClassifier = { _, _ -> TaskClassification(false) },
+            routedTools = { listOf(testTool(it.model)) })
+        val graph = buildGraph<String, LLMResponse.Chat> {
+            nodeInput.edgeTo(SteerableChatNode(nodes, ActiveRunInputController())).edgeTo(nodeFinish)
+        }
+        val ctx = context(listOf(SYSTEM), recordingSink(events))
+        val result = graph.start(ctx.copy(settings = ctx.settings.copy(routing = ROUTING)))
+
+        assertEquals(listOf("simple", "complex", "complex"), models)
+        assertEquals<List<AgentRuntimeEvent>>(listOf(AgentRuntimeEvent.InitialWait()), events)
+        assertEquals("answer", result.history.last().content)
+    }
+
     @Test
     fun `routed compaction preserves the active exchange`() = runTest {
         for ((complex, chosen) in listOf(false to "simple", true to "complex")) {

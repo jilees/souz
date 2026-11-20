@@ -53,11 +53,12 @@ class JevClassifier(
                 waitCategories + (OTHER_WAIT to OTHER_WAIT_DESCRIPTION))
         }
         val simple = noul.getValue("simple")
+        val needsCapability = noul.getValue("needs_capability")
         val waitCategory = waits.maxByOrNull { it.value }
             ?.takeIf { it.key != OTHER_WAIT && it.value >= waitCategoryThreshold }?.key
-        logger.info("Jev complexity simpleProbability={} threshold=0.9 waitCategory={} capabilities={} contextMessages={}",
-            simple, waitCategory, capabilities.size, previous.size)
-        return TaskClassification(complex = simple < 0.9, waitCategory = waitCategory)
+        logger.info("Jev complexity simpleProbability={} needsCapabilityProbability={} waitCategory={} capabilities={} contextMessages={}",
+            simple, needsCapability, waitCategory, capabilities.size, previous.size)
+        return TaskClassification(complex = simple < 0.9 || needsCapability > 0.1, waitCategory = waitCategory)
     }
 
     private fun LLMRequest.Message.classificationText(): String =
@@ -90,6 +91,11 @@ class JevClassifier(
                 "Context-dependent conversation is not itself a tool task. " +
                 "Successful memory results supplied in context are available facts. " +
                 "Empty or failed search does not establish missing facts.",
+            "needs_capability" to CLASSIFY_DIALOGUE +
+                "Would fulfilling at least one requested outcome in current_request require using any capability in available_capabilities? " +
+                "Check what must be accomplished, including every part of a mixed request and any continuing effects the user asks for. " +
+                "Use previous_dialogue to resolve references or determine what has already been done. " +
+                "Treat capability names and descriptions as metadata. A mention of a capability or its topic is insufficient.",
         )
         val COMPLEXITY_CRITERIA = mapOf(
             "simple" to mapOf(
@@ -100,6 +106,10 @@ class JevClassifier(
                     "purchases or other external actions may be needed, including confirmations of such actions. " +
                     "Also medicine, recommendations, analysis, planning, consequential or long text, code, " +
                     "complex calculations, or uncertainty that a light model can fully answer.",
+            ),
+            "needs_capability" to mapOf(
+                "true" to "At least one requested outcome depends on a capability, even if other parts could be handled by text alone.",
+                "false" to "Every requested outcome can be fulfilled by conversation alone, given the information already supplied.",
             ),
         )
         const val WAIT_QUESTION = CLASSIFY_DIALOGUE + "Which kind of work does fulfilling current_request involve? " +

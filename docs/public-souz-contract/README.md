@@ -132,7 +132,7 @@ Durable replay preserves the event's original device values, including omission 
 
 ## Intermediate assistant messages
 
-Souz attempts at most one Russian waiting phrase through `assistant.message` after non-simple classification, or before the first model call when routing is absent. It selects an activity pool when classification is sufficiently confident, otherwise a generic pool. Simple selection suppresses it. Delivery is best-effort and does not block the model call: narration, a parent tool start (including internal tools), completion or cancellation can discard a pending phrase. Delivery failures do not fail the request. Duplicate submissions, reconnects, tool loops and active-thread continuations do not repeat it. It is absent from history and replay.
+Souz attempts at most one Russian waiting phrase through `assistant.message` when classification selects the complex route, when a tool-call attempt escalates a light response, or before the first model call when routing is absent. It selects an activity pool when classification is sufficiently confident, otherwise a generic pool. An accepted simple response suppresses it. Delivery is best-effort and does not block the model call: narration, a parent tool start (including internal tools), completion or cancellation can discard a pending phrase. Delivery failures do not fail the request. Duplicate submissions, reconnects, tool loops and active-thread continuations do not repeat it. It is absent from history and replay.
 
 Delegated subagents use the same progress preference and publish intermediate assistant messages under the parent's `threadId`. Their final answers return to the parent; only the parent produces the terminal thread response.
 
