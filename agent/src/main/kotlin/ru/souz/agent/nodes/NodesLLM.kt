@@ -1,8 +1,6 @@
 package ru.souz.agent.nodes
 
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -45,6 +43,7 @@ internal class NodesLLM(
 ) {
     private val l = LoggerFactory.getLogger(NodesLLM::class.java)
     private var initialWaitDecided = false
+    private var escalatedRevision: Long? = null
 
     private val mutableSideEffects = MutableSharedFlow<AgentStreamChunk>(extraBufferCapacity = 16)
     val sideEffects: Flow<AgentStreamChunk> = mutableSideEffects
@@ -76,7 +75,7 @@ internal class NodesLLM(
         ctx: AgentContext<String>,
         instructions: String,
         streamRevision: Long,
-        release: Deferred<Unit>? = null,
+        bufferedText: StringBuilder? = null,
     ): AgentContext<LLMResponse.Chat> {
         fun build(history: List<LLMRequest.Message>) =
             ctx.toChatRequest(history, maxOutputTokens = CHAT_MAX_OUTPUT_TOKENS)
@@ -97,7 +96,7 @@ internal class NodesLLM(
         val response = if (request.exceedsContextBudget(ctx.settings.contextSize)) {
             LLMResponse.Chat.Error(-1, "The conversation, instructions and tools exceed the context budget. " +
                 "Shorten the request or increase the configured context size.")
-        } else request(ctx, request, streamRevision, release)
+        } else request(ctx, request, streamRevision, bufferedText)
         return ctx.map(
             history = history + (response as? LLMResponse.Chat.Ok)?.choices.orEmpty().mapNotNull { it.toMessage() },
             activeExchangeStartIndex = ctx.activeExchangeStartIndex + history.size - ctx.history.size,
@@ -105,7 +104,7 @@ internal class NodesLLM(
     }
 
     /**
-     * Starts the simple model at once and holds its streamed output until [classifier] decides. A complex turn
+     * Starts the simple model at once and holds its output until classification and tool-call validation. A complex turn
      * cancels it and calls the complex model; a classifier failure uses the turn's own model. The chosen
      * context, with settings without routing and tools bound to them, serves every later call of the turn.
      */
@@ -119,10 +118,12 @@ internal class NodesLLM(
         val normal = ctx.settings.copy(routing = null)
         val simple = ctx.copy(settings = normal.routedTo(routing.simple)).withOnlyTools(emptyList())
         val complex = ctx.on(normal.routedTo(routing.complex))
+        // A provider retry for this input must keep the escalation. A steered input gets a new revision.
+        if (escalatedRevision == streamRevision) return call(complex, instructions, streamRevision)
         // A failed speculative call matters only when the simple model is chosen.
         return supervisorScope {
-            val decided = CompletableDeferred<Unit>()
-            val speculative = async { call(simple, instructions, streamRevision, decided) }
+            val bufferedText = StringBuilder()
+            val speculative = async { call(simple, instructions, streamRevision, bufferedText) }
             val started = TimeSource.Monotonic.markNow()
             val classification = try {
                 classifier.classify(ctx.classificationRequest(), ctx.routingCapabilities)
@@ -139,14 +140,25 @@ internal class NodesLLM(
             }
             l.info("Model routing class={} model={} waitCategory={} durationMs={}", verdict, target.settings.model,
                 classification?.waitCategory, started.elapsedNow().inWholeMilliseconds)
-            decideInitialWait(ctx, send = target !== simple, classification?.waitCategory)
-            if (target === simple) {
-                decided.complete(Unit)
-                speculative.await()
-            } else {
-                speculative.cancelAndJoin()
-                call(target, instructions, streamRevision)
-            }
+            val finalTarget = if (target === simple) {
+                val candidate = speculative.await()
+                val response = candidate.input
+                if (response !is LLMResponse.Chat.Ok || !response.attemptsToolCall()) {
+                    decideInitialWait(ctx, send = false)
+                    if (response is LLMResponse.Chat.Ok && bufferedText.isNotEmpty()) {
+                        val text = bufferedText.toString()
+                        ctx.runtimeEventSink.emit(AgentRuntimeEvent.LlmMessageDelta(text))
+                        mutableSideEffects.tryEmit(AgentStreamChunk(text, streamRevision))
+                    }
+                    return@supervisorScope candidate
+                }
+                escalatedRevision = streamRevision
+                l.info("Tool call in simple response; escalating to model={}", complex.settings.model)
+                complex
+            } else target
+            decideInitialWait(ctx, send = true, classification?.waitCategory)
+            speculative.cancelAndJoin()
+            call(finalTarget, instructions, streamRevision)
         }
     }
 
@@ -168,12 +180,12 @@ internal class NodesLLM(
             maxOutputTokens = CLASSIFICATION_MAX_OUTPUT_TOKENS,
         ).copy(functions = emptyList())
 
-    /** Runs one LLM call; a streamed call holds its deltas until [release] completes. */
+    /** Runs one LLM call, collecting speculative text privately when [bufferedText] is supplied. */
     private suspend fun request(
         ctx: AgentContext<*>,
         request: LLMRequest.Chat,
         streamRevision: Long,
-        release: Deferred<Unit>? = null,
+        bufferedText: StringBuilder? = null,
     ): LLMResponse.Chat {
         l.debug("LLM input is {}", ctx.input)
         val response = withContext(Dispatchers.IO) {
@@ -182,7 +194,7 @@ internal class NodesLLM(
                     request = request.copy(stream = true),
                     eventSink = ctx.runtimeEventSink,
                     streamRevision = streamRevision,
-                    release = release,
+                    bufferedText = bufferedText,
                 )
             } else {
                 llmApi.message(request)
@@ -196,12 +208,11 @@ internal class NodesLLM(
         request: LLMRequest.Chat,
         eventSink: AgentRuntimeEventSink,
         streamRevision: Long,
-        release: Deferred<Unit>?,
+        bufferedText: StringBuilder?,
     ): LLMResponse.Chat {
         var lastResponse: LLMResponse.Chat = LLMResponse.Chat.Error(-1, "Connection error")
         val choices = sortedMapOf<Int, ChoiceAccumulator>()
         val pending = StringBuilder()
-        val held = mutableListOf<String>()
         var chunkSize = 20
 
         suspend fun publish(content: String) {
@@ -221,18 +232,12 @@ internal class NodesLLM(
             response as LLMResponse.Chat.Ok
             val content = response.choices.firstOrNull()?.message?.content.orEmpty()
             if (content.isNotEmpty()) {
-                held += content
-                if (release?.isCompleted != false) {
-                    held.forEach { publish(it) }
-                    held.clear()
-                }
+                if (bufferedText != null) bufferedText.append(content) else publish(content)
             }
             response.choices.forEach { choice ->
                 choices.getOrPut(choice.index) { ChoiceAccumulator(choice.message.role) }.merge(choice)
             }
         }
-        release?.await()
-        held.forEach { publish(it) }
         if (pending.isNotEmpty()) {
             mutableSideEffects.tryEmit(AgentStreamChunk(pending.toString(), streamRevision))
         }
@@ -270,3 +275,10 @@ internal class NodesLLM(
         )
     }
 }
+
+private fun LLMResponse.Chat.Ok.attemptsToolCall(): Boolean = choices.any {
+    it.message.functionCall != null || it.finishReason == LLMResponse.FinishReason.function_call ||
+        DSML_CALL.containsMatchIn(it.message.content)
+}
+
+private val DSML_CALL = Regex("""<[|｜]{1,2}DSML[|｜]{1,2}\s*(?:(?:function_)?calls\s*>|invoke\s+name\s*=)""")
